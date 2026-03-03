@@ -1,0 +1,36 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # RAG Service (FastAPI + Prometheus Instrumentator)
+  - job_name: 'rag-service'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['rag-service:8000']
+
+  # vLLM Qwen 3.5 35B (port 8001)
+  - job_name: 'vllm-35b'
+    scrape_interval: 10s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['host.docker.internal:8001']
+        labels:
+          model: 'qwen3.5-35b'
+          quantization: 'nvfp4'
+
+  # vLLM Qwen 3.5 122B (port 8003)
+  - job_name: 'vllm-122b'
+    scrape_interval: 10s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['host.docker.internal:8003']
+        labels:
+          model: 'qwen3.5-122b'
+          quantization: 'nvfp4'
+
+  # AI Gateway (LiteLLM)
+  - job_name: 'ai-gateway'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['ai-gateway:4000']

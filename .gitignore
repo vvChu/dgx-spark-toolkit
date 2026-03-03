@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model weights (large files — never commit)
+qwen122b-fixed/
+
+# Docker volumes
+services/rag-service/vector-db/
+
+# Logs
+*.log
+logs/
+
+# Artifacts
+services/ai-gateway/venv/
+services/rag-service/venv/
+
+# Large binary/wheel files
+wheels/
+vllm_backport/
+*.whl

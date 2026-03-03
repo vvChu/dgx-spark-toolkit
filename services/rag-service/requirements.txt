@@ -1,0 +1,25 @@
+# RAG Service Python Dependencies
+
+# Milvus client
+pymilvus>=2.3.0
+
+# Embeddings - BGE-M3
+FlagEmbedding>=1.2.0
+sentence-transformers>=2.2.0
+
+# PDF extraction
+pymupdf>=1.23.0
+pdfplumber>=0.10.0
+
+# NeMo (optional, for advanced extraction)
+# nemo_toolkit[all]>=1.21.0
+
+# Utilities
+numpy>=1.24.0
+tqdm>=4.65.0
+python-dotenv>=1.0.0
+fastapi>=0.100.0
+uvicorn>=0.22.0
+httpx>=0.24.0
+pydantic-settings>=2.0.0
+prometheus-fastapi-instrumentator>=6.0.0
