@@ -1,8 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any
-from core.config import get_settings
 
-settings = get_settings()
 
 class SearchRequest(BaseModel):
     query: str
@@ -12,8 +10,20 @@ class SearchRequest(BaseModel):
     authority: Optional[str] = None
     year: Optional[int] = None
     doc_number: Optional[str] = None
-    use_hyde: bool = Field(default=settings.ENABLE_HYDE)
-    use_cache: bool = Field(default=settings.ENABLE_SEMANTIC_CACHE)
+    use_hyde: Optional[bool] = None
+    use_cache: Optional[bool] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_settings_defaults(cls, values):
+        """Apply config defaults at request time, not import time."""
+        from core.config import get_settings
+        settings = get_settings()
+        if values.get("use_hyde") is None:
+            values["use_hyde"] = settings.ENABLE_HYDE
+        if values.get("use_cache") is None:
+            values["use_cache"] = settings.ENABLE_SEMANTIC_CACHE
+        return values
 
 class ChatRequest(BaseModel):
     query: str
