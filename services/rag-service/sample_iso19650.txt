@@ -1,0 +1,9 @@
+ISO 19650 là bộ tiêu chuẩn quốc tế về quản lý thông tin trong suốt chu kỳ đời của một tài sản xây dựng bằng cách sử dụng Mô hình Thông tin Xây dựng (BIM). 
+
+Tiêu chuẩn này được chia thành nhiều phần:
+1. ISO 19650-1: Các khái niệm và nguyên tắc cốt lõi.
+2. ISO 19650-2: Giai đoạn phân phối tài sản (Asset delivery phase).
+3. ISO 19650-3: Giai đoạn vận hành tài sản (Asset operational phase).
+4. ISO 19650-5: Cách tiếp cận an ninh đối với quản lý thông tin.
+
+Yêu cầu trao đổi thông tin (EIR - Exchange Information Requirements) là một phần quan trọng để định nghĩa những gì cần được bàn giao tại mỗi giai đoạn. Mô hình Thông tin Dự án (PIM) và Mô hình Thông tin Tài sản (AIM) là hai loại mô hình thông tin chính được quy định trong TCVN ISO 19650-1:2020.

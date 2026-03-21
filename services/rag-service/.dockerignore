@@ -1,1 +1,6 @@
 vector-db/volumes/
+venv/
+__pycache__/
+*.log
+.dockerignore
+Dockerfile

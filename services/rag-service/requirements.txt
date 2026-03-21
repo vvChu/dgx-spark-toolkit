@@ -4,12 +4,20 @@
 pymilvus>=2.3.0
 
 # Embeddings - BGE-M3
-FlagEmbedding>=1.2.0
+FlagEmbedding[sparse]>=1.2.0
 sentence-transformers>=2.2.0
 
 # PDF extraction
 pymupdf>=1.23.0
 pdfplumber>=0.10.0
+# paddleocr>=2.7.0
+# paddlepaddle>=2.6.0
+surya-ocr>=0.4.0
+# PyTorch — pinned to CUDA 12.4 build matching the Blackwell driver on DGX Spark.
+# Install via: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+torch==2.5.1+cu124
+torchvision==0.20.1+cu124
+pillow
 
 # NeMo (optional, for advanced extraction)
 # nemo_toolkit[all]>=1.21.0
@@ -23,3 +31,19 @@ uvicorn>=0.22.0
 httpx>=0.24.0
 pydantic-settings>=2.0.0
 prometheus-fastapi-instrumentator>=6.0.0
+python-docx>=1.1.0
+# Ingestion
+watchdog>=3.0.0
+neo4j==5.23.1
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+redis>=5.0.0
+asyncpg>=0.29.0
+langchain>=0.1.0
+langchain-community>=0.0.10
+
+# Evaluation & Benchmarking
+ragas>=0.1.7
+pandas>=2.0.0
+datasets>=2.14.0
+locust>=2.15.0

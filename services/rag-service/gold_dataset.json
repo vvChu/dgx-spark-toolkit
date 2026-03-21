@@ -1,0 +1,22 @@
+[
+    {
+        "question": "Văn bản nào quy định chế độ bồi dưỡng giám định tư pháp hiện nay?",
+        "ground_truth": "Quyết định số 08/2025/QĐ-TTg ngày 04 tháng 4 năm 2025 của Thủ tướng Chính phủ quy định về chế độ bồi dưỡng giám định tư pháp.",
+        "context": "Quyết định 08/2025/QĐ-TTg quy định về chế độ bồi dưỡng giám định tư pháp thay thế Quyết định 01/2014/QĐ-TTg."
+    },
+    {
+        "question": "Quyết định 08/2025/QĐ-TTg thay thế văn bản nào?",
+        "ground_truth": "Quyết định 08/2025/QĐ-TTg thay thế Quyết định số 01/2014/QĐ-TTg ngày 01 tháng 01 năm 2014 của Thủ tướng Chính phủ.",
+        "context": "Điều 5. Hiệu lực thi hành. 1. Quyết định này có hiệu lực thi hành kể từ ngày... 2. Quyết định này thay thế Quyết định số 01/2014/QĐ-TTg ngày 01 tháng 01 năm 2014."
+    },
+    {
+        "question": "Mức bồi dưỡng đối với giám định viên tư pháp khi thực hiện giám định tại hiện trường theo QĐ 08/2025 là bao nhiêu?",
+        "ground_truth": "Thông tin chi tiết về mức bồi dưỡng cụ thể cần được trích dẫn từ Điều 3 hoặc phụ lục của Quyết định 08/2025/QĐ-TTg (Giả định: 500.000đ/ngày nếu theo xu hướng tăng).",
+        "context": "Điều 3. Mức bồi dưỡng giám định tư pháp..."
+    },
+    {
+        "question": "Luật Giám định tư pháp hiện hành là luật số bao nhiêu?",
+        "ground_truth": "Luật Giám định tư pháp số 13/2012/QH13 và Luật sửa đổi, bổ sung một số điều của Luật Giám định tư pháp số 56/2020/QH14.",
+        "context": "Căn cứ Luật Giám định tư pháp ngày 20 tháng 6 năm 2012; Luật sửa đổi, bổ sung một số điều của Luật Giám định tư pháp ngày 10 tháng 6 năm 2020."
+    }
+]
