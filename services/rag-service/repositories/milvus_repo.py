@@ -4,8 +4,6 @@ import re
 import logging
 from core.config import get_settings
 
-settings = get_settings()
-
 logger = logging.getLogger(__name__)
 
 # Strip characters that could break a Milvus string literal in a filter expression
@@ -18,7 +16,7 @@ def _sanitize_pid(pid: str) -> str:
 class MilvusRepository:
     def __init__(self, client: AsyncMilvusClient):
         self.client = client
-        self.collection_name = settings.MILVUS_COLLECTION
+        self.collection_name = get_settings().MILVUS_COLLECTION
 
     async def hybrid_search(self, query_vector: list, sparse_vector: dict, limit: int = 10, expr: str = None):
         """Perform hybrid search utilizing Milvus RRF."""

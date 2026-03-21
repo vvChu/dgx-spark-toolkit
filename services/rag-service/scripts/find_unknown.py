@@ -3,7 +3,7 @@ import os
 
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j-graph:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASS = os.getenv("NEO4J_PASS", "password123")
+NEO4J_PASS = os.environ["NEO4J_PASS"]  # required — no default
 
 driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
 with driver.session() as session:

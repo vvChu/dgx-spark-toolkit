@@ -11,7 +11,7 @@ Comprehensive AI development toolkit for NVIDIA DGX Spark. Provides a unified **
 | **Performance** | 1 petaFLOP (FP4) |
 | **OS** | DGX OS (Ubuntu 24.04) |
 | **Tailscale IP** | `100.83.192.30` |
-| **LAN IP** | `192.168.1.27` |
+| **LAN IP** | `<LAN_IP>` (see `.env`) |
 
 ---
 

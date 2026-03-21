@@ -11,7 +11,6 @@ import json
 import logging
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 router = APIRouter()
 
 SEARCH_TOOL = {
@@ -55,6 +54,7 @@ async def chat_endpoint(
     http_client: httpx.AsyncClient = Depends(get_http_client),
 ):
     try:
+        settings = get_settings()
         retrieval_service = RetrievalService(milvus_repo, neo4j_repo)
 
         # Build messages

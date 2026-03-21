@@ -26,8 +26,6 @@ SPARSE_HIT_RATIO = Gauge('rag_sparse_hit_ratio', 'Ratio of sparse hits in hybrid
 
 logger = logging.getLogger(__name__)
 
-settings = get_settings()
-
 # Characters that must not appear unescaped inside Milvus filter string literals
 _FILTER_UNSAFE = re.compile(r'["\\\x00-\x1f]')
 
@@ -97,11 +95,27 @@ class SemanticCache:
             }
 
 
-semantic_cache = SemanticCache(
-    threshold=settings.SEMANTIC_CACHE_THRESHOLD,
-    ttl_seconds=settings.SEMANTIC_CACHE_TTL_SECONDS,
-)
-hyde_gen = HyDEGenerator()
+# Lazy-initialized module singletons — deferred to avoid import-time get_settings() calls
+_semantic_cache = None
+_hyde_gen = None
+
+
+def _get_semantic_cache() -> SemanticCache:
+    global _semantic_cache
+    if _semantic_cache is None:
+        s = get_settings()
+        _semantic_cache = SemanticCache(
+            threshold=s.SEMANTIC_CACHE_THRESHOLD,
+            ttl_seconds=s.SEMANTIC_CACHE_TTL_SECONDS,
+        )
+    return _semantic_cache
+
+
+def _get_hyde_gen() -> HyDEGenerator:
+    global _hyde_gen
+    if _hyde_gen is None:
+        _hyde_gen = HyDEGenerator()
+    return _hyde_gen
 
 from retrieval.embeddings.bge_m3_hybrid import BGE_M3_HybridEmbedding
 
@@ -154,6 +168,7 @@ async def rewrite_query(original_query: str) -> str:
             return _query_rewrite_cache[original_query]
 
     try:
+        settings = get_settings()
         from core.prompts import QUERY_REWRITE_PROMPT
         prompt = QUERY_REWRITE_PROMPT.format(original_query=original_query)
         payload = {
@@ -208,7 +223,7 @@ class RetrievalService:
         q_vector_np = np.array(query_embeddings["dense"])
         
         if use_cache:
-            cached_results = semantic_cache.get(query, q_vector_np)
+            cached_results = _get_semantic_cache().get(query, q_vector_np)
             if cached_results:
                 SEMANTIC_CACHE_HITS.inc()
                 return {"results": cached_results, "cached": True}
@@ -219,7 +234,7 @@ class RetrievalService:
         
         # Step 2: HyDE
         if use_hyde:
-            hyde_doc = await hyde_gen.generate_hypothetical_answer(rewritten_query)
+            hyde_doc = await _get_hyde_gen().generate_hypothetical_answer(rewritten_query)
             if hyde_doc:
                 search_query = f"{rewritten_query}\n{hyde_doc}"
 
@@ -230,7 +245,7 @@ class RetrievalService:
         sparse_query = query_embeddings["sparse"]
 
         if use_cache:
-            cached_results = semantic_cache.get(search_query, query_vector_np)
+            cached_results = _get_semantic_cache().get(search_query, query_vector_np)
             if cached_results:
                 return {"results": cached_results, "cached": True}
 
@@ -352,6 +367,6 @@ class RetrievalService:
                         r["text"] = f"[LEGAL TIMELINE]: {summary}\n\n[CONTENT]: {r['text']}"
 
         if use_cache and top_results:
-            semantic_cache.set(search_query, query_vector_np, top_results)
+            _get_semantic_cache().set(search_query, query_vector_np, top_results)
             
         return {"results": top_results}

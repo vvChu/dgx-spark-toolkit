@@ -6,7 +6,7 @@ Tài liệu này hướng dẫn cách kết nối từ máy cá nhân tới các
 
 | | |
 |---|---|
-| **IP Nội bộ** | `192.168.1.27` |
+| **IP Nội bộ** | `<LAN_IP>` (configured per host) |
 | **IP VPN/Tailscale** | `100.83.192.30` |
 | **AI Gateway** | port `8090` |
 | **API Key** | `sk-spark-secure-key-2026` |
@@ -34,7 +34,7 @@ curl http://100.83.192.30:8090/v1/models \
 
 ```bash
 # Chạy trên máy Client:
-ssh -L 8090:localhost:8090 vvc@192.168.1.27
+ssh -L 8090:localhost:8090 vvc@<LAN_IP>
 
 # Sau đó dùng localhost:
 curl http://localhost:8090/v1/models \

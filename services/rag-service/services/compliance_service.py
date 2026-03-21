@@ -7,7 +7,6 @@ from retrieval.graph_timeline_retriever import AdvancedGraphRAG
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 class ComplianceService:
     def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG):
@@ -73,6 +72,7 @@ class ComplianceService:
         """
         try:
             # Reusing graph_rag's LLM access via its http_client and settings
+            settings = get_settings()
             payload = {
                 "model": settings.VLLM_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
@@ -119,6 +119,7 @@ class ComplianceService:
         """
         
         try:
+            settings = get_settings()
             payload = {
                 "model": settings.VLLM_MODEL,
                 "messages": [{"role": "user", "content": prompt}],

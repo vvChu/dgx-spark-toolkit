@@ -6,8 +6,6 @@ from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-settings = get_settings()
-
 HYDE_PROMPT_TEMPLATE = """Bạn là một chuyên gia pháp luật Việt Nam.
 Hãy viết một đoạn văn bản giả định trả lời câu hỏi dưới đây một cách chi tiết và chuyên nghiệp.
 Đoạn văn này sẽ được dùng để tìm kiếm các văn bản pháp luật liên quan.
@@ -32,8 +30,10 @@ def _get_hyde_http_client() -> httpx.AsyncClient:
 
 class HyDEGenerator:
     def __init__(self):
-        self.api_url = f"{settings.VLLM_API_BASE}/chat/completions"
-        self.model = settings.VLLM_MODEL
+        _s = get_settings()
+        self.api_url = f"{_s.VLLM_API_BASE}/chat/completions"
+        self.model = _s.VLLM_MODEL
+        self._api_key = _s.LITELLM_MASTER_KEY
 
     async def generate_hypothetical_answer(self, query: str) -> str:
         """Generate a hypothetical document based on the query to improve embedding search."""
@@ -56,7 +56,7 @@ class HyDEGenerator:
             client = _get_hyde_http_client()
             resp = await client.post(
                 self.api_url, json=payload,
-                headers={"Authorization": f"Bearer {settings.LITELLM_MASTER_KEY.get_secret_value()}"}
+                headers={"Authorization": f"Bearer {self._api_key.get_secret_value()}"}
             )
             resp.raise_for_status()
             data = resp.json()
