@@ -1,0 +1,248 @@
+{
+    "annotations": {"list": []},
+    "editable": true,
+    "graphTooltip": 1,
+    "panels": [
+        {
+            "title": "📊 Pipeline Status",
+            "type": "row",
+            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+            "collapsed": false
+        },
+        {
+            "title": "Pipeline Throughput (completed/min)",
+            "type": "timeseries",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 8, "w": 8, "x": 0, "y": 1},
+            "targets": [
+                {
+                    "expr": "sum(rate(rag_pipeline_total{status=\"completed\"}[5m])) * 60",
+                    "legendFormat": "Completed/min"
+                },
+                {
+                    "expr": "sum(rate(rag_pipeline_total{status=\"failed\"}[5m])) * 60",
+                    "legendFormat": "Failed/min"
+                },
+                {
+                    "expr": "sum(rate(rag_pipeline_total{status=\"skipped\"}[5m])) * 60",
+                    "legendFormat": "Skipped/min"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {"unit": "short"}
+            }
+        },
+        {
+            "title": "Queue Depth",
+            "type": "stat",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+            "targets": [
+                {"expr": "rag_queue_depth", "legendFormat": "Pending"}
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "thresholds": {
+                        "steps": [
+                            {"color": "green", "value": 0},
+                            {"color": "yellow", "value": 100},
+                            {"color": "red", "value": 1000}
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "Queue Pending",
+            "type": "stat",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+            "targets": [
+                {"expr": "rag_queue_pending", "legendFormat": "In-Flight"}
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "thresholds": {
+                        "steps": [
+                            {"color": "green", "value": 0},
+                            {"color": "yellow", "value": 5},
+                            {"color": "red", "value": 20}
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "Active Workers",
+            "type": "stat",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+            "targets": [
+                {"expr": "sum(ingestion_workers_active)", "legendFormat": ""}
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "thresholds": {
+                        "steps": [
+                            {"color": "blue", "value": 0},
+                            {"color": "green", "value": 1},
+                            {"color": "yellow", "value": 3}
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "Total Documents Processed",
+            "type": "stat",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+            "targets": [
+                {"expr": "sum(rag_pipeline_total{status=\"completed\"})", "legendFormat": ""}
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "thresholds": {
+                        "steps": [
+                            {"color": "blue", "value": 0},
+                            {"color": "green", "value": 100}
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "Queue Depth Over Time",
+            "type": "timeseries",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 4, "w": 16, "x": 8, "y": 5},
+            "targets": [
+                {"expr": "rag_queue_depth", "legendFormat": "Queue Depth"},
+                {"expr": "rag_queue_pending", "legendFormat": "In-Flight"}
+            ]
+        },
+        {
+            "title": "⏱️ Stage Performance",
+            "type": "row",
+            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9},
+            "collapsed": false
+        },
+        {
+            "title": "Stage Duration — P50 (seconds)",
+            "type": "timeseries",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.50, rate(rag_stage_duration_seconds_bucket[5m]))",
+                    "legendFormat": "{{stage}}"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {"unit": "s"}
+            }
+        },
+        {
+            "title": "Stage Duration — P95 (seconds)",
+            "type": "timeseries",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.95, rate(rag_stage_duration_seconds_bucket[5m]))",
+                    "legendFormat": "{{stage}}"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {"unit": "s"}
+            }
+        },
+        {
+            "title": "Stage Success Rate (%)",
+            "type": "bargauge",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+            "targets": [
+                {
+                    "expr": "sum by (stage) (rag_stage_total{status=\"success\"}) / sum by (stage) (rag_stage_total) * 100",
+                    "legendFormat": "{{stage}}"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "max": 100, "min": 0, "unit": "percent",
+                    "thresholds": {
+                        "steps": [
+                            {"color": "red", "value": 0},
+                            {"color": "yellow", "value": 80},
+                            {"color": "green", "value": 95}
+                        ]
+                    }
+                }
+            },
+            "options": {"orientation": "horizontal"}
+        },
+        {
+            "title": "Stage Errors (rate/min)",
+            "type": "timeseries",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+            "targets": [
+                {
+                    "expr": "sum by (stage) (rate(rag_stage_total{status=\"error\"}[5m])) * 60",
+                    "legendFormat": "{{stage}}"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {"unit": "short"}
+            }
+        },
+        {
+            "title": "🔄 Ingestion Metrics",
+            "type": "row",
+            "gridPos": {"h": 1, "w": 24, "x": 0, "y": 26},
+            "collapsed": false
+        },
+        {
+            "title": "Last Ingestion Latency",
+            "type": "gauge",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 8, "w": 8, "x": 0, "y": 27},
+            "targets": [
+                {"expr": "ingestion_latency_seconds", "legendFormat": ""}
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s", "min": 0, "max": 300,
+                    "thresholds": {
+                        "steps": [
+                            {"color": "green", "value": 0},
+                            {"color": "yellow", "value": 60},
+                            {"color": "red", "value": 180}
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "Stage Invocations (total)",
+            "type": "table",
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "gridPos": {"h": 8, "w": 16, "x": 8, "y": 27},
+            "targets": [
+                {
+                    "expr": "sum by (stage, status) (rag_stage_total)",
+                    "legendFormat": "{{stage}} — {{status}}",
+                    "format": "table",
+                    "instant": true
+                }
+            ]
+        }
+    ],
+    "schemaVersion": 39,
+    "tags": ["rag", "ingestion", "pipeline", "dgx-spark"],
+    "templating": {"list": []},
+    "time": {"from": "now-6h", "to": "now"},
+    "title": "RAG Ingestion Pipeline — DGX Spark",
+    "uid": "rag-pipeline"
+}

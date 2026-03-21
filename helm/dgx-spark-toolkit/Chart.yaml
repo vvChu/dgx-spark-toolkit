@@ -1,0 +1,18 @@
+apiVersion: v2
+name: dgx-spark-toolkit
+description: Enterprise RAG and BIM Intelligence Engine for DGX Spark
+type: application
+version: 1.0.0
+appVersion: "2.0.0"
+
+keywords:
+  - rag
+  - bim
+  - legal-tech
+  - kubernetes
+  - helm
+  - nvidia
+
+maintainers:
+  - name: DGX Spark Team
+    email: support@dgxspark.local

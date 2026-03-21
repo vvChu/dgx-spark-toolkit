@@ -1,0 +1,38 @@
+groups:
+- name: dgx-spark-alerts
+  rules:
+  - alert: HighIngestionLatency
+    expr: ingestion_latency_seconds > 600
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High ingestion latency on {{ $labels.instance }}"
+      description: "Ingestion is taking more than 10 minutes per file."
+
+  - alert: VisionFallbackPeak
+    expr: rate(vision_fallback_total[5m]) / rate(page_process_total[5m]) > 0.3
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High vision fallback ratio"
+      description: "More than 30% of pages are triggering vision fallback, check OCR quality."
+
+  - alert: RAGServiceLatencyP99
+    expr: histogram_quantile(0.99, sum(rate(rag_search_latency_seconds_bucket[5m])) by (le)) > 30
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Critical search latency"
+      description: "99th percentile search latency is above 30s."
+
+  - alert: GPUOomRisk
+    expr: nvidia_gpu_memory_used_bytes / nvidia_gpu_memory_total_bytes > 0.95
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "GPU Memory Critically High"
+      description: "GPU VRAM utilization is above 95% on {{ $labels.instance }}."

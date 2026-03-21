@@ -1,0 +1,353 @@
+{
+    "annotations": {
+        "list": []
+    },
+    "editable": true,
+    "graphTooltip": 1,
+    "panels": [
+        {
+            "title": "RAG Request Rate (req/s)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 0
+            },
+            "targets": [
+                {
+                    "expr": "rate(http_requests_total{handler=~\"/chat|/search\"}[5m])",
+                    "legendFormat": "{{handler}} — {{method}}"
+                }
+            ]
+        },
+        {
+            "title": "RAG Latency P50 / P95 (seconds)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 0
+            },
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{handler=~\"/chat|/search\"}[5m]))",
+                    "legendFormat": "{{handler}} — P50"
+                },
+                {
+                    "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{handler=~\"/chat|/search\"}[5m]))",
+                    "legendFormat": "{{handler}} — P95"
+                }
+            ]
+        },
+        {
+            "title": "HTTP Status Codes",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 0
+            },
+            "targets": [
+                {
+                    "expr": "rate(http_requests_total{handler=~\"/chat|/search|/admin/.*\"}[5m])",
+                    "legendFormat": "{{handler}} — {{status}}"
+                }
+            ]
+        },
+        {
+            "title": "vLLM Generation Throughput (tok/s)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 8
+            },
+            "targets": [
+                {
+                    "expr": "vllm:avg_generation_throughput_toks_per_s",
+                    "legendFormat": "{{job}}"
+                }
+            ]
+        },
+        {
+            "title": "vLLM KV Cache Usage (%)",
+            "type": "gauge",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 8
+            },
+            "targets": [
+                {
+                    "expr": "vllm:gpu_cache_usage_perc * 100",
+                    "legendFormat": "GPU Cache"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "max": 100,
+                    "min": 0,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": 0
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 70
+                            },
+                            {
+                                "color": "red",
+                                "value": 90
+                            }
+                        ]
+                    },
+                    "unit": "percent"
+                }
+            }
+        },
+        {
+            "title": "vLLM Active / Queued Requests",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 16
+            },
+            "targets": [
+                {
+                    "expr": "vllm:num_requests_running",
+                    "legendFormat": "Running"
+                },
+                {
+                    "expr": "vllm:num_requests_waiting",
+                    "legendFormat": "Queued"
+                }
+            ]
+        },
+        {
+            "title": "RAG Service Response Size (bytes)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 16
+            },
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.95, rate(http_response_size_bytes_bucket{handler=~\"/chat|/search\"}[5m]))",
+                    "legendFormat": "{{handler}} — P95 size"
+                }
+            ]
+        },
+        {
+            "title": "Avg Answer Faithfulness (Gemini 3.1 Pro)",
+            "type": "gauge",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 24
+            },
+            "targets": [
+                {
+                    "expr": "avg(rag_eval_faithfulness)",
+                    "legendFormat": "Faithfulness Score"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "max": 1,
+                    "min": 0,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": 0
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.5
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.85
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "Avg Context Relevancy (Gemini 3.1 Pro)",
+            "type": "gauge",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 24
+            },
+            "targets": [
+                {
+                    "expr": "avg(rag_eval_relevancy)",
+                    "legendFormat": "Relevancy Score"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "max": 1,
+                    "min": 0,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": 0
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.5
+                            },
+                            {
+                                "color": "green",
+                                "value": 0.85
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "vLLM Model Throughput Comparison (tokens/sec)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 32
+            },
+            "targets": [
+                {
+                    "expr": "vllm:avg_generation_throughput_toks_per_s",
+                    "legendFormat": "{{model}}"
+                }
+            ]
+        },
+        {
+            "title": "Cache Hit Ratio (%)",
+            "type": "gauge",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 40
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(litellm_cache_hit_total[5m])) / sum(rate(litellm_request_total[5m])) * 100",
+                    "legendFormat": "Cache Hit Ratio"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "max": 100,
+                    "min": 0,
+                    "unit": "percent",
+                    "thresholds": {
+                        "steps": [
+                            {"color": "red", "value": 0},
+                            {"color": "yellow", "value": 30},
+                            {"color": "green", "value": 60}
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "Fallback Events (Count)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 40
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(litellm_request_total{model_group=\"fallback\"}[5m]))",
+                    "legendFormat": "Fallback Requests"
+                }
+            ]
+        }
+    ],
+    "schemaVersion": 39,
+    "tags": [
+        "rag",
+        "dgx-spark",
+        "evaluation"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-6h",
+        "to": "now"
+    },
+    "title": "RAG Pipeline — DGX Spark Monitoring",
+    "uid": "rag-dgx"
+}

@@ -9,7 +9,10 @@
     {
       "title": "Active Requests (Running)",
       "type": "timeseries",
-      "datasource": "Prometheus",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "targets": [
         {
@@ -21,7 +24,10 @@
     {
       "title": "Queued Requests (Waiting)",
       "type": "timeseries",
-      "datasource": "Prometheus",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "targets": [
         {
@@ -33,7 +39,10 @@
     {
       "title": "Generation Throughput (tokens/sec)",
       "type": "timeseries",
-      "datasource": "Prometheus",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
       "targets": [
         {
@@ -45,7 +54,10 @@
     {
       "title": "KV Cache Usage (%)",
       "type": "gauge",
-      "datasource": "Prometheus",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
       "targets": [
         {
@@ -71,7 +83,10 @@
     {
       "title": "Request Latency (P50 / P95 / P99)",
       "type": "timeseries",
-      "datasource": "Prometheus",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
       "targets": [
         {
