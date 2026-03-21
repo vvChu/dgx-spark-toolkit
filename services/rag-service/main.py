@@ -1,10 +1,13 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import logging
 import os
 
 from core.database import lifespan
 from api.routers import search, chat, admin, analysis, visualization
+
+__version__ = "2.0.0"
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -25,7 +28,7 @@ app = FastAPI(
     Retrieval Augmented Generation service for BIM applications.
     Enterprise Architecture Version.
     """,
-    version="2.0.0",
+    version=__version__,
     openapi_tags=tags_metadata,
     lifespan=lifespan
 )
@@ -53,7 +56,7 @@ Instrumentator().instrument(app).expose(app, include_in_schema=False, tags=["Mon
 
 @app.get("/", tags=["General"])
 async def root():
-    return {"message": "BIM RAG Service is running (v2.0 Enterprise Structure)", "docs": "/docs", "health": "/health"}
+    return {"message": f"BIM RAG Service is running (v{__version__} Enterprise Structure)", "docs": "/docs", "health": "/health"}
 
 @app.get("/health", tags=["General"])
 async def health(request: Request):
@@ -84,10 +87,9 @@ async def health(request: Request):
 
     all_ok = all(v == "ok" for v in checks.values())
     status_code = 200 if all_ok else 503
-    from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=status_code,
-        content={"status": "ok" if all_ok else "degraded", "version": "2.0.0", "checks": checks}
+        content={"status": "ok" if all_ok else "degraded", "version": __version__, "checks": checks}
     )
 
 @app.get("/health/pipeline", tags=["Monitoring"])
@@ -122,7 +124,6 @@ async def pipeline_health():
     except Exception as e:
         checks["sync_db"] = {"status": "unavailable", "error": str(e)}
 
-    from fastapi.responses import JSONResponse
     all_healthy = all(
         isinstance(v, dict) and v.get("status") == "healthy"
         for v in checks.values()
@@ -135,4 +136,4 @@ async def pipeline_health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8006, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=True)

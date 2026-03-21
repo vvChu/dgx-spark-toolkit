@@ -16,5 +16,6 @@ model_cache/
 data/
 logs/
 .git/
+surya_src/
 .dockerignore
 Dockerfile

@@ -1,0 +1,13 @@
+# Development, testing, and benchmarking dependencies
+# Install via: pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# Testing
+pytest>=7.0.0
+
+# Evaluation & Benchmarking
+ragas>=0.1.7
+pandas>=2.0.0
+datasets>=2.14.0
+locust>=2.15.0

@@ -34,6 +34,7 @@ services:
       interval: 60s
       timeout: 30s
       retries: 10
+      start_period: 120s
     depends_on:
       milvus-standalone:
         condition: service_healthy
@@ -48,6 +49,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
     networks:
       - rag-network
 
@@ -285,6 +294,7 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - rag-network
+    restart: unless-stopped
 
   grafana:
     image: grafana/grafana:latest
@@ -301,6 +311,7 @@ services:
       - ./monitoring/grafana-vllm-dashboard.json:/var/lib/grafana/dashboards/vllm.json
       - ./monitoring/grafana-rag-dashboard.json:/var/lib/grafana/dashboards/rag.json
       - ./monitoring/grafana-ingestion-dashboard.json:/var/lib/grafana/dashboards/ingestion.json
+    restart: unless-stopped
     networks:
       - rag-network
 
@@ -317,6 +328,12 @@ services:
     depends_on:
       rag-service:
         condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - rag-network
   vllm-4b:
@@ -408,6 +425,7 @@ services:
   locust:
     image: locustio/locust:latest
     container_name: locust-loadtest
+    profiles: ["loadtest"]
     volumes:
       - ./services/rag-service/benchmarks:/mnt/locust
     command: -f /mnt/locust/locustfile.py --host http://rag-service:8000
@@ -415,7 +433,7 @@ services:
       - "8089:8089"
     networks:
       - rag-network
-    restart: unless-stopped
+    restart: "no"
 
 networks:
   rag-network:
