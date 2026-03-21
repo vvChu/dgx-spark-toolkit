@@ -38,6 +38,22 @@ class Settings(BaseSettings):
     MAX_WORKERS: int = 2
     MAX_DIGITAL_WORKERS: int = 2
 
+    # Database & Redis
+    DATABASE_URL: str = ""
+    REDIS_URL: str = "redis://litellm-redis:6379/1"
+
+    # Device Control
+    FORCE_CPU_RERANKER: bool = False
+    FORCE_CPU_EMBEDDING: bool = False
+
+    # Vision Models (ingestion pipeline)
+    PRIMARY_VISION_MODEL: str = "rag-core"
+    FALLBACK_VISION_MODEL: str = "gemini-2.5-flash"
+
+    # Paths
+    PDF_DIR: str = "/app/data/pdf"
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:5173"
+
     # Semantic cache tuning — exposed here so they can be adjusted via env without rebuilding
     ENABLE_SEMANTIC_CACHE: bool = True
     SEMANTIC_CACHE_THRESHOLD: float = 0.92

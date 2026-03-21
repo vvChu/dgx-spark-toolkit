@@ -18,6 +18,8 @@ class AppState:
     milvus_client = None
     state_manager: PostgresStateManager = None
     http_client: httpx.AsyncClient = None
+    redis_queue = None
+    async_state_manager = None
 
 state = AppState()
 
@@ -60,15 +62,39 @@ async def lifespan(app: FastAPI):
     # Shared HTTP client — reuses connection pool across all requests
     state.http_client = httpx.AsyncClient(timeout=120.0)
 
+    # Init Redis Queue (singleton — avoids per-request connection leak)
+    try:
+        from ingestion.queue import RedisQueue
+        state.redis_queue = RedisQueue()
+        logger.info("Successfully initialized RedisQueue.")
+    except Exception as e:
+        logger.error(f"Failed to initialize RedisQueue: {e}")
+        state.redis_queue = None
+
+    # Init Async State Manager (singleton — avoids per-request pool leak)
+    try:
+        from ingestion.async_state_manager import AsyncStateManager
+        state.async_state_manager = AsyncStateManager()
+        await state.async_state_manager.init()
+        logger.info("Successfully initialized AsyncStateManager.")
+    except Exception as e:
+        logger.error(f"Failed to initialize AsyncStateManager: {e}")
+        state.async_state_manager = None
+
     # Attach to app state for requests
     app.state.neo4j_driver = state.neo4j_driver
     app.state.milvus_client = state.milvus_client
     app.state.state_manager = state.state_manager
     app.state.http_client = state.http_client
+    app.state.redis_queue = state.redis_queue
+    app.state.async_state_manager = state.async_state_manager
 
     yield
 
     # Shutdown
+    if state.async_state_manager:
+        await state.async_state_manager.close()
+        logger.info("AsyncStateManager closed.")
     if state.neo4j_driver:
         await state.neo4j_driver.close()
         logger.info("Neo4j connection closed.")

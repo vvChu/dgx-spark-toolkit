@@ -140,21 +140,28 @@ def _install_common_overrides():
 def test_pipeline_health_endpoint(client):
     _install_common_overrides()
 
-    with patch("ingestion.queue.RedisQueue") as queue_cls, patch("ingestion.async_state_manager.AsyncStateManager") as async_state_cls, patch("ingestion.state_manager.PostgresStateManager") as sync_state_cls:
-        queue = Mock()
-        queue.health_check.return_value = {"status": "healthy"}
-        queue_cls.return_value = queue
+    # The refactored /health/pipeline reads singletons from app.state
+    rq_mock = Mock()
+    rq_mock.health_check.return_value = {"status": "healthy"}
 
-        async_state = AsyncMock()
-        async_state.health_check.return_value = {"status": "healthy"}
-        async_state.get_status_summary.return_value = {"completed": 1}
-        async_state_cls.return_value = async_state
+    asm_mock = AsyncMock()
+    asm_mock.health_check.return_value = {"status": "healthy"}
+    asm_mock.get_status_summary.return_value = {"completed": 1}
 
-        sync_state = Mock()
-        sync_state.health_check.return_value = {"status": "healthy"}
-        sync_state_cls.return_value = sync_state
+    sm_mock = Mock()
+    sm_mock.health_check.return_value = {"status": "healthy"}
 
+    app.state.redis_queue = rq_mock
+    app.state.async_state_manager = asm_mock
+    app.state.state_manager = sm_mock
+
+    try:
         response = client.get("/health/pipeline")
+    finally:
+        # Clean up app.state to avoid leaking into other tests
+        for attr in ("redis_queue", "async_state_manager", "state_manager"):
+            if hasattr(app.state, attr):
+                delattr(app.state, attr)
 
     assert response.status_code == 200
     body = response.json()

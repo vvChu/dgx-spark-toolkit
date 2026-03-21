@@ -26,18 +26,18 @@ pillow
 numpy>=1.24.0
 tqdm>=4.65.0
 python-dotenv>=1.0.0
-fastapi>=0.100.0
+fastapi>=0.100.0,<1.0.0
 uvicorn>=0.22.0
 httpx>=0.24.0
-pydantic-settings>=2.0.0
+pydantic-settings>=2.0.0,<3.0.0
 prometheus-fastapi-instrumentator>=6.0.0
 python-docx>=1.1.0
 # Ingestion
 watchdog>=3.0.0
 neo4j==5.23.1
-sqlalchemy>=2.0.0
+sqlalchemy>=2.0.0,<3.0.0
 psycopg2-binary>=2.9.0
 redis>=5.0.0
 asyncpg>=0.29.0
-langchain>=0.1.0
-langchain-community>=0.0.10
+langchain>=0.1.0,<1.0.0
+langchain-community>=0.0.10,<1.0.0

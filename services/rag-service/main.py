@@ -5,7 +5,8 @@ import logging
 import os
 
 from core.database import lifespan
-from api.routers import search, chat, admin, analysis, visualization
+from api.routers import search, chat, admin, analysis
+from api.routers import stats, graph, preview, evaluation
 
 __version__ = "2.0.0"
 
@@ -48,7 +49,10 @@ app.include_router(search.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
 app.include_router(analysis.router)
-app.include_router(visualization.router)
+app.include_router(stats.router)
+app.include_router(graph.router)
+app.include_router(preview.router)
+app.include_router(evaluation.router)
 
 # Monitoring - Prometheus Metrics
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -93,36 +97,40 @@ async def health(request: Request):
     )
 
 @app.get("/health/pipeline", tags=["Monitoring"])
-async def pipeline_health():
+async def pipeline_health(request: Request):
     """Health check for the ingestion pipeline subsystems (Redis queue, DB, state)."""
     checks = {}
 
-    # Redis Queue
-    try:
-        from ingestion.queue import RedisQueue
-        q = RedisQueue()
-        checks["redis_queue"] = q.health_check()
-    except Exception as e:
-        checks["redis_queue"] = {"status": "unavailable", "error": str(e)}
+    # Redis Queue (singleton from lifespan)
+    rq = getattr(request.app.state, "redis_queue", None)
+    if rq:
+        try:
+            checks["redis_queue"] = rq.health_check()
+        except Exception as e:
+            checks["redis_queue"] = {"status": "unavailable", "error": str(e)}
+    else:
+        checks["redis_queue"] = {"status": "unavailable", "error": "not initialized"}
 
-    # Async PostgreSQL
-    try:
-        from ingestion.async_state_manager import AsyncStateManager
-        sm = AsyncStateManager()
-        await sm.init()
-        checks["async_db"] = await sm.health_check()
-        checks["async_db_summary"] = await sm.get_status_summary()
-        await sm.close()
-    except Exception as e:
-        checks["async_db"] = {"status": "unavailable", "error": str(e)}
+    # Async PostgreSQL (singleton from lifespan)
+    asm = getattr(request.app.state, "async_state_manager", None)
+    if asm:
+        try:
+            checks["async_db"] = await asm.health_check()
+            checks["async_db_summary"] = await asm.get_status_summary()
+        except Exception as e:
+            checks["async_db"] = {"status": "unavailable", "error": str(e)}
+    else:
+        checks["async_db"] = {"status": "unavailable", "error": "not initialized"}
 
-    # Sync PostgreSQL (existing)
-    try:
-        from ingestion.state_manager import PostgresStateManager
-        sync_sm = PostgresStateManager()
-        checks["sync_db"] = sync_sm.health_check()
-    except Exception as e:
-        checks["sync_db"] = {"status": "unavailable", "error": str(e)}
+    # Sync PostgreSQL (singleton from lifespan)
+    sm = getattr(request.app.state, "state_manager", None)
+    if sm:
+        try:
+            checks["sync_db"] = sm.health_check()
+        except Exception as e:
+            checks["sync_db"] = {"status": "unavailable", "error": str(e)}
+    else:
+        checks["sync_db"] = {"status": "unavailable", "error": "not initialized"}
 
     all_healthy = all(
         isinstance(v, dict) and v.get("status") == "healthy"
