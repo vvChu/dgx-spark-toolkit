@@ -5,6 +5,9 @@ __pycache__/
 venv/
 .venv/
 
+# Benchmark results
+services/rag-service/benchmarks/benchmark_results_*.csv
+
 # Environment
 .env
 
@@ -42,7 +45,6 @@ build_log.txt
 # Test/benchmark results
 capability_results.json
 services/rag-service/results.tsv
-services/rag-service/benchmarks/benchmark_results_*.csv
 
 # Cache & backups
 services/rag-service/ocr_cache.json

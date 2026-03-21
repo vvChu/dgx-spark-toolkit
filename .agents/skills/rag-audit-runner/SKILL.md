@@ -9,7 +9,7 @@ This skill runs a comprehensive quality audit on the Vietnamese legal RAG pipeli
 
 ## Prerequisites
 - Export files must exist at `/home/vvc/Public/exports/json/` and `/home/vvc/Public/exports/markdown/`
-- The `comprehensive_audit.py` is the reference implementation at `/home/vvc/Codebase/dgx-spark-toolkit/services/rag-service/comprehensive_audit.py`
+- The `comprehensive_audit.py` is the reference implementation at `/home/vvc/Codebase/dgx-spark-toolkit/services/rag-service/scripts/comprehensive_audit.py`
 
 ## How to Run the Audit
 

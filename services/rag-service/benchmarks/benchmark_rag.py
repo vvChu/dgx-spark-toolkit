@@ -1,122 +1,71 @@
-import asyncio
 import httpx
-import json
 import time
-import statistics
-from typing import List, Dict, Any
+import asyncio
+import json
 
-API_BASE = "http://localhost:8000"
-TIMEOUT = 120.0
+BASE_URL = "http://127.0.0.1:8005"
 
-GOLD_DATASET = [
-    {
-        "category": "Technical Regulation (Stainless Steel)",
-        "query": "Thép không gỉ là gì và hàm lượng Crom tối thiểu là bao nhiêu theo QCVN 20:2019/BKHCN?",
-        "language": "vi"
-    },
-    {
-        "category": "Telecomm Norms (Surveying)",
-        "query": "Định mức khảo sát để lập dự toán công trình bưu chính viễn thông được quy định tại văn bản nào?",
-        "language": "vi"
-    },
-    {
-        "category": "Guard Law (VN)",
-        "query": "Đối tượng cảnh vệ bao gồm những ai theo quy định của Luật Cảnh vệ 2017?",
-        "language": "vi"
-    },
-    {
-        "category": "Land Management (Phu Tho)",
-        "query": "Quy định về quản lý và sử dụng đất trên địa bàn tỉnh Phú Thọ theo Quyết định 16/UBND năm 2024?",
-        "language": "vi"
-    },
-    {
-        "category": "Cross-Language (Steel)",
-        "query": "What are the management requirements for imported stainless steel in Vietnam?",
-        "language": "en"
+async def benchmark_search(query: str, use_hyde: bool, use_cache: bool, retries=5):
+    payload = {
+        "query": query,
+        "limit": 5,
+        "use_reranker": True,
+        "use_hyde": use_hyde,
+        "use_cache": use_cache
     }
-]
+    
+    for i in range(retries):
+        try:
+            start_time = time.perf_counter()
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                resp = await client.post(f"{BASE_URL}/search", json=payload)
+            end_time = time.perf_counter()
+            
+            latency = end_time - start_time
+            status = resp.status_code
+            data = resp.json() if status == 200 else {}
+            cached = data.get("cached", False)
+            
+            return {
+                "query": query,
+                "hyde": use_hyde,
+                "cache_enabled": use_cache,
+                "latency_sec": latency,
+                "status": status,
+                "cached": cached,
+                "results_count": len(data.get("results", []))
+            }
+        except httpx.ConnectError:
+            print(f"Connection failed, retrying in 10s... ({i+1}/{retries})")
+            await asyncio.sleep(10)
+    
+    raise Exception("Max retries reached")
 
 async def run_benchmark():
-    print("🚀 Starting Comprehensive RAG Benchmark...")
-    print("==========================================")
+    print("--- Starting RAG v3 Benchmark (Optimized Fast Cache) ---")
     
-    results = []
+    query = "Quy định về BIM trong Nghị định 15/2021"
     
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        for item in GOLD_DATASET:
-            print(f"\n[Testing] Category: {item['category']}")
-            print(f"Query: {item['query']}")
-            
-            start_time = time.time()
-            try:
-                # 1. Call Chat API
-                chat_resp = await client.post(
-                    f"{API_BASE}/chat",
-                    json={"query": item["query"], "language": item["language"]}
-                )
-                chat_resp.raise_for_status()
-                chat_data = chat_resp.json()
-                latency = time.time() - start_time
-                
-                answer = chat_data["answer"]
-                context = [c["text"] for c in chat_data.get("context", [])]
-                
-                # 2. Call Evaluation API
-                eval_resp = await client.post(
-                    f"{API_BASE}/evaluate",
-                    json={
-                        "query": item["query"],
-                        "answer": answer,
-                        "context": context
-                    }
-                )
-                eval_resp.raise_for_status()
-                eval_data = eval_resp.json()
-                
-                res = {
-                    "category": item["category"],
-                    "query": item["query"],
-                    "latency": round(latency, 2),
-                    "faithfulness": eval_data.get("faithfulness", 0.0),
-                    "relevancy": eval_data.get("relevancy", 0.0),
-                    "cached": chat_data.get("cached", False)
-                }
-                results.append(res)
-                
-                print(f"  ✅ Done. Latency: {res['latency']}s | Faith: {res['faithfulness']} | Rel: {res['relevancy']} | Cached: {res['cached']}")
-                
-            except Exception as e:
-                print(f"  ❌ Failed: {e}")
-                results.append({
-                    "category": item["category"],
-                    "query": item["query"],
-                    "error": str(e)
-                })
-
-    print("\n\n==========================================")
-    print("📊 Benchmark Summary")
-    print("==========================================")
+    # 1. Cold Start
+    print("\n1. Cold Start (Normal Search):")
+    res1 = await benchmark_search(query, use_hyde=False, use_cache=False)
+    print(json.dumps(res1, indent=2))
     
-    valid_results = [r for r in results if "error" not in r]
-    if valid_results:
-        avg_faith = statistics.mean([r["faithfulness"] for r in valid_results])
-        avg_rel = statistics.mean([r["relevancy"] for r in valid_results])
-        avg_lat = statistics.mean([r["latency"] for r in valid_results])
-        
-        print(f"Total Tests: {len(results)}")
-        print(f"Success Rate: {len(valid_results)/len(results)*100:.1f}%")
-        print(f"Average Faithfulness: {avg_faith:.2f}")
-        print(f"Average Relevancy: {avg_rel:.2f}")
-        print(f"Average Latency: {avg_lat:.2f}s")
-        
-        # Breakdown by category
-        print("\nCategory Breakdown:")
-        for r in results:
-            status = "✅" if "error" not in r else "❌"
-            score = (r['faithfulness'] + r['relevancy']) / 2 if "error" not in r else 0
-            print(f"  {status} {r['category']:20}: Score {score:.2f} | Latency {r.get('latency', 'N/A')}s")
-    else:
-        print("No valid results collected.")
+    # 2. HyDE Search
+    print("\n2. HyDE Search:")
+    res2 = await benchmark_search(query, use_hyde=True, use_cache=False)
+    print(json.dumps(res2, indent=2))
+    
+    # 3. Cache Hit (Exact query - Fast Path)
+    print("\n3. Fast Cache Hit (Exact same query):")
+    res3 = await benchmark_search(query, use_hyde=False, use_cache=True)
+    print(json.dumps(res3, indent=2))
+    
+    # 4. Semantic Cache Hit (Similar query - Post-Rewrite Path)
+    print("\n4. Semantic Cache Hit (Similar query):")
+    query_sim = "BIM trong NĐ 15/2021 quy định thế nào?"
+    res4 = await benchmark_search(query_sim, use_hyde=False, use_cache=True)
+    print(json.dumps(res4, indent=2))
 
 if __name__ == "__main__":
     asyncio.run(run_benchmark())

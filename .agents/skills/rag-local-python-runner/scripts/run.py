@@ -14,7 +14,9 @@ import time
 
 # ── Setup environment BEFORE any imports from the rag-service ──
 RAG_SERVICE_DIR = "/home/vvc/Codebase/dgx-spark-toolkit/services/rag-service"
+RAG_SCRIPTS_DIR = os.path.join(RAG_SERVICE_DIR, "scripts")
 sys.path.insert(0, RAG_SERVICE_DIR)
+sys.path.insert(0, RAG_SCRIPTS_DIR)
 os.chdir(RAG_SERVICE_DIR)
 
 os.environ["EXPORT_JSON_DIR"] = "/home/vvc/Public/exports/json"

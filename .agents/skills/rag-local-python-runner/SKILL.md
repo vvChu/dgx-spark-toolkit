@@ -11,17 +11,17 @@ This skill runs the autoresearch evaluation loop locally (no Docker needed).
 
 1. Sets environment variables to point at local export directories
 2. Optionally applies pipeline fixes via `pipeline.py`
-3. Runs `comprehensive_audit.py` to score exports
-4. Parses output via `evaluate.py` into structured JSON
+3. Runs `scripts/comprehensive_audit.py` to score exports
+4. Parses output via `scripts/evaluate.py` into structured JSON
 5. Logs results to `results.tsv`
 
 ## Usage
 
-Run the script at `.agent/skills/rag-local-python-runner/scripts/run.py`:
+Run the script at `.agents/skills/rag-local-python-runner/scripts/run.py`:
 
 ```bash
 cd /home/vvc/Codebase/dgx-spark-toolkit
-python3 .agent/skills/rag-local-python-runner/scripts/run.py [change_description]
+python3 .agents/skills/rag-local-python-runner/scripts/run.py [change_description]
 ```
 
 ### Arguments
