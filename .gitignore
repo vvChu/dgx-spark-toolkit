@@ -34,3 +34,23 @@ services/rag-service/venv/
 wheels/
 vllm_backport/
 *.whl
+
+# Build artifacts
+build_debug.txt
+build_log.txt
+
+# Test/benchmark results
+capability_results.json
+services/rag-service/results.tsv
+services/rag-service/benchmarks/benchmark_results_*.csv
+
+# Cache & backups
+services/rag-service/ocr_cache.json
+*.json.bak
+
+# Ingestion state runtime files
+services/rag-service/ingestion_state.json
+
+# Test data (large PDFs/docs)
+services/rag-service/data/legal_test/
+tests/*.pdf
