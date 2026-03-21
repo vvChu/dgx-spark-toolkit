@@ -126,7 +126,7 @@ services:
       - GATEWAY_PROXY_KEY=${GATEWAY_PROXY_KEY}
       - VIBER_PROXY_URL=${VIBER_PROXY_URL:-https://viber.claudegateway.site/v1}
       - VIBER_PROXY_KEY=${VIBER_PROXY_KEY}
-      - GATEWAY_LOCAL_URL=${GATEWAY_LOCAL_URL:-http://100.83.192.30:8004/v1}
+      - GATEWAY_LOCAL_URL=${GATEWAY_LOCAL_URL:-http://${HOST_IP:-localhost}:8004/v1}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
@@ -309,12 +309,12 @@ services:
     build:
       context: ./services/frontend
       args:
-        - VITE_API_URL=http://100.83.192.30:8005
+        - VITE_API_URL=${VITE_API_URL:-http://${HOST_IP:-localhost}:8005}
     container_name: rag-frontend
     ports:
       - "5173:80"
     environment:
-      - VITE_API_URL=http://100.83.192.30:8005
+      - VITE_API_URL=${VITE_API_URL:-http://${HOST_IP:-localhost}:8005}
     depends_on:
       rag-service:
         condition: service_healthy
