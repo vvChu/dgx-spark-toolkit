@@ -2,6 +2,9 @@ import logging
 import json
 import asyncio
 from typing import List, Dict, Any
+
+import httpx
+
 from repositories.milvus_repo import MilvusRepository
 from retrieval.graph_timeline_retriever import AdvancedGraphRAG
 from core.config import get_settings
@@ -9,10 +12,11 @@ from core.config import get_settings
 logger = logging.getLogger(__name__)
 
 class LegalAnalysisService:
-    def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG):
+    def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None):
         self.milvus_repo = milvus_repo
         self.graph_rag = graph_rag
         self.settings = get_settings()
+        self._http_client = http_client
 
     async def analyze_conflicts(self, doc_id: str, query: str, depth: int = 1) -> Dict[str, Any]:
         """
@@ -47,7 +51,7 @@ class LegalAnalysisService:
         # We use a standard dense search for the specific topic within the document
         new_results = await self.milvus_repo.hybrid_search(
             query_vector=await self._get_query_embedding(query),
-            sparse_query=None, # Simplified for intra-doc search
+            sparse_vector={},  # empty sparse vector for intra-doc search
             limit=5,
             expr=f"doc_number == '{doc_id.split('/')[-1]}'" 
         )
@@ -65,7 +69,7 @@ class LegalAnalysisService:
             
             pred_results = await self.milvus_repo.hybrid_search(
                 query_vector=await self._get_query_embedding(query),
-                sparse_query=None,
+                sparse_vector={},
                 limit=5,
                 expr=f"doc_number == '{pred_num}'"
             )
@@ -124,15 +128,15 @@ Trình bày bằng tiếng Việt, có cấu trúc rõ ràng (sử dụng Header
                 "max_tokens": 2048
             }
 
-            async with httpx.AsyncClient(timeout=90.0) as client:
-                resp = await client.post(
-                    f"{self.settings.VLLM_API_BASE}/chat/completions",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {self.settings.LITELLM_MASTER_KEY.get_secret_value()}"}
-                )
-                if resp.status_code == 200:
-                    return resp.json()["choices"][0]["message"]["content"].strip()
-                else:
-                    return f"Lỗi gọi LLM: {resp.text}"
+            client = self._http_client or await self.graph_rag._get_client()
+            resp = await client.post(
+                f"{self.settings.VLLM_API_BASE}/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {self.settings.LITELLM_MASTER_KEY.get_secret_value()}"}
+            )
+            if resp.status_code == 200:
+                return resp.json()["choices"][0]["message"]["content"].strip()
+            else:
+                return f"Lỗi gọi LLM: {resp.text}"
         except Exception as e:
             return f"Lỗi phân tích: {e}"

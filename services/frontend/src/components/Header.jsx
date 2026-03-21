@@ -20,6 +20,8 @@ export default function Header({ stats, language, setLanguage }) {
             <button
               key={lang}
               onClick={() => setLanguage(lang)}
+              aria-label={lang === 'vi' ? 'Switch to Vietnamese' : 'Switch to English'}
+              aria-pressed={language === lang}
               className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all ${
                 language === lang ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'
               }`}

@@ -9,14 +9,16 @@ const tabs = [
 
 export default function Sidebar({ activeTab, setActiveTab }) {
   return (
-    <div className="w-20 glass flex flex-col items-center py-8 space-y-8 border-r border-[#313244] z-50">
-      <div className="p-3 bg-blue-500/20 rounded-xl text-blue-500 mb-4 shadow-lg shadow-blue-500/10">
+    <nav role="navigation" aria-label="Main navigation" className="w-20 glass flex flex-col items-center py-8 space-y-8 border-r border-[#313244] z-50">
+      <div className="p-3 bg-blue-500/20 rounded-xl text-blue-500 mb-4 shadow-lg shadow-blue-500/10" aria-hidden="true">
         <Layout size={28} />
       </div>
       {tabs.map(({ id, icon: Icon }) => (
         <button
           key={id}
           onClick={() => setActiveTab(id)}
+          aria-label={`Switch to ${id} tab`}
+          aria-current={activeTab === id ? 'page' : undefined}
           className={`p-3 rounded-xl transition-all duration-300 ${
             activeTab === id
               ? 'bg-blue-500 text-white shadow-xl shadow-blue-500/40 scale-110'
@@ -26,6 +28,6 @@ export default function Sidebar({ activeTab, setActiveTab }) {
           <Icon size={24} />
         </button>
       ))}
-    </div>
+    </nav>
   );
 }

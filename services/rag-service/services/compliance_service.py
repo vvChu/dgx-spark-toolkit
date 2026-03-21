@@ -2,6 +2,9 @@ import asyncio
 import logging
 import json
 from typing import List, Dict, Any
+
+import httpx
+
 from repositories.milvus_repo import MilvusRepository
 from retrieval.graph_timeline_retriever import AdvancedGraphRAG
 from core.config import get_settings
@@ -9,9 +12,10 @@ from core.config import get_settings
 logger = logging.getLogger(__name__)
 
 class ComplianceService:
-    def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG):
+    def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None):
         self.milvus_repo = milvus_repo
         self.graph_rag = graph_rag
+        self._http_client = http_client
 
     async def check_compliance(self, project_profile: str, focus_area: str = "General") -> Dict[str, Any]:
         """
@@ -80,7 +84,7 @@ class ComplianceService:
                 "max_tokens": 100,
                 "response_format": {"type": "json_object"}
             }
-            client = await self.graph_rag._get_client()
+            client = self._http_client or await self.graph_rag._get_client()
             resp = await client.post(
                 f"{settings.VLLM_API_BASE}/chat/completions",
                 json=payload,
@@ -127,7 +131,7 @@ class ComplianceService:
                 "max_tokens": 1024,
                 "response_format": {"type": "json_object"}
             }
-            client = await self.graph_rag._get_client()
+            client = self._http_client or await self.graph_rag._get_client()
             resp = await client.post(
                 f"{settings.VLLM_API_BASE}/chat/completions",
                 json=payload,

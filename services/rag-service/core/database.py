@@ -139,7 +139,7 @@ async def get_legal_analysis_service(
     from retrieval.graph_timeline_retriever import AdvancedGraphRAG
     
     graph_rag = AdvancedGraphRAG(neo4j_repo._driver, http_client)
-    return LegalAnalysisService(milvus_repo, graph_rag)
+    return LegalAnalysisService(milvus_repo, graph_rag, http_client)
 
 async def get_compliance_service(
     milvus_repo: MilvusRepository = Depends(get_milvus_repo),
@@ -151,4 +151,4 @@ async def get_compliance_service(
     from retrieval.graph_timeline_retriever import AdvancedGraphRAG
     
     graph_rag = AdvancedGraphRAG(neo4j_repo._driver, http_client)
-    return ComplianceService(milvus_repo, graph_rag)
+    return ComplianceService(milvus_repo, graph_rag, http_client)

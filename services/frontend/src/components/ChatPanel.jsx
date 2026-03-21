@@ -75,10 +75,12 @@ export default function ChatPanel({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
             placeholder="Tra cứu mối liên hệ hoặc nội dung văn bản pháp luật..."
+            aria-label="Search legal documents"
             className="flex-1 bg-transparent px-6 py-4 text-sm focus:outline-none placeholder:text-gray-600"
           />
           <button
             onClick={handleSendMessage}
+            aria-label="Send message"
             className="px-6 bg-blue-500 hover:bg-blue-500/80 text-white transition-all flex items-center justify-center"
           >
             <Search size={22} />
@@ -100,10 +102,10 @@ function FeedbackButtons({ msg, msgIndex, onFeedback }) {
   }
   return (
     <div className="flex items-center space-x-3">
-      <button onClick={() => onFeedback(msgIndex, true)} className="p-1.5 hover:bg-white/10 rounded-lg text-gray-500 hover:text-green-500 transition-colors">
+      <button onClick={() => onFeedback(msgIndex, true)} aria-label="Helpful" className="p-1.5 hover:bg-white/10 rounded-lg text-gray-500 hover:text-green-500 transition-colors">
         <ThumbsUp size={14} />
       </button>
-      <button onClick={() => onFeedback(msgIndex, false)} className="p-1.5 hover:bg-white/10 rounded-lg text-gray-500 hover:text-red-500 transition-colors">
+      <button onClick={() => onFeedback(msgIndex, false)} aria-label="Not helpful" className="p-1.5 hover:bg-white/10 rounded-lg text-gray-500 hover:text-red-500 transition-colors">
         <ThumbsDown size={14} />
       </button>
     </div>

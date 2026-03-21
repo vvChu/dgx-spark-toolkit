@@ -18,7 +18,7 @@ const Dashboard = () => {
       <div className="flex-1 flex flex-col relative">
         <Header stats={d.stats} language={d.language} setLanguage={d.setLanguage} />
 
-        <main className="flex-1 overflow-hidden relative">
+        <main className="flex-1 overflow-hidden relative" role="main">
           <AnimatePresence mode="wait">
             {d.activeTab === 'chat' && (
               <ChatPanel
