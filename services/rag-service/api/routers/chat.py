@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from models.schemas import ChatRequest
+from models.schemas import ChatRequest, ChatResponse
 from core.database import get_milvus_repo, get_neo4j_repo, get_http_client
 from repositories.milvus_repo import MilvusRepository
 from repositories.neo4j_repo import Neo4jRepository
@@ -46,7 +46,7 @@ GRAPH_SEARCH_TOOL = {
     }
 }
 
-@router.post("/chat", tags=["Generation"])
+@router.post("/chat", tags=["Generation"], response_model=ChatResponse)
 async def chat_endpoint(
     request: ChatRequest,
     milvus_repo: MilvusRepository = Depends(get_milvus_repo),

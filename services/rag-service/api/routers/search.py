@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from models.schemas import SearchRequest
+from models.schemas import SearchRequest, SearchResponse
 from core.database import get_neo4j_repo, get_milvus_repo
 from repositories.neo4j_repo import Neo4jRepository
 from repositories.milvus_repo import MilvusRepository
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-@router.post("/search", tags=["Retrieval"])
+@router.post("/search", tags=["Retrieval"], response_model=SearchResponse)
 @router.post("/retrieve", tags=["Retrieval"], include_in_schema=False)
 async def search_endpoint(
     request: SearchRequest,

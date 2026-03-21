@@ -5,13 +5,15 @@ import logging
 import os
 
 from core.database import lifespan
+from core.config import get_settings
+from core.logging_config import setup_logging
 from api.routers import search, chat, admin, analysis
 from api.routers import stats, graph, preview, evaluation
 
 __version__ = "2.0.0"
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Setup structured logging (JSON in prod, text in dev via LOG_FORMAT env)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 tags_metadata = [
@@ -34,11 +36,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Restrict CORS to the known frontend origin; fall back to env var for flexibility
-_allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+# Restrict CORS to the known frontend origin; uses Settings for single source of truth
+_settings_cors = get_settings()
+_allowed_origins = [o.strip() for o in _settings_cors.CORS_ALLOWED_ORIGINS.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in _allowed_origins],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

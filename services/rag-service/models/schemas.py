@@ -68,3 +68,60 @@ class UpdateRelationRequest(BaseModel):
 class SyncStatusRequest(BaseModel):
     doc_id: str
     new_status: str = Field(..., pattern="^(ACTIVE|OUTDATED|REPLACED|EXPIRED)$")
+
+
+# ── Response Models ──────────────────────────────────────────────────────
+
+class SearchResultItem(BaseModel):
+    """A single document chunk returned from search."""
+    text: str
+    doc_number: str = ""
+    page: int = 0
+    score: float = 0.0
+    bbox: Optional[List[float]] = None
+    doc_type: Optional[str] = None
+    authority: Optional[str] = None
+    year: Optional[int] = None
+    doc_id: Optional[str] = None
+
+    model_config = {"extra": "allow"}
+
+
+class SearchResponse(BaseModel):
+    """Response from /search and /retrieve endpoints."""
+    results: List[SearchResultItem] = []
+    query: str = ""
+    rewritten_query: Optional[str] = None
+    cached: bool = False
+
+
+class ChatResponse(BaseModel):
+    """Response from /chat endpoint."""
+    answer: str
+    context: List[Dict[str, Any]] = []
+    usage: Optional[Dict[str, Any]] = None
+    cached: bool = False
+    thought: Optional[str] = None
+
+
+class HealthCheckResponse(BaseModel):
+    """Response from /health endpoint."""
+    status: str
+    version: str
+    checks: Dict[str, str]
+
+
+class StatsResponse(BaseModel):
+    """Response from /stats endpoint."""
+    neo4j_docs: int = 0
+    neo4j_rels: int = 0
+    milvus_entities: int = 0
+    total_target: int = 8870
+
+
+class SyncStatusResponse(BaseModel):
+    """Response from /admin/sync-status endpoint."""
+    status: str
+    doc_id: str
+    new_status: str
+    updates: Dict[str, str] = {}

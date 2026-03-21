@@ -5,13 +5,13 @@ export const GRAFANA_URL = import.meta.env.VITE_GRAFANA_URL || 'http://localhost
 
 export const api = axios.create({ baseURL: API_BASE });
 
-export async function fetchStats() {
-  const resp = await api.get('/stats');
+export async function fetchStats({ signal } = {}) {
+  const resp = await api.get('/stats', { signal });
   return resp.data;
 }
 
-export async function fetchGraphData() {
-  const resp = await api.get('/graph/data');
+export async function fetchGraphData({ signal } = {}) {
+  const resp = await api.get('/graph/data', { signal });
   return resp.data;
 }
 

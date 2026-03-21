@@ -34,13 +34,14 @@ export default function useDashboard() {
   const [isAnalyzingConflicts, setIsAnalyzingConflicts] = useState(false);
   const [conflictReport, setConflictReport] = useState(null);
   const chatEndRef = useRef(null);
+  const abortRef = useRef(null);
 
   const scrollToBottom = () => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToBottom, [messages]);
 
-  const refreshData = useCallback(async () => {
+  const refreshData = useCallback(async (signal) => {
     try {
-      const [statsData, graphRes] = await Promise.all([fetchStats(), fetchGraphData()]);
+      const [statsData, graphRes] = await Promise.all([fetchStats({ signal }), fetchGraphData({ signal })]);
       setStats({
         docs: statsData.neo4j_docs,
         rels: statsData.neo4j_rels,
@@ -49,14 +50,21 @@ export default function useDashboard() {
       });
       setGraphData(graphRes);
     } catch (err) {
-      console.error('Failed to fetch dashboard data:', err);
+      if (err.name !== 'CanceledError' && err.name !== 'AbortError') {
+        console.error('Failed to fetch dashboard data:', err);
+      }
     }
   }, []);
 
   useEffect(() => {
-    refreshData();
-    const interval = setInterval(refreshData, 15000);
-    return () => clearInterval(interval);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    refreshData(controller.signal);
+    const interval = setInterval(() => refreshData(controller.signal), 15000);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
   }, [refreshData]);
 
   const handleEvaluate = useCallback(async (query, answer, context) => {

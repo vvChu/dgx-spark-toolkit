@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends
 from core.config import get_settings
 from core.database import get_milvus_repo, get_neo4j_repo
+from models.schemas import StatsResponse
 from repositories.milvus_repo import MilvusRepository
 from repositories.neo4j_repo import Neo4jRepository
 import logging
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Monitoring"])
 
 
-@router.get("/stats", tags=["Monitoring"])
+@router.get("/stats", tags=["Monitoring"], response_model=StatsResponse)
 async def get_stats(
     milvus_repo: MilvusRepository = Depends(get_milvus_repo),
     neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
