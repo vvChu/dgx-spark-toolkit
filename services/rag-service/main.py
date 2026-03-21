@@ -4,7 +4,7 @@ import logging
 import os
 
 from core.database import lifespan
-from api.routers import search, chat, admin, analysis
+from api.routers import search, chat, admin, analysis, visualization
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +45,7 @@ app.include_router(search.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
 app.include_router(analysis.router)
+app.include_router(visualization.router)
 
 # Monitoring - Prometheus Metrics
 from prometheus_fastapi_instrumentator import Instrumentator
