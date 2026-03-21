@@ -23,21 +23,24 @@ Comprehensive AI development toolkit for NVIDIA DGX Spark. Provides a unified **
 │                  (LiteLLM Proxy — 25 models)                │
 └──────┬──────────────────┬────────────────┬──────────────────┘
        │                  │                │
-  Local vLLM         Remote Proxy     Cloud Direct
-  :8001 (35B)     100.79.241.120      Gemini / Groq
-  qwen3.5-35b      claude/gemini/gpt   (fallback)
-       │
-  RAG Service :8000
-  (Milvus + Reranker)
+   Local vLLM         Remote Proxy     Cloud Direct
+   :8004 (35B)     100.79.241.120      Gemini / Groq
+   qwen3.5-35b      claude/gemini/gpt   (fallback)
+        │
+   RAG Service :8005
+   (Milvus + Reranker)
+        │
+   Hybrid Ingestion
+   (PaddleOCR + Qwen3.5 Vision)
 ```
 
 ```
 dgx-spark-toolkit/
-├── .agent/skills/          # AI Agent Skills (10 skills)
+├── .agents/skills/          # AI Agent Skills (11 skills)
 │   └── shared/vllm_client.py  # Unified gateway client
 ├── services/
 │   ├── ai-gateway/             # LiteLLM config (25 models)
-│   └── rag-service/            # RAG pipeline
+│   └── rag-service/            # RAG pipeline (FastAPI + BGE-M3)
 ├── monitoring/                 # Prometheus + Grafana
 ├── playbooks/                  # Setup guides
 ├── scripts/                    # start-all, stop-all, setup-remote
@@ -136,8 +139,9 @@ See [`playbooks/remote-access.md`](playbooks/remote-access.md) for full details.
 | Service | Port | Description |
 |---------|------|-------------|
 | AI Gateway | `8090` | LiteLLM proxy — 25 models |
-| RAG Service | `8000` | BIM semantic search + generation |
-| Qwen 3.5 35B | `8001` | Local vLLM (NVFP4, ~20GB) |
+| RAG Service | `8005` | BIM semantic search + generation |
+| RAG Preview | `/preview/{fn}/{pg}` | GET page images for citations |
+| Qwen 3.5 35B | `8004` | Local vLLM (NVFP4, ~20GB) |
 | Milvus | `19530` | Vector database |
 | Prometheus | `9090` | Metrics |
 | Grafana | `3000` | Dashboards |

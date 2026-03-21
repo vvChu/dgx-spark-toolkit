@@ -1,139 +1,12 @@
 model_list:
 
   # =====================================================================
-  # TIER 1 — SPEED (< 1.5s) — Real-time, chat, autocomplete, high-volume
+  # GEMINI MODELS — via upstream proxy (verified working)
   # =====================================================================
 
-  # Gemini Flash family — fastest, 1M context, multimodal
-  - model_name: gemini-2.5-flash
+  - model_name: gemini-3.1-pro-low
     litellm_params:
-      model: openai/gemini-2.5-flash
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  - model_name: gemini-2.5-flash-lite
-    litellm_params:
-      model: openai/gemini-2.5-flash-lite
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  - model_name: gemini-3-flash
-    litellm_params:
-      model: openai/gemini-3-flash
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # GPT fast tier
-  - model_name: gpt-4o
-    litellm_params:
-      model: openai/gpt-4o
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  - model_name: gpt-4o-mini
-    litellm_params:
-      model: openai/gpt-4o-mini
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  - model_name: gpt-3.5-turbo
-    litellm_params:
-      model: openai/gpt-3.5-turbo
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # Claude Haiku — fastest Claude tier
-  - model_name: claude-3-haiku
-    litellm_params:
-      model: openai/claude-3-haiku-20240307
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # =====================================================================
-  # TIER 2 — BALANCED (1–3s) — Coding, agents, general intelligence
-  # =====================================================================
-
-  # Claude Sonnet 4.6 — recommended default (SWE-bench 79.6%, 1M ctx)
-  - model_name: claude-sonnet-4-6
-    litellm_params:
-      model: openai/claude-sonnet-4-6
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # Claude Sonnet 4.5 — kept for compatibility (proxy upgrades to 4.6)
-  - model_name: claude-sonnet-4-5
-    litellm_params:
-      model: openai/claude-sonnet-4-5
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # Claude Sonnet with extended thinking
-  - model_name: claude-sonnet-thinking
-    litellm_params:
-      model: openai/claude-sonnet-4-5-thinking
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # Claude Opus 4.5 — deep agentic tasks, financial/legal analysis
-  - model_name: claude-opus-4-5
-    litellm_params:
-      model: openai/claude-opus-4-5-20251101
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # GPT-4 family
-  - model_name: gpt-4-turbo
-    litellm_params:
-      model: openai/gpt-4-turbo
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  - model_name: gpt-4
-    litellm_params:
-      model: openai/gpt-4
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # Gemini flash with thinking
-  - model_name: gemini-2.5-flash-thinking
-    litellm_params:
-      model: openai/gemini-2.5-flash-thinking
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # =====================================================================
-  # TIER 3 — DEEP REASONING (7–13s) — Research, 1M-ctx, complex analysis
-  # =====================================================================
-
-  # Gemini 3 Pro family — 1M ctx, scientific reasoning (GPQA 94.3%)
-  - model_name: gemini-3-pro
-    litellm_params:
-      model: openai/gemini-3-pro
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  - model_name: gemini-3-pro-high
-    litellm_params:
-      model: openai/gemini-3-pro-high
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  - model_name: gemini-3-pro-low
-    litellm_params:
-      model: openai/gemini-3-pro-low
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  - model_name: gemini-3-pro-preview
-    litellm_params:
-      model: openai/gemini-3-pro-preview
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # Gemini 3.1 Pro family — latest iteration, ARC-AGI-2 80.6% SWE-bench
-  - model_name: gemini-3.1-pro
-    litellm_params:
-      model: openai/gemini-3.1-pro
+      model: openai/gemini-3.1-pro-low
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
 
@@ -143,59 +16,157 @@ model_list:
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
 
-  - model_name: gemini-3.1-pro-low
+  - model_name: gemini-3.1-flash-image
     litellm_params:
-      model: openai/gemini-3.1-pro-low
+      model: openai/gemini-3.1-flash-image
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
 
-  - model_name: gemini-3.1-pro-preview
+  # =====================================================================
+  # CLAUDE MODELS — via upstream proxy (verified working)
+  # =====================================================================
+  - model_name: claude-sonnet-4-6
     litellm_params:
-      model: openai/gemini-3.1-pro-preview
+      model: openai/claude-sonnet-4-6
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
+
+  - model_name: claude-opus-4-6-thinking
+    litellm_params:
+      model: openai/claude-opus-4-6-thinking
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+
+  # =====================================================================
+  # GPT/OSS MODELS — via upstream proxy (verified working)
+  # =====================================================================
+  - model_name: gpt-oss-120b-medium
+    litellm_params:
+      model: openai/gpt-oss-120b-medium
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+
+  # =====================================================================
+  # CLAUDE MODELS — via viber proxy (Vertex AI backend)
+  # =====================================================================
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: openai/claude-haiku-4-5-20251001
+      api_base: os.environ/VIBER_PROXY_URL
+      api_key: os.environ/VIBER_PROXY_KEY
+
+  - model_name: claude-sonnet-4-5
+    litellm_params:
+      model: openai/claude-sonnet-4-5-20250929
+      api_base: os.environ/VIBER_PROXY_URL
+      api_key: os.environ/VIBER_PROXY_KEY
+
+  - model_name: claude-sonnet-4-6           # Secondary deployment via viber
+    litellm_params:
+      model: openai/claude-sonnet-4-6
+      api_base: os.environ/VIBER_PROXY_URL
+      api_key: os.environ/VIBER_PROXY_KEY
+
+  - model_name: claude-opus-4-5
+    litellm_params:
+      model: openai/claude-opus-4-5-20251101
+      api_base: os.environ/VIBER_PROXY_URL
+      api_key: os.environ/VIBER_PROXY_KEY
+
+  - model_name: claude-opus-4-6             # Secondary deployment via viber
+    litellm_params:
+      model: openai/claude-opus-4-6
+      api_base: os.environ/VIBER_PROXY_URL
+      api_key: os.environ/VIBER_PROXY_KEY
 
   # =====================================================================
   # LOCAL DGX vLLM — Private / Offline / High Throughput
   # =====================================================================
+  - model_name: rag-core
+    litellm_params:
+      model: "qwen3.5-35b"
+      custom_llm_provider: "openai"
+      api_base: os.environ/GATEWAY_LOCAL_URL
+      api_key: "unused"
+      tool_call_parser: "openai"
+    model_info:
+      mode: chat
+      supports_tool_calling: true
+
   - model_name: qwen3.5-35b
     litellm_params:
       model: openai/qwen3.5-35b
       api_base: os.environ/GATEWAY_LOCAL_URL
       api_key: "unused"
 
-  # =====================================================================
-  # CLOUD FALLBACKS — Direct API (when proxy is unreachable)
-  # =====================================================================
-  - model_name: gemini-direct
+  - model_name: rag-light
     litellm_params:
-      model: gemini/gemini-2.0-flash-exp
+      model: openai/qwen3.5-4b
+      api_base: http://vllm-4b:8000/v1
+      api_key: "unused"
+      extra_body:
+        temperature: 0.7
+        top_p: 0.9
+    model_info:
+      mode: chat
+
+  # =====================================================================
+  # GEMINI MODELS — Direct Google API (verified working)
+  # =====================================================================
+  - model_name: gemini-2.5-flash
+    litellm_params:
+      model: gemini/gemini-2.5-flash
       api_key: os.environ/GEMINI_API_KEY
 
-  - model_name: groq-llama3
+  - model_name: gemini-2.5-flash-lite
     litellm_params:
-      model: groq/llama3-70b-8192
-      api_key: os.environ/GROQ_API_KEY
+      model: gemini/gemini-2.5-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
 
+  - model_name: gemini-3-flash
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-direct
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  # =====================================================================
+  # EMBEDDING — Local BGE-M3
+  # =====================================================================
+  - model_name: bge-m3
+    litellm_params:
+      model: openai/bge-m3
+      api_base: http://qwen35b:8000/v1
+      api_key: "unused"
 
 router_settings:
   routing_strategy: latency-based-routing
+  allowed_fails: 1
+  cooldown_time: 300
+  num_retries: 3
+  fallbacks_retry_after: 800
 
-  # Tiered fallback chain: smart → thinking → fast → local → cloud
   fallbacks:
-    # Primary smart model chain
-    - {"claude-sonnet-4-6":   ["claude-sonnet-thinking", "gemini-3-flash", "qwen3.5-35b", "gemini-direct", "groq-llama3"]}
-    - {"claude-sonnet-4-5":   ["claude-sonnet-4-6", "gemini-3-flash", "qwen3.5-35b", "gemini-direct"]}
-    # Fast model fallbacks
-    - {"gemini-3-flash":      ["gemini-2.5-flash", "gpt-4o-mini", "qwen3.5-35b"]}
-    - {"gpt-4o":              ["claude-sonnet-4-6", "gemini-3-flash", "qwen3.5-35b"]}
-    - {"gpt-4o-mini":         ["gemini-2.5-flash", "qwen3.5-35b", "groq-llama3"]}
-    # Deep reasoning fallbacks
-    - {"gemini-3.1-pro":      ["gemini-3-pro", "claude-opus-4-5", "qwen3.5-35b"]}
-    - {"gemini-3-pro":        ["gemini-3.1-pro", "claude-opus-4-5", "qwen3.5-35b"]}
-    # Local fallback
-    - {"qwen3.5-35b":         ["gemini-3-flash", "groq-llama3"]}
+    - {"claude-opus-4-6-thinking": ["gemini-3.1-pro-high", "gpt-oss-120b-medium", "rag-core"]}
+    - {"claude-sonnet-4-6": ["gemini-3.1-pro-low", "gemini-2.5-flash", "rag-core"]}
+    - {"gemini-3.1-pro-low": ["gemini-2.5-flash", "gemini-2.5-flash-lite", "rag-core"]}
+    - {"gemini-3.1-pro-high": ["gemini-3.1-pro-low", "gemini-2.5-flash", "rag-core"]}
+    - {"gemini-2.5-flash": ["gemini-2.5-flash-lite", "rag-core"]}
+    - {"rag-core": ["gemini-direct"]}
 
+litellm_settings:
+  success_callback: ["prometheus"]
+  failure_callback: ["prometheus"]
+  cache: true
+  cache_params:
+    type: redis
+    host: litellm-redis
+    port: 6379
+    semantic_similarity_threshold: 0.85
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

@@ -11,7 +11,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Stop vLLM containers
 echo "📦 Stopping vLLM containers..."
-docker stop qwen35-vllm qwen122b 2>/dev/null || true
+docker stop qwen35b qwen122b 2>/dev/null || true
 echo "   ✅ vLLM containers stopped"
 
 # Stop Docker Compose

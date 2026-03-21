@@ -18,12 +18,14 @@ echo ""
 echo "📡 Opening required ports..."
 
 declare -A PORTS=(
-  [8001]="vLLM Qwen 3.5 35B"
-  [8003]="vLLM Qwen 3.5 122B"
-  [8000]="RAG Service"
+  [8004]="vLLM Qwen 3.5 35B"
+  [8003]="vLLM Qwen 3.5 4B (Fallback)"
+  [8000]="RAG Service (Internal)"
   [8090]="AI Gateway (LiteLLM)"
   [9090]="Prometheus"
   [3000]="Grafana"
+  [5173]="RAG Frontend"
+  [8005]="RAG Service (Production)"
 )
 
 for port in "${!PORTS[@]}"; do
@@ -42,20 +44,31 @@ done
 # --- 3. Get IP addresses for remote access ---
 echo ""
 echo "🌐 Available network interfaces:"
+TAILSCALE_IP=$(ip -4 addr show tailscale0 2>/dev/null | grep -oP 'inet \K[\d.]+' || echo "")
+if [ -n "$TAILSCALE_IP" ]; then
+  echo "  🚀 Tailscale IP (Recommended): $TAILSCALE_IP"
+fi
+
 ip -4 addr show | grep -oP 'inet \K[\d.]+' | grep -v '127.0.0.1' | while read ip; do
-  echo "  • $ip"
+  if [ "$ip" != "$TAILSCALE_IP" ]; then
+    echo "  • $ip"
+  fi
 done
 
 # --- 4. Print connection info ---
-MAIN_IP=$(ip -4 route get 1 | awk '{print $7; exit}')
+MAIN_IP=${TAILSCALE_IP:-$(ip -4 route get 1 | awk '{print $7; exit}')}
 echo ""
 echo "=============================================="
 echo "✅ Remote access configured!"
 echo ""
 echo "Connect from other machines using:"
-echo "  • vLLM 35B:   http://$MAIN_IP:8001/v1"
-echo "  • vLLM 122B:  http://$MAIN_IP:8003/v1"
-echo "  • RAG:        http://$MAIN_IP:8000"
-echo "  • Gateway:    http://$MAIN_IP:8090"
-echo "  • Grafana:    http://$MAIN_IP:3000"
+echo "  • 🏠 RAG Portal:  http://$MAIN_IP:5173"
+echo "  • 🤖 vLLM 35B:    http://$MAIN_IP:8004/v1
+  • 🤖 vLLM 4B:     http://$MAIN_IP:8003/v1
+  • 🔌 AI Gateway:  http://$MAIN_IP:8090
+"
+echo "  • 📊 Grafana:     http://$MAIN_IP:3000"
+echo ""
+echo "💡 Tip: If http://$MAIN_IP:5173 is unreachable, ensure"
+echo "   you are connected to Tailscale or check port forwarding."
 echo "=============================================="

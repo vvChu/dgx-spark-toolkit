@@ -84,8 +84,8 @@ print(response.choices[0].message.content)
 Use only when you need raw vLLM access without gateway routing:
 
 ```bash
-# Qwen 3.5 35B (port 8001)
-curl http://100.83.192.30:8001/v1/chat/completions \
+# Qwen 3.5 35B (port 8004)
+curl http://100.83.192.30:8004/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "qwen3.5-35b", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```

@@ -6,46 +6,188 @@ services:
     environment:
       - MILVUS_HOST=milvus-standalone
       - MILVUS_PORT=19530
-      - VLLM_API_BASE=${VLLM_API_BASE:-http://host.docker.internal:8004/v1}
-      - VLLM_MODEL=${VLLM_MODEL_35B:-qwen3.5-35b}
+      - VLLM_API_BASE=${VLLM_API_BASE:-http://ai-gateway:4000/v1}
+      - VLLM_MODEL=${VLLM_MODEL_CORE:-rag-core}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - NEO4J_URI=bolt://neo4j-graph:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - GPU_ENABLED=1
+      - CUDA_VISIBLE_DEVICES=0
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - DEFAULT_RAG_MODEL=${DEFAULT_RAG_MODEL:-rag-light}
+      - MAX_OCR_CONCURRENCY=${MAX_OCR_CONCURRENCY:-1}
+      - MAX_WORKERS=${MAX_WORKERS:-2}
+      - MAX_DIGITAL_WORKERS=${MAX_DIGITAL_WORKERS:-2}
+      - DATABASE_URL=${DATABASE_URL}
+      - FORCE_CPU_RERANKER=1
+      - FORCE_CPU_EMBEDDING=1
+      - REDIS_URL=redis://litellm-redis:6379/1
+      - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-rag-core}
+      - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-gemini-2.5-flash}
+    working_dir: /app
+    command: ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8005:8000"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 60s
+      timeout: 30s
+      retries: 10
     depends_on:
-      - milvus-standalone
+      milvus-standalone:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
     volumes:
       - ./services/rag-service:/app
+      - /home/vvc/Public:/app/data/legal_docs_source
+      - /home/vvc/Public/exports:/app/exports
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - model_cache:/app/model_cache
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - rag-network
 
-  # LiteLLM AI Gateway Proxy
+  rag-watcher:
+    build:
+      context: ./services/rag-service
+    environment:
+      - MILVUS_HOST=milvus-standalone
+      - MILVUS_PORT=19530
+      - EMBEDDING_MODEL=BAAI/bge-m3
+      - VLLM_API_BASE=http://ai-gateway:4000/v1
+      - OMP_NUM_THREADS=4
+      - OPENBLAS_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - MAX_WORKERS=${MAX_WORKERS:-1}
+      - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+      - VLLM_MODEL=qwen3.5-35b
+      - VISION_MODEL=qwen3.5-35b
+      - JSON_MODEL=qwen3.5-35b
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - NEO4J_URI=bolt://neo4j-graph:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - CUDA_VISIBLE_DEVICES=0
+      - MAX_OCR_CONCURRENCY=${MAX_OCR_CONCURRENCY:-1}
+      - MAX_WORKERS=${MAX_WORKERS:-1}
+      - MAX_DIGITAL_WORKERS=${MAX_DIGITAL_WORKERS:-4}
+      - DATABASE_URL=${DATABASE_URL}
+      - FORCE_CPU_EMBEDDING=1
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - REDIS_URL=redis://litellm-redis:6379/1
+      - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-rag-core}
+      - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-gemini-2.5-flash}
+
+    volumes:
+      - ./services/rag-service:/app
+      - /home/vvc/Public:/app/data/legal_docs_source
+      - /home/vvc/Public/exports:/app/exports
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - model_cache:/app/model_cache
+    command: [ "python3", "-m", "ingestion.pipeline" ]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    depends_on:
+      milvus-standalone:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      ai-gateway:
+        condition: service_started
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '4'
+          memory: 12G
+        reservations:
+          cpus: '2'
+          memory: 6G
+    healthcheck:
+      disable: true
+    networks:
+      - rag-network
+
+    # LiteLLM AI Gateway Proxy
   ai-gateway:
     image: ghcr.io/berriai/litellm:main-latest
     container_name: ai-gateway
     ports:
       - "8090:4000"
+      - "4001:4001" # Admin UI
     environment:
       - GATEWAY_PROXY_URL=${GATEWAY_PROXY_URL}
       - GATEWAY_PROXY_KEY=${GATEWAY_PROXY_KEY}
-      - GATEWAY_LOCAL_URL=${GATEWAY_LOCAL_URL:-http://host.docker.internal:8001/v1}
+      - VIBER_PROXY_URL=${VIBER_PROXY_URL:-https://viber.claudegateway.site/v1}
+      - VIBER_PROXY_KEY=${VIBER_PROXY_KEY}
+      - GATEWAY_LOCAL_URL=${GATEWAY_LOCAL_URL:-http://100.83.192.30:8004/v1}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - LITELLM_LOG=INFO
+      - DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm
+      - REDIS_URL=redis://litellm-redis:6379/0
+      - STORE_MODEL_IN_DB=True
     volumes:
       - ./services/ai-gateway/litellm_config.yaml:/app/litellm_config.yaml
     command: [ "--config", "/app/litellm_config.yaml", "--port", "4000" ]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+      litellm-redis:
+        condition: service_healthy
+    networks:
+      - rag-network
+
+  litellm-db:
+    image: postgres:15-alpine
+    container_name: litellm-postgres
+    environment:
+      - POSTGRES_USER=litellm
+      - POSTGRES_PASSWORD=${LITELLM_DB_PASSWORD}
+      - POSTGRES_DB=litellm
+    ports:
+      - "15432:5432"
+    volumes:
+      - litellm_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - rag-network
+
+  litellm-redis:
+    image: redis:7-alpine
+    container_name: litellm-redis
+    ports:
+      - "16379:6379"
+    volumes:
+      - litellm_redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
     networks:
       - rag-network
 
   # Milvus Components (Etcd, MinIO, Milvus Standalone)
   milvus-etcd:
-    image: quay.io/coreos/etcd:v3.5.5
+    image: quay.io/coreos/etcd:v3.5.23
     container_name: milvus-etcd
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
@@ -68,8 +210,8 @@ services:
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
     container_name: milvus-minio
     environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
     volumes:
       - minio_data:/minio_data
     command: minio server /minio_data --console-address ":9001"
@@ -83,11 +225,14 @@ services:
       - rag-network
 
   milvus-standalone:
-    image: milvusdb/milvus:v2.3.3
+    image: milvusdb/milvus:v2.5.27
+
     container_name: milvus-standalone
     environment:
       ETCD_ENDPOINTS: milvus-etcd:2379
       MINIO_ADDRESS: milvus-minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
     volumes:
       - milvus_data:/var/lib/milvus
     command: [ "milvus", "run", "standalone" ]
@@ -102,6 +247,28 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    restart: unless-stopped
+    networks:
+      - rag-network
+
+  # Knowledge Graph
+  neo4j:
+    image: neo4j:5.23.0
+    container_name: neo4j-graph
+    ports:
+      - "7474:7474" # HTTP
+      - "7687:7687" # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
     networks:
       - rag-network
@@ -125,16 +292,141 @@ services:
     container_name: grafana
     ports:
       - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
     volumes:
+      - ./monitoring/provisioning/datasources/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml
+      - ./monitoring/provisioning/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ./monitoring/provisioning/alerting/rag_alerts.yaml:/etc/grafana/provisioning/alerting/rag_alerts.yaml
       - ./monitoring/grafana-vllm-dashboard.json:/var/lib/grafana/dashboards/vllm.json
+      - ./monitoring/grafana-rag-dashboard.json:/var/lib/grafana/dashboards/rag.json
+      - ./monitoring/grafana-ingestion-dashboard.json:/var/lib/grafana/dashboards/ingestion.json
     networks:
       - rag-network
 
+  rag-frontend:
+    build:
+      context: ./services/frontend
+      args:
+        - VITE_API_URL=http://100.83.192.30:8005
+    container_name: rag-frontend
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_URL=http://100.83.192.30:8005
+    depends_on:
+      rag-service:
+        condition: service_healthy
+    networks:
+      - rag-network
+  vllm-4b:
+    image: hellohal2064/vllm-qwen3.5-gb10:blackwell-sm121
+    container_name: qwen3-4b
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/v1/models || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5m
+    restart: unless-stopped
+    ports:
+      - "8003:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    environment:
+      - PORT=8000
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    entrypoint: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
+    command: >
+      --model Qwen/Qwen3.5-4B
+      --served-model-name qwen3.5-4b
+      --port 8000
+      --gpu-memory-utilization 0.08
+      --max-model-len 8192
+      --kv-cache-dtype auto
+      --trust-remote-code
+    networks:
+      - rag-network
+
+  vllm-35b:
+    image: hellohal2064/vllm-qwen3.5-gb10:blackwell-sm121
+    container_name: qwen35b
+    ports:
+      - "8004:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/v1/models || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10m
+    deploy:
+      resources:
+        limits:
+          memory: 80G
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    environment:
+      - PORT=8000
+      - ATTENTION_BACKEND=flashinfer
+      - GPU_MEMORY_UTIL=0.50
+      - MAX_MODEL_LEN=24576
+    volumes:
+      - /home/vvc/.cache/huggingface/hub/models--Qwen--Qwen3.5-35B-A3B-FP8:/models/model
+      - /home/vvc/Codebase/dgx-spark-toolkit/scripts:/app/scripts
+      - /home/vvc/.cache/huggingface:/root/.cache/huggingface
+    entrypoint: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
+    command: >
+      --model /models/model/snapshots/0b2752837483aa34b3db6e83e151b150c0e00e49
+      --served-model-name qwen3.5-35b
+      --host 0.0.0.0
+      --port 8000
+      --gpu-memory-utilization 0.50
+      --max-model-len 24576
+      --kv-cache-dtype fp8
+      --max-num-batched-tokens 4096
+      --enable-prefix-caching
+      --enable-chunked-prefill
+      --trust-remote-code
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  locust:
+    image: locustio/locust:latest
+    container_name: locust-loadtest
+    volumes:
+      - ./services/rag-service/benchmarks:/mnt/locust
+    command: -f /mnt/locust/locustfile.py --host http://rag-service:8000
+    ports:
+      - "8089:8089"
+    networks:
+      - rag-network
+    restart: unless-stopped
+
 networks:
   rag-network:
-    name: rag-network
+    external: true
 
 volumes:
   etcd_data:
   minio_data:
   milvus_data:
+  neo4j_data:
+  litellm_data:
+  litellm_redis_data:
+  model_cache:  # Persistent model cache — survives container rebuilds
