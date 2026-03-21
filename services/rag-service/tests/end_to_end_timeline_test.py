@@ -2,6 +2,10 @@ import requests
 import json
 import time
 import sys
+import pytest
+
+pytestmark = pytest.mark.integration
+
 
 def test_complex_timeline():
     # Note: Use 8005 as mapped in docker-compose
