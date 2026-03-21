@@ -6,10 +6,11 @@ services:
     environment:
       - MILVUS_HOST=milvus-standalone
       - MILVUS_PORT=19530
-      - VLLM_API_BASE=${VLLM_API_BASE:-http://host.docker.internal:8001/v1}
+      - VLLM_API_BASE=${VLLM_API_BASE:-http://host.docker.internal:8004/v1}
       - VLLM_MODEL=${VLLM_MODEL_35B:-qwen3.5-35b}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
     ports:
-      - "8000:8000"
+      - "8005:8000"
     depends_on:
       - milvus-standalone
     volumes:

@@ -36,6 +36,9 @@ app = FastAPI(
     openapi_tags=tags_metadata
 )
 
+# Instrument Prometheus
+Instrumentator().instrument(app).expose(app)
+
 embedding_model = None
 
 class SearchRequest(BaseModel):
@@ -69,9 +72,6 @@ async def startup_event():
         # but API calls will fail.
 
     logger.info("Service ready.")
-
-    # Instrument Prometheus
-    Instrumentator().instrument(app).expose(app)
 
 @app.get("/", tags=["General"])
 async def root():
