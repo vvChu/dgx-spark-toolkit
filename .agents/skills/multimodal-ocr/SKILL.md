@@ -1,11 +1,6 @@
 ---
-name: Multimodal OCR
-command: /multimodal-ocr
+name: multimodal-ocr
 description: Đặc trị rút trích dữ liệu từ file Hóa đơn, Bản vẽ thô thành định dạng chuẩn JSON.
-type: skill
-category: custom
-enabled: true
-version: v3.0
 ---
 
 # Kỹ năng: Multimodal OCR & Data Extractor

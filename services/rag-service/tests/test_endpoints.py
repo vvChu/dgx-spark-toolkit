@@ -243,12 +243,13 @@ def test_admin_sync_status_endpoint(client):
 
     with patch("api.routers.admin.LifecycleService") as service_cls:
         service = AsyncMock()
-        service.sync_document_status.return_value = {"status": "ok", "doc_id": "doc-1"}
+        service.sync_document_status.return_value = {"status": "ok", "doc_id": "doc-1", "new_status": "ACTIVE", "updates": {}}
         service_cls.return_value = service
 
         response = client.post(
             "/admin/sync-status",
             json={"doc_id": "doc-1", "new_status": "ACTIVE"},
+            headers={"X-Admin-Key": "test-admin-key-for-ci"},
         )
 
     assert response.status_code == 200

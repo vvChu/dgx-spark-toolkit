@@ -3,7 +3,8 @@ from models.schemas import SearchRequest, SearchResponse
 from core.database import get_neo4j_repo, get_milvus_repo
 from repositories.neo4j_repo import Neo4jRepository
 from repositories.milvus_repo import MilvusRepository
-from services.retrieval_service import RetrievalService, rewrite_query
+from services.retrieval_service import RetrievalService
+from retrieval.query_rewriter import rewrite_query
 
 import logging
 

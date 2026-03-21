@@ -1,11 +1,6 @@
 ---
-name: BIM QA Pipeline
-command: /bim-qa-pipeline
+name: bim-qa-pipeline
 description: Automated Quality Assurance and Testing standards.
-type: skill
-category: custom
-enabled: true
-version: v3.0
 ---
 
 # BIM QA Pipeline

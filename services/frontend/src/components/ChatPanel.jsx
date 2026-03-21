@@ -19,7 +19,7 @@ export default function ChatPanel({
       {/* Message list */}
       <div className="flex-1 overflow-y-auto space-y-8 pr-4 custom-scrollbar">
         {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div key={m.id || i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[85%] p-5 rounded-3xl shadow-2xl transition-all ${m.role === 'user' ? 'bg-blue-600 text-white' : 'glass border-blue-500/20'}`}>
               {m.thought && (
                 <div className="flex items-center space-x-2 mb-3 opacity-60">

@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     EXPORT_PROCESSED_DATA: bool = True
     EXPORT_DIR: str = "/app/exports"
 
+    # Admin endpoint authentication
+    ADMIN_SECRET: SecretStr = SecretStr("")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

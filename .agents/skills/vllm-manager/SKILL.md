@@ -1,11 +1,6 @@
 ---
-name: vLLM Manager
-command: /vllm-manager
+name: vllm-manager
 description: Utilities and guidelines for managing vLLM model serving, health monitoring, benchmarking, and troubleshooting on DGX Spark.
-type: skill
-category: custom
-enabled: true
-version: v3.0
 ---
 
 # vLLM Manager

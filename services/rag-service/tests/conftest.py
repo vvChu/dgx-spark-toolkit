@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 # @model_validator that rejects empty values.
 os.environ.setdefault("NEO4J_PASSWORD", "ci_test_placeholder_safe")
 os.environ.setdefault("LITELLM_MASTER_KEY", "sk-ci-test-placeholder-safe")
+os.environ.setdefault("ADMIN_SECRET", "test-admin-key-for-ci")
 
 # Stub the heavy embedding module before importing main.py.  This keeps tests
 # independent from optional model/runtime package compatibility issues.
@@ -47,3 +48,43 @@ def clear_dependency_overrides():
     app.dependency_overrides = {}
     yield
     app.dependency_overrides = {}
+
+
+# ── Shared Mock Fixtures ────────────────────────────────────────────────
+@pytest.fixture
+def mock_milvus_repo():
+    """A fully-mocked MilvusRepository."""
+    from unittest.mock import AsyncMock, MagicMock
+    repo = MagicMock()
+    repo.hybrid_search = AsyncMock(return_value=[])
+    repo.get_parent_chunks = AsyncMock(return_value=[])
+    repo.count = MagicMock(return_value=0)
+    return repo
+
+
+@pytest.fixture
+def mock_neo4j_repo():
+    """A fully-mocked Neo4jRepository."""
+    from unittest.mock import AsyncMock, MagicMock
+    repo = MagicMock()
+    repo.get_graph_data = AsyncMock(return_value={"nodes": [], "links": []})
+    repo.find_document_status = AsyncMock(return_value={})
+    repo.get_document_graph = AsyncMock(return_value={"nodes": [], "links": []})
+    repo.driver = MagicMock()
+    return repo
+
+
+@pytest.fixture
+def mock_state_manager():
+    """A fully-mocked PostgresStateManager."""
+    from unittest.mock import AsyncMock, MagicMock
+    mgr = MagicMock()
+    mgr.get_document_state = AsyncMock(return_value=None)
+    mgr.update_document_state = AsyncMock(return_value=True)
+    return mgr
+
+
+@pytest.fixture
+def admin_headers():
+    """Headers with valid admin key for protected endpoints."""
+    return {"X-Admin-Key": "test-admin-key-for-ci"}

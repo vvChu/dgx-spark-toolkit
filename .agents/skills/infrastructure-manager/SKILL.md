@@ -1,11 +1,6 @@
 ---
-name: Infrastructure Manager
-command: /infrastructure-manager
+name: infrastructure-manager
 description: Interface for managing server infrastructure using dgx-spark-toolkit resources.
-type: skill
-category: custom
-enabled: true
-version: v3.0
 ---
 
 # Infrastructure Manager

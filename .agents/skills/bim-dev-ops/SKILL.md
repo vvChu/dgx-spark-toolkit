@@ -1,11 +1,6 @@
 ---
-name: BIM Planner DevOps
-command: /bim-planner-devops
+name: bim-dev-ops
 description: Utilities and guidelines for developing and operating the BIM Planner application.
-type: skill
-category: custom
-enabled: true
-version: v3.0
 ---
 
 # BIM Planner Development & Operations

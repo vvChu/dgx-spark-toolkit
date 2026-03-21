@@ -2,9 +2,7 @@ import asyncio
 import json
 import logging
 import re
-import time
 import threading
-import httpx
 import numpy as np
 
 from core.config import get_settings
@@ -13,7 +11,8 @@ from repositories.milvus_repo import MilvusRepository
 from retrieval.hyde import HyDEGenerator
 from retrieval.reranker import get_reranker
 from retrieval.graph_timeline_retriever import AdvancedGraphRAG
-import torch
+from retrieval.semantic_cache import SemanticCache
+from retrieval.query_rewriter import rewrite_query
 from prometheus_client import Summary, Counter, Histogram, Gauge
 
 # Prometheus Metrics
@@ -44,55 +43,6 @@ def _safe_json_loads(value: str) -> list:
     except (json.JSONDecodeError, TypeError):
         logger.warning(f"Malformed bbox value, using fallback: {value!r}")
         return _BBOX_FALLBACK
-
-
-class SemanticCache:
-    """In-memory semantic cache with TTL and LRU eviction."""
-
-    def __init__(self, threshold: float = 0.92, max_size: int = 1000, ttl_seconds: float = 3600.0):
-        self.cache: dict = {}
-        self.threshold = threshold
-        self.max_size = max_size
-        self.ttl_seconds = ttl_seconds
-        self._lock = threading.Lock()
-
-    def _is_expired(self, entry: dict) -> bool:
-        return (time.monotonic() - entry["timestamp"]) > self.ttl_seconds
-
-    def get(self, query: str, query_embedding: np.ndarray):
-        best_match = None
-        highest_score = -1.0
-        with self._lock:
-            for q_text, data in list(self.cache.items()):
-                if self._is_expired(data):
-                    del self.cache[q_text]
-                    continue
-                norm_q = np.linalg.norm(query_embedding)
-                norm_d = np.linalg.norm(data["embedding"])
-                if norm_q == 0 or norm_d == 0:
-                    continue
-                score = np.dot(query_embedding, data["embedding"]) / (norm_q * norm_d)
-                if score > highest_score:
-                    highest_score = score
-                    best_match = q_text
-            if highest_score >= self.threshold and best_match:
-                # LRU: refresh timestamp on hit
-                self.cache[best_match]["timestamp"] = time.monotonic()
-                logger.info(f"Semantic cache hit! Similarity: {highest_score:.4f}")
-                return self.cache[best_match]["results"]
-        return None
-
-    def set(self, query: str, query_embedding: np.ndarray, results):
-        with self._lock:
-            if len(self.cache) >= self.max_size:
-                # Evict the oldest entry (smallest timestamp)
-                oldest = min(self.cache, key=lambda k: self.cache[k]["timestamp"])
-                del self.cache[oldest]
-            self.cache[query] = {
-                "embedding": query_embedding,
-                "results": results,
-                "timestamp": time.monotonic(),
-            }
 
 
 # Lazy-initialized module singletons — deferred to avoid import-time get_settings() calls
@@ -133,66 +83,25 @@ def get_embedding_model() -> BGE_M3_HybridEmbedding:
     return _embedding_model
 
 
-# Single in-memory cache for query rewrites (bounded, FIFO)
-# asyncio.Lock is created lazily inside the first coroutine call to avoid
-# binding to the wrong event loop when the module is imported before the loop starts.
-_query_rewrite_cache: dict = {}
-_query_rewrite_lock: asyncio.Lock | None = None
+def _build_result_item(entity: dict, text: str, score: float) -> dict:
+    """Build a standardized result dict from a Milvus entity — single source of truth."""
+    return {
+        "text": text, "source": entity.get("source"), "page": entity.get("page", 0),
+        "summary": entity.get("summary", ""), "doc_date": entity.get("doc_date", ""),
+        "doc_type": entity.get("doc_type", ""), "authority": entity.get("authority", ""),
+        "doc_number": entity.get("doc_number", ""),
+        "is_table": entity.get("is_table", False), "chunk_type": entity.get("chunk_type", ""),
+        "parent_id": entity.get("parent_id", ""),
+        "bbox": _safe_json_loads(entity.get("bbox", "[0,0,1000,1000]")),
+        "validity_status": entity.get("validity_status", "ACTIVE"),
+        "project_code": entity.get("project_code", "GENERIC"),
+        "discipline": entity.get("discipline", "UNKNOWN"),
+        "hierarchy_path": entity.get("hierarchy_path", ""),
+        "doc_status": entity.get("doc_status", "ACTIVE"),
+        "revision": entity.get("revision", 0),
+        "score": score,
+    }
 
-
-def _get_rewrite_lock() -> asyncio.Lock:
-    global _query_rewrite_lock
-    if _query_rewrite_lock is None:
-        _query_rewrite_lock = asyncio.Lock()
-    return _query_rewrite_lock
-
-# Module-level shared AsyncClient — avoids creating a new TCP connection per rewrite call
-_rewrite_http_client: httpx.AsyncClient | None = None
-_rewrite_http_client_thread_lock = threading.Lock()
-
-
-def _get_rewrite_http_client() -> httpx.AsyncClient:
-    global _rewrite_http_client
-    if _rewrite_http_client is None:
-        with _rewrite_http_client_thread_lock:
-            if _rewrite_http_client is None:
-                _rewrite_http_client = httpx.AsyncClient(timeout=30.0)
-    return _rewrite_http_client
-
-
-async def rewrite_query(original_query: str) -> str:
-    """Standardize legal terms and expand acronyms using LLM."""
-    lock = _get_rewrite_lock()
-    async with lock:
-        if original_query in _query_rewrite_cache:
-            return _query_rewrite_cache[original_query]
-
-    try:
-        settings = get_settings()
-        from core.prompts import QUERY_REWRITE_PROMPT
-        prompt = QUERY_REWRITE_PROMPT.format(original_query=original_query)
-        payload = {
-            "model": settings.VLLM_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.0,
-            "max_tokens": 100
-        }
-        client = _get_rewrite_http_client()
-        resp = await client.post(
-            f"{settings.VLLM_API_BASE}/chat/completions",
-            json=payload,
-            headers={"Authorization": f"Bearer {settings.LITELLM_MASTER_KEY.get_secret_value()}"},
-        )
-        if resp.status_code == 200:
-            rewritten = resp.json()["choices"][0]["message"]["content"].strip().strip('"')
-            async with lock:
-                if len(_query_rewrite_cache) >= 1000:
-                    _query_rewrite_cache.pop(next(iter(_query_rewrite_cache)))
-                _query_rewrite_cache[original_query] = rewritten
-            return rewritten
-    except Exception as e:
-        logger.warning(f"Query rewriting failed: {e}")
-    return original_query
 
 class RetrievalService:
     def __init__(self, milvus_repo: MilvusRepository, neo4j_repo: Neo4jRepository):
@@ -296,42 +205,12 @@ class RetrievalService:
                     validity_boost = 0.15 if status == "ACTIVE" else (-0.3 if status == "OUTDATED" else 0.0)
                     
                     hybrid_score = (float(score) * 0.8) + (float(milvus_score) * 0.2) + table_boost + validity_boost
-                    top_results.append({
-                        "text": doc_text, "source": ent.get("source"), "page": ent.get("page", 0),
-                        "summary": ent.get("summary", ""), "doc_date": ent.get("doc_date", ""),
-                        "doc_type": ent.get("doc_type", ""), "authority": ent.get("authority", ""),
-                        "doc_number": ent.get("doc_number", ""),
-                        "is_table": ent.get("is_table", False), "chunk_type": ent.get("chunk_type", ""),
-                        "parent_id": ent.get("parent_id", ""),
-                        "bbox": _safe_json_loads(ent.get("bbox", "[0,0,1000,1000]")),
-                        "validity_status": ent.get("validity_status", "ACTIVE"),
-                        "project_code": ent.get("project_code", "GENERIC"),
-                        "discipline": ent.get("discipline", "UNKNOWN"),
-                        "hierarchy_path": ent.get("hierarchy_path", ""),
-                        "doc_status": ent.get("doc_status", "ACTIVE"),
-                        "revision": ent.get("revision", 0),
-                        "score": hybrid_score
-                    })
+                    top_results.append(_build_result_item(ent, doc_text, hybrid_score))
                 top_results.sort(key=lambda x: x["score"], reverse=True)
             else:
                 for hit in raw_hits:
                     ent = hit.entity
-                    top_results.append({
-                        "text": ent.get("text"), "source": ent.get("source"), "page": ent.get("page", 0),
-                        "summary": ent.get("summary", ""), "doc_date": ent.get("doc_date", ""),
-                        "doc_type": ent.get("doc_type", ""), "authority": ent.get("authority", ""),
-                        "doc_number": ent.get("doc_number", ""),
-                        "is_table": ent.get("is_table", False), "chunk_type": ent.get("chunk_type", ""),
-                        "parent_id": ent.get("parent_id", ""),
-                        "bbox": _safe_json_loads(ent.get("bbox", "[0,0,1000,1000]")),
-                        "validity_status": ent.get("validity_status", "ACTIVE"),
-                        "project_code": ent.get("project_code", "GENERIC"),
-                        "discipline": ent.get("discipline", "UNKNOWN"),
-                        "hierarchy_path": ent.get("hierarchy_path", ""),
-                        "doc_status": ent.get("doc_status", "ACTIVE"),
-                        "revision": ent.get("revision", 0),
-                        "score": float(hit.score)
-                    })
+                    top_results.append(_build_result_item(ent, ent.get("text"), float(hit.score)))
 
         if top_results:
             # Inject Graph Status — fetch for all unique sources so every result gets accurate status

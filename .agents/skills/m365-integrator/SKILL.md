@@ -1,11 +1,6 @@
 ---
-name: M365 Integrator
-command: /m365-integrator
+name: m365-integrator
 description: specialized skill for integrating Microsoft 365 services (Graph API, Auth) into React/Node apps.
-type: skill
-category: custom
-enabled: true
-version: v3.0
 ---
 
 # Microsoft 365 Integration Skill

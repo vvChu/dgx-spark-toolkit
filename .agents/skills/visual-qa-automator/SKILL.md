@@ -1,11 +1,6 @@
 ---
-name: Visual QA Automator
-command: /visual-qa-automator
+name: visual-qa-automator
 description: Dùng AI rà soát lỗi giao diện (CSS, Layout) bằng mắt thường bằng cách so sánh ảnh thực tế và ảnh thiết kế gốc.
-type: skill
-category: custom
-enabled: true
-version: v3.0
 ---
 
 # Kỹ năng: Visual QA Automator

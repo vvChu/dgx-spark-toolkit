@@ -22,16 +22,19 @@ COPY requirements.txt .
 RUN grep -v "torch" requirements.txt > requirements_no_torch.txt && \
     pip3 install --no-cache-dir -r requirements_no_torch.txt
 
-# Create non-root user (optional but commented out due to CUDA permissions on this system)
-# RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-# USER appuser
-
 # Copy application code
 COPY . .
+
+# Non-root user — rag-service uses CPU-only reranker/embedding, no CUDA perms needed
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
 
 # Reset entrypoint from base image
 ENTRYPOINT []
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=60s --timeout=30s --retries=10 --start-period=120s \
+  CMD curl -f http://localhost:8000/health || exit 1
 
 CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

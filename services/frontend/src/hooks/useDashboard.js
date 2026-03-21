@@ -13,7 +13,7 @@ import {
 
 export default function useDashboard() {
   const [messages, setMessages] = useState([
-    { role: 'ai', content: 'Chào anh, em là Spark BIM Expert. Em đã sẵn sàng hỗ trợ anh tra cứu và phân tích hơn 8.000 văn bản pháp luật với công nghệ GraphRAG.' },
+    { id: 'welcome', role: 'ai', content: 'Chào anh, em là Spark BIM Expert. Em đã sẵn sàng hỗ trợ anh tra cứu và phân tích hơn 8.000 văn bản pháp luật với công nghệ GraphRAG.' },
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -60,10 +60,19 @@ export default function useDashboard() {
     const controller = new AbortController();
     abortRef.current = controller;
     refreshData(controller.signal);
-    const interval = setInterval(() => refreshData(controller.signal), 15000);
+    const interval = setInterval(() => {
+      if (!document.hidden) refreshData(controller.signal);
+    }, 15000);
+
+    const onVisibilityChange = () => {
+      if (!document.hidden) refreshData(controller.signal);
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
     return () => {
       controller.abort();
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [refreshData]);
 
@@ -95,20 +104,20 @@ export default function useDashboard() {
 
   const handleSendMessage = useCallback(async () => {
     if (!input || isLoading) return;
-    const userMsg = { role: 'user', content: input };
+    const userMsg = { id: `user-${Date.now()}`, role: 'user', content: input };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     setIsLoading(true);
 
     try {
       const data = await sendChat(input, language);
-      const aiMsg = { role: 'ai', content: data.answer, thought: data.thought, context: data.context };
+      const aiMsg = { id: `ai-${Date.now()}`, role: 'ai', content: data.answer, thought: data.thought, context: data.context };
       setMessages((prev) => [...prev, aiMsg]);
       const contextStrs = data.context ? data.context.map((c) => c.text) : [];
       handleEvaluate(input, data.answer, contextStrs);
       refreshData();
     } catch {
-      setMessages((prev) => [...prev, { role: 'ai', content: 'Có lỗi kết nối tới Spark Engine. Anh vui lòng kiểm tra lại dịch vụ nhé.' }]);
+      setMessages((prev) => [...prev, { id: `err-${Date.now()}`, role: 'ai', content: 'Có lỗi kết nối tới Spark Engine. Anh vui lòng kiểm tra lại dịch vụ nhé.' }]);
     } finally {
       setIsLoading(false);
     }

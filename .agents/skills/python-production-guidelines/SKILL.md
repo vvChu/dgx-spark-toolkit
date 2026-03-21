@@ -1,5 +1,5 @@
 ---
-name: Python Production Guidelines
+name: python-production-guidelines
 description: Core architectural and operational guidelines for Python, FastAPI, and RAG systems (High Concurrency & Stability).
 ---
 

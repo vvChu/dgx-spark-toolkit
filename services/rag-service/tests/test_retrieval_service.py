@@ -18,7 +18,7 @@ class _FakeEmb:
 _fake_mod.BGE_M3_HybridEmbedding = _FakeEmb
 sys.modules.setdefault("retrieval.embeddings.bge_m3_hybrid", _fake_mod)
 
-from services.retrieval_service import SemanticCache
+from retrieval.semantic_cache import SemanticCache
 
 
 # ── SemanticCache ───────────────────────────────────────────────────────
@@ -62,10 +62,10 @@ class TestSemanticCache:
 # ── rewrite_query ───────────────────────────────────────────────────────
 class TestRewriteQuery:
     def test_rewrite_returns_original_on_failure(self):
-        from services.retrieval_service import rewrite_query, _query_rewrite_cache
+        from retrieval.query_rewriter import rewrite_query, _query_rewrite_cache
         _query_rewrite_cache.clear()
 
-        with patch("services.retrieval_service._get_rewrite_http_client") as mock_fn:
+        with patch("retrieval.query_rewriter._get_rewrite_http_client") as mock_fn:
             mock_client = AsyncMock()
             mock_client.post.side_effect = Exception("timeout")
             mock_fn.return_value = mock_client
@@ -76,7 +76,7 @@ class TestRewriteQuery:
             assert result == "test query"
 
     def test_rewrite_caches_result(self):
-        from services.retrieval_service import rewrite_query, _query_rewrite_cache
+        from retrieval.query_rewriter import rewrite_query, _query_rewrite_cache
         _query_rewrite_cache.clear()
 
         mock_response = MagicMock()
@@ -85,7 +85,7 @@ class TestRewriteQuery:
             "choices": [{"message": {"content": '"improved query"'}}]
         }
 
-        with patch("services.retrieval_service._get_rewrite_http_client") as mock_fn:
+        with patch("retrieval.query_rewriter._get_rewrite_http_client") as mock_fn:
             mock_client = AsyncMock()
             mock_client.post.return_value = mock_response
             mock_fn.return_value = mock_client

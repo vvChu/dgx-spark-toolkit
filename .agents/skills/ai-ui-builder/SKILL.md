@@ -1,11 +1,6 @@
 ---
-name: AI UI Builder
-command: /ai-ui-builder
+name: ai-ui-builder
 description: Chuyên gia sinh Code Frontend (React/Tailwind) từ ảnh Mockup/Thiết kế bằng sức mạnh của Qwen 3.5 35B Local (hoặc Gemini-3 Flash fallback).
-type: skill
-category: custom
-enabled: true
-version: v3.0
 ---
 
 # Kỹ năng: AI UI/UX Builder

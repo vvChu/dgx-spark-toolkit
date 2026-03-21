@@ -1,11 +1,6 @@
 ---
-name: IDOP CRUD Generator
-command: /idop-crud-generator
+name: idop-crud-generator
 description: Agent-driven code generation for CRUD operations in IDOP modules.
-type: skill
-category: custom
-enabled: true
-version: v3.0
 ---
 
 # IDOP CRUD Generator

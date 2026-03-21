@@ -3,7 +3,8 @@ from models.schemas import ChatRequest, ChatResponse
 from core.database import get_milvus_repo, get_neo4j_repo, get_http_client
 from repositories.milvus_repo import MilvusRepository
 from repositories.neo4j_repo import Neo4jRepository
-from services.retrieval_service import RetrievalService, rewrite_query
+from services.retrieval_service import RetrievalService
+from retrieval.query_rewriter import rewrite_query
 from core.prompts import get_system_prompt
 from core.config import get_settings
 import httpx

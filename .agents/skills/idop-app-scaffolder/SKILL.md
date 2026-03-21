@@ -1,11 +1,6 @@
 ---
-name: IDOP Module Scaffolder
-command: /idop-module-scaffolder
+name: idop-app-scaffolder
 description: Helper to scaffold consistent module structures for the IDOP platform.
-type: skill
-category: custom
-enabled: true
-version: v3.0
 ---
 
 # IDOP Module Scaffolding
