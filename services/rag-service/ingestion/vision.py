@@ -38,7 +38,7 @@ try:
 except ImportError:
     SURYA_AVAILABLE = False
 
-from rag_router import RAGRouter
+from ingestion.rag_router import RAGRouter
 import httpx
 from PIL import Image
 import torch

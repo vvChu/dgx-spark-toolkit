@@ -28,7 +28,7 @@ Frontend(:5173) → RAG Service(:8005) → Milvus + Neo4j + AI Gateway(:8090) �
 - Sync reranker wrapped via `asyncio.to_thread()` — see `reranker.py`
 - Config via `pydantic-settings` `BaseSettings` with `SecretStr` — see `core/config.py`
 - FastAPI `Depends()` for DI — see `core/database.py` lifespan + dependency functions
-- OpenAI SDK with `base_url` pointed at gateway for all LLM calls — see `rag_router.py`
+- OpenAI SDK with `base_url` pointed at gateway for all LLM calls — see `ingestion/rag_router.py`
 
 ## Build and Test
 
