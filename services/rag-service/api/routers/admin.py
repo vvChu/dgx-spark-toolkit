@@ -7,6 +7,7 @@ from repositories.neo4j_repo import Neo4jRepository
 from ingestion.state_manager import PostgresStateManager
 from services.lifecycle_service import LifecycleService
 
+import asyncio
 import logging
 import subprocess
 import sys
@@ -17,17 +18,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
 
-# ── Temporary Autoresearch Endpoints (remove after optimization) ────────
+def _run_subprocess(cmd: list[str], timeout: int = 300) -> str:
+    """Run a subprocess synchronously (called via asyncio.to_thread)."""
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=timeout, cwd="/app",
+    )
+    return result.stdout + result.stderr
+
+
+# ── Admin Script Endpoints ──────────────────────────────────────────────
 @router.get("/audit", response_class=PlainTextResponse)
 async def run_audit():
     """Run comprehensive_audit.py and return raw output."""
     try:
-        result = subprocess.run(
-            [sys.executable, "/app/comprehensive_audit.py"],
-            capture_output=True, text=True, timeout=300,
-            cwd="/app",
+        output = await asyncio.to_thread(
+            _run_subprocess,
+            [sys.executable, "/app/scripts/comprehensive_audit.py"],
+            300,
         )
-        return result.stdout + result.stderr
+        return output
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Audit timed out (>300s)")
     except Exception as e:
@@ -40,12 +49,12 @@ async def run_pipeline(action: str):
     if action not in ("apply", "revert", "dry-run"):
         raise HTTPException(status_code=400, detail="action must be: apply, revert, dry-run")
     try:
-        result = subprocess.run(
+        output = await asyncio.to_thread(
+            _run_subprocess,
             [sys.executable, "/app/pipeline.py", f"--{action}"],
-            capture_output=True, text=True, timeout=120,
-            cwd="/app",
+            120,
         )
-        return result.stdout + result.stderr
+        return output
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
