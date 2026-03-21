@@ -1,24 +1,25 @@
 import asyncio
+import logging
 import os
 import threading
-from sentence_transformers import CrossEncoder
 from functools import lru_cache
-import logging
+
+from sentence_transformers import CrossEncoder
 
 logger = logging.getLogger(__name__)
+
 
 class Reranker:
     def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3"):
         self.model_name = model_name
         self.model = None
         self._load_lock = threading.Lock()
-        # Default to CPU if GPU_ENABLED is 0 or if explicitly requested via ENV
         self.device = "cuda" if os.getenv("GPU_ENABLED") == "1" and os.getenv("FORCE_CPU_RERANKER") != "1" else "cpu"
 
     def load_model(self):
         if self.model is None:
             with self._load_lock:
-                if self.model is None:  # double-checked locking prevents concurrent loads
+                if self.model is None:
                     logger.info(f"Loading reranker model: {self.model_name} on {self.device}")
                     try:
                         self.model = CrossEncoder(self.model_name, device=self.device)
@@ -32,10 +33,10 @@ class Reranker:
         self.load_model()
         if not docs:
             return []
-            
+
         pairs = [[query, doc] for doc in docs]
         scores = self.model.predict(pairs, batch_size=32)
-        
+
         doc_scores = list(zip(docs, scores))
         doc_scores.sort(key=lambda x: x[1], reverse=True)
         return doc_scores[:top_k]
@@ -43,6 +44,7 @@ class Reranker:
     async def rerank(self, query: str, docs: list[str], top_k: int = 5):
         """Asynchronous reranking using thread pool to avoid blocking the event loop."""
         return await asyncio.to_thread(self.rerank_sync, query, docs, top_k)
+
 
 @lru_cache()
 def get_reranker():

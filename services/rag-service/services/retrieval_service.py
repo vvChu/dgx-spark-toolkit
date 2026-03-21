@@ -10,8 +10,8 @@ import numpy as np
 from core.config import get_settings
 from repositories.neo4j_repo import Neo4jRepository
 from repositories.milvus_repo import MilvusRepository
-from hyde_utils import HyDEGenerator
-from reranker import get_reranker
+from retrieval.hyde import HyDEGenerator
+from retrieval.reranker import get_reranker
 from retrieval.graph_timeline_retriever import AdvancedGraphRAG
 import torch
 from prometheus_client import Summary, Counter, Histogram, Gauge

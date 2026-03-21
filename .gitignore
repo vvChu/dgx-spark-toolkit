@@ -41,6 +41,9 @@ vllm_backport/
 # Build artifacts
 build_debug.txt
 build_log.txt
+dist/
+.vite-temp/
+node_modules/
 
 # Test/benchmark results
 capability_results.json
@@ -49,6 +52,8 @@ services/rag-service/results.tsv
 # Cache & backups
 services/rag-service/ocr_cache.json
 *.json.bak
+.pytest_cache/
+model_cache/
 
 # Ingestion state runtime files
 services/rag-service/ingestion_state.json
