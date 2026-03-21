@@ -3,11 +3,12 @@ import random
 import uuid
 from locust import HttpUser, task, between, events
 from typing import List, Dict
+import os
 
 # --- Configuration ---
 AI_GATEWAY_URL = "/v1/chat/completions"
 MODELS = ["qwen3.5-35b", "smartest-brain"] # smartest-brain is the cloud fallback
-SECURE_KEY = "sk-spark-secure-key-2026"
+SECURE_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 
 # Test Queries (Realistic RAG scenarios)
 QUERIES = [

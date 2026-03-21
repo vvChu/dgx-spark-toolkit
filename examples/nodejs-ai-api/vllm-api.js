@@ -7,7 +7,7 @@
  *   const reply = await chat('Hello!');
  */
 
-const VLLM_URL = process.env.VLLM_API_BASE || 'http://100.83.192.30:8001/v1';
+const VLLM_URL = process.env.VLLM_API_BASE || 'http://localhost:8090/v1';
 const DEFAULT_MODEL = process.env.VLLM_MODEL || 'qwen3.5-35b';
 
 async function chat(message, model = DEFAULT_MODEL) {

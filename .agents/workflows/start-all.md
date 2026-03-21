@@ -41,7 +41,7 @@ sleep 5
 for model in "rag-core" "rag-light" "smartest-brain"; do
   echo "  - Pinging $model..."
   curl -m 10 -s http://localhost:8090/v1/chat/completions \
-    -H "Authorization: Bearer sk-spark-secure-key-2026" \
+    -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"model\": \"$model\", \"messages\": [{\"role\": \"user\", \"content\": \"ping\"}], \"max_tokens\": 5}" > /dev/null || true
 done

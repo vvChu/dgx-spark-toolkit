@@ -7,9 +7,9 @@ Tài liệu này hướng dẫn cách kết nối từ máy cá nhân tới các
 | | |
 |---|---|
 | **IP Nội bộ** | `<LAN_IP>` (configured per host) |
-| **IP VPN/Tailscale** | `100.83.192.30` |
+| **IP VPN/Tailscale** | _(see `.env`)_ |
 | **AI Gateway** | port `8090` |
-| **API Key** | `sk-spark-secure-key-2026` |
+| **API Key** | `$LITELLM_MASTER_KEY` (see `.env`) |
 
 ---
 
@@ -26,8 +26,8 @@ sudo bash /home/vvc/Codebase/dgx-spark-toolkit/scripts/setup-remote-access.sh
 ### Cách A: Trực tiếp (cùng LAN hoặc Tailscale)
 
 ```bash
-curl http://100.83.192.30:8090/v1/models \
-  -H "Authorization: Bearer sk-spark-secure-key-2026"
+curl http://<TAILSCALE_IP>:8090/v1/models \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY"
 ```
 
 ### Cách B: SSH Tunneling (qua Firewall)
@@ -38,7 +38,7 @@ ssh -L 8090:localhost:8090 vvc@<LAN_IP>
 
 # Sau đó dùng localhost:
 curl http://localhost:8090/v1/models \
-  -H "Authorization: Bearer sk-spark-secure-key-2026"
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY"
 ```
 
 ---
@@ -50,8 +50,8 @@ curl http://localhost:8090/v1/models \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://100.83.192.30:8090/v1",
-    api_key="sk-spark-secure-key-2026"
+    base_url="http://<TAILSCALE_IP>:8090/v1",
+    api_key=os.environ["LITELLM_MASTER_KEY"]
 )
 
 # Dùng bất kỳ model nào trong 25 models
@@ -64,6 +64,6 @@ print(response.choices[0].message.content)
 
 **Frontend (.env):**
 ```env
-VITE_AI_GATEWAY_URL=http://100.83.192.30:8090/v1
-VITE_AI_GATEWAY_KEY=sk-spark-secure-key-2026
+VITE_AI_GATEWAY_URL=http://<TAILSCALE_IP>:8090/v1
+VITE_AI_GATEWAY_KEY=$LITELLM_MASTER_KEY
 ```

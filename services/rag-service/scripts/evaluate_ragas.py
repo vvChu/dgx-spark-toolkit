@@ -9,7 +9,7 @@ import os
 
 # Configuration
 RAG_BASE = os.getenv("RAG_BASE", "http://127.0.0.1:8000")
-LITELLM_API_BASE = os.getenv("LITELLM_API_BASE", "http://100.83.192.30:8090/v1")
+LITELLM_API_BASE = os.getenv("LITELLM_API_BASE", "http://localhost:8090/v1")
 MODEL_NAME = os.getenv("VLLM_MODEL", "qwen3.5-35b")
 
 logging.basicConfig(level=logging.INFO)

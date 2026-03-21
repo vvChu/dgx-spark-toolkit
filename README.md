@@ -10,7 +10,7 @@ Comprehensive AI development toolkit for NVIDIA DGX Spark. Provides a unified **
 | **Memory** | 128GB LPDDR5x unified |
 | **Performance** | 1 petaFLOP (FP4) |
 | **OS** | DGX OS (Ubuntu 24.04) |
-| **Tailscale IP** | `100.83.192.30` |
+| **Tailscale IP** | _(see `.env`)_ |
 | **LAN IP** | `<LAN_IP>` (see `.env`) |
 
 ---
@@ -71,11 +71,11 @@ This starts vLLM (Qwen 3.5 35B) + Docker stack (Gateway + RAG + Milvus + Monitor
 ```bash
 # List all 25 available models
 curl http://localhost:8090/v1/models \
-  -H "Authorization: Bearer sk-spark-secure-key-2026"
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY"
 
 # Run inference
 curl http://localhost:8090/v1/chat/completions \
-  -H "Authorization: Bearer sk-spark-secure-key-2026" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
@@ -120,14 +120,14 @@ curl http://localhost:8090/v1/chat/completions \
 sudo bash scripts/setup-remote-access.sh
 
 # Connect from any machine
-curl http://100.83.192.30:8090/v1/models \
-  -H "Authorization: Bearer sk-spark-secure-key-2026"
+curl http://<TAILSCALE_IP>:8090/v1/models \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY"
 ```
 
 **Python:**
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://100.83.192.30:8090/v1", api_key="sk-spark-secure-key-2026")
+client = OpenAI(base_url="http://<TAILSCALE_IP>:8090/v1", api_key=os.environ["LITELLM_MASTER_KEY"])
 ```
 
 See [`playbooks/remote-access.md`](playbooks/remote-access.md) for full details.

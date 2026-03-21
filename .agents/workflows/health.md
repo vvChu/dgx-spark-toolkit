@@ -32,7 +32,7 @@ curl -s http://localhost:8003/v1/models | jq || echo "❌ 4B not responding"
 
 4. Check AI Gateway API (Unified):
 ```bash
-curl -s http://localhost:8090/v1/models -H "Authorization: Bearer sk-spark-secure-key-2026" 2>/dev/null | python3 -m json.tool || echo "❌ Gateway not responding"
+curl -s http://localhost:8090/v1/models -H "Authorization: Bearer $LITELLM_MASTER_KEY" 2>/dev/null | python3 -m json.tool || echo "❌ Gateway not responding"
 ```
 
 5. Check RAG Data Consistency:

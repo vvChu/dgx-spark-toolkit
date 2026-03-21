@@ -23,9 +23,9 @@ All available tools and resources for managing the DGX Spark infrastructure.
 
 | Service | Local URL | Remote URL (Tailscale) |
 |---------|-----------|----------------------|
-| AI Gateway | `http://localhost:8090` | `http://100.83.192.30:8090` |
-| RAG Service | `http://localhost:8005` | `http://100.83.192.30:8005` |
-| Qwen 35B vLLM | `http://localhost:8004` | `http://100.83.192.30:8004` |
+| AI Gateway | `http://localhost:8090` | `http://<TAILSCALE_IP>:8090` |
+| RAG Service | `http://localhost:8005` | `http://<TAILSCALE_IP>:8005` |
+| Qwen 35B vLLM | `http://localhost:8004` | `http://<TAILSCALE_IP>:8004` |
 | Milvus | `http://localhost:19530` | — |
 | Prometheus | `http://localhost:9090` | — |
 | Grafana | `http://localhost:3000` | — |
@@ -40,5 +40,5 @@ All available tools and resources for managing the DGX Spark infrastructure.
 
 ## Auth
 
-- **Gateway API Key**: `sk-spark-secure-key-2026` (set via `LITELLM_MASTER_KEY` in `.env`)
+- **Gateway API Key**: `$LITELLM_MASTER_KEY` (set via `LITELLM_MASTER_KEY` in `.env`)
 - **Proxy Key**: set via `GATEWAY_PROXY_KEY` in `.env`

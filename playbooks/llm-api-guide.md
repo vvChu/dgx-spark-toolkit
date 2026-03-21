@@ -8,15 +8,15 @@ All AI access should go through the **AI Gateway** for unified routing, fallback
 
 ```
 http://localhost:8090/v1          (local)
-http://100.83.192.30:8090/v1     (remote via Tailscale)
-Authorization: Bearer sk-spark-secure-key-2026
+http://<TAILSCALE_IP>:8090/v1     (remote via Tailscale)
+Authorization: Bearer $LITELLM_MASTER_KEY
 ```
 
 ### Quick Test
 
 ```bash
 curl http://localhost:8090/v1/chat/completions \
-  -H "Authorization: Bearer sk-spark-secure-key-2026" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
@@ -66,7 +66,7 @@ from openai import OpenAI
 # Via Gateway (recommended — all models + fallbacks)
 client = OpenAI(
     base_url="http://localhost:8090/v1",
-    api_key="sk-spark-secure-key-2026"
+    api_key=os.environ["LITELLM_MASTER_KEY"]
 )
 
 response = client.chat.completions.create(
@@ -85,7 +85,7 @@ Use only when you need raw vLLM access without gateway routing:
 
 ```bash
 # Qwen 3.5 35B (port 8004)
-curl http://100.83.192.30:8004/v1/chat/completions \
+curl http://localhost:8004/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "qwen3.5-35b", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```

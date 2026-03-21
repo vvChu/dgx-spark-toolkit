@@ -16,7 +16,7 @@ import requests
 # Use VLLM_API_BASE to point at the gateway instead of raw vLLM port
 VLLM_API_BASE = os.environ.get("VLLM_API_BASE", "http://host.docker.internal:8090/v1")
 VLLM_MODEL = os.environ.get("VLLM_MODEL", "rag-core")
-GATEWAY_API_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-spark-secure-key-2026")
+GATEWAY_API_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 
 
 def is_url(string: str) -> bool:

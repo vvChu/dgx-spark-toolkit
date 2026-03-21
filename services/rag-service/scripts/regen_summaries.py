@@ -26,7 +26,7 @@ DEFAULT_EXPORT_DIR = os.path.join(
 
 # LLM API config — accessible from host via ai-gateway exposed port
 API_URL = os.environ.get("VLLM_API_BASE", "http://localhost:8090/v1") + "/chat/completions"
-API_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-spark-secure-key-2026")
+API_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 MODEL = os.environ.get("VLLM_MODEL", "rag-core")
 
 _SUMMARY_SYSTEM = """Bạn là chuyên gia tóm tắt văn bản pháp luật Việt Nam.

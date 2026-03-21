@@ -34,7 +34,7 @@ The script auto-sets these env vars:
 - `EXPORT_JSON_DIR=/home/vvc/Public/exports/json`
 - `EXPORT_MD_DIR=/home/vvc/Public/exports/markdown`
 - `PDF_SOURCE_DIR=/home/vvc/Public/exports`
-- `MILVUS_HOST=100.83.192.30`
+- `MILVUS_HOST=${MILVUS_HOST:-localhost}`
 - `MILVUS_PORT=19530`
 
 ### Output

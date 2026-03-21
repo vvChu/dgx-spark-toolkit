@@ -26,7 +26,7 @@ All skills and services should use the gateway instead of direct vLLM ports:
 ```bash
 # Via Gateway (Functional Aliases)
 curl -X POST http://localhost:8090/v1/chat/completions \
-  -H "Authorization: Bearer sk-spark-secure-key-2026" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"rag-core","messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
 ```
@@ -43,7 +43,7 @@ curl -s http://localhost:8004/v1/models | jq   # Core (35B)
 curl -s http://localhost:8003/v1/models | jq   # Light (4B)
 
 # Check via AI Gateway (Functional Aliases)
-curl -s http://localhost:8090/v1/models -H "Authorization: Bearer sk-spark-secure-key-2026" | jq
+curl -s http://localhost:8090/v1/models -H "Authorization: Bearer $LITELLM_MASTER_KEY" | jq
 
 # Diagnostic Script (Best way)
 bash scripts/rag-status.sh
@@ -83,7 +83,7 @@ nvidia-smi               # Verify free memory
 ```bash
 # Quick test via gateway (recommended)
 curl -X POST http://localhost:8090/v1/chat/completions \
-  -H "Authorization: Bearer sk-spark-secure-key-2026" \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"rag-core","messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
 ```

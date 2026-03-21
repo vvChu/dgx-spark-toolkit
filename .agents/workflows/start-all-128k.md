@@ -26,7 +26,7 @@ cd /home/vvc/Codebase/dgx-spark-toolkit && ./switch-vllm.sh max && docker compos
 ```bash
 for model in "smartest-brain" "smart-brain" "qwen3.5-9b-rag"; do
   curl -m 10 -s http://localhost:8090/v1/chat/completions \
-    -H "Authorization: Bearer sk-spark-secure-key-2026" \
+    -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"model\": \"$model\", \"messages\": [{\"role\": \"user\", \"content\": \"ping\"}], \"max_tokens\": 5}" > /dev/null || true
 done

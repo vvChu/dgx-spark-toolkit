@@ -22,7 +22,7 @@ os.chdir(RAG_SERVICE_DIR)
 os.environ["EXPORT_JSON_DIR"] = "/home/vvc/Public/exports/json"
 os.environ["EXPORT_MD_DIR"] = "/home/vvc/Public/exports/markdown"
 os.environ["PDF_SOURCE_DIR"] = "/home/vvc/Public/exports"
-os.environ["MILVUS_HOST"] = "100.83.192.30"
+os.environ["MILVUS_HOST"] = os.environ.get("MILVUS_HOST", "localhost")
 os.environ["MILVUS_PORT"] = "19530"
 
 # Disable pydantic secrets validation for local run (no Neo4j/LiteLLM needed)
