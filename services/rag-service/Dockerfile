@@ -26,7 +26,9 @@ RUN grep -v "torch" requirements.txt > requirements_no_torch.txt && \
 COPY . .
 
 # Non-root user — rag-service uses CPU-only reranker/embedding, no CUDA perms needed
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /home/appuser/.cache/huggingface && \
+    chown -R appuser:appuser /app /home/appuser/.cache
 USER appuser
 
 # Reset entrypoint from base image

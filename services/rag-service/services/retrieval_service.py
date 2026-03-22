@@ -2,10 +2,10 @@ import asyncio
 import json
 import logging
 import re
-import threading
 import numpy as np
 
 from core.config import get_settings
+from core.singleton import LazyInit
 from repositories.neo4j_repo import Neo4jRepository
 from repositories.milvus_repo import MilvusRepository
 from retrieval.hyde import HyDEGenerator
@@ -46,41 +46,20 @@ def _safe_json_loads(value: str) -> list:
 
 
 # Lazy-initialized module singletons — deferred to avoid import-time get_settings() calls
-_semantic_cache = None
-_hyde_gen = None
-
-
-def _get_semantic_cache() -> SemanticCache:
-    global _semantic_cache
-    if _semantic_cache is None:
-        s = get_settings()
-        _semantic_cache = SemanticCache(
-            threshold=s.SEMANTIC_CACHE_THRESHOLD,
-            ttl_seconds=s.SEMANTIC_CACHE_TTL_SECONDS,
-        )
-    return _semantic_cache
-
-
-def _get_hyde_gen() -> HyDEGenerator:
-    global _hyde_gen
-    if _hyde_gen is None:
-        _hyde_gen = HyDEGenerator()
-    return _hyde_gen
+_semantic_cache = LazyInit(lambda: SemanticCache(
+    threshold=get_settings().SEMANTIC_CACHE_THRESHOLD,
+    ttl_seconds=get_settings().SEMANTIC_CACHE_TTL_SECONDS,
+))
+_hyde_gen = LazyInit(lambda: HyDEGenerator())
 
 from retrieval.embeddings.bge_m3_hybrid import BGE_M3_HybridEmbedding
 
-_embedding_model = None
-_embedding_model_lock = threading.Lock()
+_embedding_model = LazyInit(lambda: BGE_M3_HybridEmbedding())
 
 
 def get_embedding_model() -> BGE_M3_HybridEmbedding:
     """Return the singleton embedding model, initializing it thread-safely on first call."""
-    global _embedding_model
-    if _embedding_model is None:
-        with _embedding_model_lock:
-            if _embedding_model is None:  # double-checked locking
-                _embedding_model = BGE_M3_HybridEmbedding()
-    return _embedding_model
+    return _embedding_model.get()
 
 
 def _build_result_item(entity: dict, text: str, score: float) -> dict:
@@ -132,7 +111,7 @@ class RetrievalService:
         q_vector_np = np.array(query_embeddings["dense"])
         
         if use_cache:
-            cached_results = _get_semantic_cache().get(query, q_vector_np)
+            cached_results = _semantic_cache.get().get(query, q_vector_np)
             if cached_results:
                 SEMANTIC_CACHE_HITS.inc()
                 return {"results": cached_results, "cached": True}
@@ -143,7 +122,7 @@ class RetrievalService:
         
         # Step 2: HyDE
         if use_hyde:
-            hyde_doc = await _get_hyde_gen().generate_hypothetical_answer(rewritten_query)
+            hyde_doc = await _hyde_gen.get().generate_hypothetical_answer(rewritten_query)
             if hyde_doc:
                 search_query = f"{rewritten_query}\n{hyde_doc}"
 
@@ -154,7 +133,7 @@ class RetrievalService:
         sparse_query = query_embeddings["sparse"]
 
         if use_cache:
-            cached_results = _get_semantic_cache().get(search_query, query_vector_np)
+            cached_results = _semantic_cache.get().get(search_query, query_vector_np)
             if cached_results:
                 return {"results": cached_results, "cached": True}
 
@@ -246,6 +225,6 @@ class RetrievalService:
                         r["text"] = f"[LEGAL TIMELINE]: {summary}\n\n[CONTENT]: {r['text']}"
 
         if use_cache and top_results:
-            _get_semantic_cache().set(search_query, query_vector_np, top_results)
+            _semantic_cache.get().set(search_query, query_vector_np, top_results)
             
         return {"results": top_results}

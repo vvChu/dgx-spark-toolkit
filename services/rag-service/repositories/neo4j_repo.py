@@ -95,3 +95,17 @@ class Neo4jRepository:
                 logger.info("Neo4j database cleared.")
         except Exception as e:
             logger.error(f"Failed to clear Neo4j DB: {e}")
+
+    async def run_query(self, cypher: str, **params) -> list[dict]:
+        """Execute an arbitrary read-only Cypher query and return all records as dicts.
+
+        This provides a controlled escape hatch for routers that need custom
+        queries (e.g. stats, graph visualization) without accessing _driver.
+        """
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(cypher, **params)
+                return [record.data() async for record in result]
+        except Exception as e:
+            logger.error(f"Neo4j run_query failed: {e}")
+            return []

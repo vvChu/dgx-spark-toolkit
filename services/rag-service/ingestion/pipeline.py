@@ -45,7 +45,7 @@ from ingestion.text_normalizer import (
     rejoin_paragraphs, detect_garbled_table,
     strip_document_boilerplate, strip_noi_nhan_block, strip_signer_block,
 )
-from ingestion.legal_taxonomy import classify_all
+from ingestion.legal_taxonomy import classify_all, classify_source_category
 from ingestion.state_manager import PostgresStateManager
 from ingestion.pipeline_config import (
     MAX_WORKERS, SOURCE_DIR,
@@ -286,19 +286,7 @@ class ProductionIngestor(MetadataMixin, ExtractionMixin, IndexingMixin, GraphMix
         meta["legal_level"] = taxonomy["legal_level"]
         meta["discipline"] = taxonomy["discipline"]
 
-        _CATEGORY_MAP = {
-            "CP_": "CHINH_PHU", "QH_": "QUOC_HOI", "UBND": "DIA_PHUONG",
-            "Linh vuc": "BO_NGANH", "BCD_": "BAN_CHI_DAO", "BCHTW": "DANG",
-            "Quy chuan": "QUY_CHUAN", "QCVN": "QUY_CHUAN",
-            "Tieu chuan": "TIEU_CHUAN_QT", "TL ": "TAI_LIEU_KT",
-            "TL_": "TAI_LIEU_KT", "TT ": "TRUNG_TAM",
-        }
-        source_cat = "KHAC"
-        for prefix, cat in _CATEGORY_MAP.items():
-            if prefix in rel_path:
-                source_cat = cat
-                break
-        meta["source_category"] = source_cat
+        meta["source_category"] = classify_source_category(rel_path)
 
         # Resolve doc_id
         raw_doc_num = meta.get("doc_number", "").strip()

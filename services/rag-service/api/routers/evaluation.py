@@ -2,10 +2,10 @@
 from fastapi import APIRouter, Depends
 from core.config import get_settings
 from core.database import get_http_client
+from core.llm_client import call_llm_json
 from models.schemas import EvaluationRequest, EvaluationResponse, FeedbackRequest
 
 import httpx
-import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,8 +19,6 @@ async def evaluate(
 ):
     """Evaluate RAG answer quality using LLM-as-judge."""
     settings = get_settings()
-    gateway_url = settings.VLLM_API_BASE
-    model = settings.DEFAULT_RAG_MODEL
 
     context_text = "\n---\n".join(request.context[:5])
 
@@ -40,18 +38,11 @@ Respond in JSON:
 """
 
     try:
-        resp = await http_client.post(
-            f"{gateway_url}/chat/completions",
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": eval_prompt}],
-                "temperature": 0.1,
-                "response_format": {"type": "json_object"},
-            },
+        result = await call_llm_json(
+            http_client,
+            [{"role": "user", "content": eval_prompt}],
+            model=settings.DEFAULT_RAG_MODEL,
         )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        result = json.loads(content)
         return EvaluationResponse(**result)
     except Exception as e:
         logger.error(f"Evaluation error: {e}", exc_info=True)

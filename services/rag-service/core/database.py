@@ -138,7 +138,7 @@ async def get_legal_analysis_service(
     from services.legal_analysis_service import LegalAnalysisService
     from retrieval.graph_timeline_retriever import AdvancedGraphRAG
     
-    graph_rag = AdvancedGraphRAG(neo4j_repo._driver, http_client)
+    graph_rag = AdvancedGraphRAG(neo4j_repo.driver, http_client)
     return LegalAnalysisService(milvus_repo, graph_rag, http_client)
 
 async def get_compliance_service(
@@ -149,6 +149,6 @@ async def get_compliance_service(
     """Dependency to inject the ComplianceService."""
     from services.compliance_service import ComplianceService
     from retrieval.graph_timeline_retriever import AdvancedGraphRAG
-    
-    graph_rag = AdvancedGraphRAG(neo4j_repo._driver, http_client)
+
+    graph_rag = AdvancedGraphRAG(neo4j_repo.driver, http_client)
     return ComplianceService(milvus_repo, graph_rag, http_client)

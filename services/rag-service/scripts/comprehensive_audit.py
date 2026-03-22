@@ -43,6 +43,38 @@ def print_section(title):
     print(f"{'─' * 70}")
 
 
+
+def _has_broken_table(text: str) -> bool:
+    """Block-aware broken-table detector.
+
+    Scans line-by-line for contiguous blocks of pipe-delimited rows (≥2 rows).
+    A block is flagged as 'broken' only when the FIRST row of the block is NOT
+    immediately followed by a Markdown separator row (|---|---|).
+
+    This eliminates false positives from valid multi-row tables where data rows
+    are not separators but are perfectly correct.
+    """
+    _SEP_RE = re.compile(r'^\|[\s\-:|]+\|')
+    _PIPE_ROW_RE = re.compile(r'^\s*\|')
+
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        if _PIPE_ROW_RE.match(lines[i]):
+            block_start = i
+            # Collect the full block of consecutive pipe rows
+            while i < len(lines) and _PIPE_ROW_RE.match(lines[i]):
+                i += 1
+            block_lines = lines[block_start:i]
+            if len(block_lines) >= 2:
+                # Flag only if second row of the block is NOT a separator
+                if not _SEP_RE.match(block_lines[1]):
+                    return True
+        else:
+            i += 1
+    return False
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # DIM A — MARKDOWN QUALITY
 # ═════════════════════════════════════════════════════════════════════════════
@@ -63,12 +95,20 @@ def audit_markdown(md_files):
         "encoding_issues": 0,
         "very_short": 0,
     }
+    # Require patterns at start of a sentence/line to avoid false positives
+    # from Vietnamese legal tables that coincidentally contain English phrases
     ai_patterns = [
-        r"(?i)\bcertainly\b", r"(?i)\bI'll\b", r"(?i)\bAs an AI\b",
-        r"(?i)\bHere is\b", r"(?i)\bI cannot\b", r"(?i)\bI would\b",
-        r"(?i)\bI will\b", r"(?i)\bHere's\b",
-        r"(?i)Xin lỗi", r"(?i)Dưới đây là",
-        r"(?i)Tôi xin", r"(?i)Theo yêu cầu",
+        r"(?im)^\s*Certainly[,!.]",
+        r"(?im)^\s*As an AI\b",
+        r"(?im)^\s*Here is (the|a|an|your|this)\b",
+        r"(?im)^\s*Here's (the|a|an|your|this)\b",
+        r"(?im)^\s*I cannot\b",
+        r"(?im)^\s*I would\b(?! (say|recommend)? rate)",
+        r"(?im)^\s*I'll\b",
+        r"(?im)^\s*I will\b",
+        r"(?i)Xin lỗi, tôi",
+        r"(?i)Dưới đây là.*theo yêu cầu",
+        r"(?i)Tôi xin lỗi",
     ]
     boilerplate_re = re.compile(
         r"CỘNG\s+HÒA\s+XÃ\s+HỘI|"
@@ -78,7 +118,6 @@ def audit_markdown(md_files):
     )
     ocr_space_re = re.compile(r"[A-ZĐ]\s[A-ZĐ]\s[A-ZĐ]")  # e.g. B Ộ X Â Y
 
-    table_header_no_sep = re.compile(r"\|[^|]+\|[^|]+\|\s*\n(?!\s*\|[-:\s|]+\|)")
 
     for f in md_files:
         try:
@@ -96,13 +135,19 @@ def audit_markdown(md_files):
         if not re.search(r"^#{1,4} ", text, re.MULTILINE):
             issues["no_headings"] += 1
 
-        # Broken tables (header row with | but no separator line)
-        if table_header_no_sep.search(text):
+        # Broken tables: detect pipe-row blocks where the first row has no separator
+        # Block-aware: only flag if row[0] of a ≥2-consecutive-pipe-row block
+        # has no |---|---| separator on the VERY NEXT pipe row
+        if _has_broken_table(text):
             issues["broken_table"] += 1
 
-        # AI monologue leakage
+        # AI monologue leakage — checked against non-table prose sections only
+        # Strip table lines before checking to avoid false positives
+        prose = "\n".join(
+            l for l in text.splitlines() if not l.strip().startswith("|")
+        )
         for pat in ai_patterns:
-            if re.search(pat, text):
+            if re.search(pat, prose):
                 issues["ai_leakage"] += 1
                 break
 

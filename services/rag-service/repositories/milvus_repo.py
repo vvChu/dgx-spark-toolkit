@@ -112,3 +112,8 @@ class MilvusRepository:
         except Exception as e:
             logger.error(f"Failed to update doc validity in Milvus: {e}")
             raise
+
+    async def get_collection_stats(self, collection: str | None = None) -> dict:
+        """Return collection statistics (row_count, etc.) without exposing the raw client."""
+        target = collection or self.collection_name
+        return await self.client.get_collection_stats(target)

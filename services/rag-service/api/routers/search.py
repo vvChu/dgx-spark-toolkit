@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from models.schemas import SearchRequest, SearchResponse
 from core.database import get_neo4j_repo, get_milvus_repo
 from repositories.neo4j_repo import Neo4jRepository
@@ -22,20 +22,15 @@ async def search_endpoint(
     """
     Perform semantic search with optional reranking and graph augmentation.
     """
-    try:
-        service = RetrievalService(milvus_repo, neo4j_repo)
-        results = await service.search(
-            query=request.query,
-            limit=request.limit,
-            use_reranker=request.use_reranker,
-            doc_type=request.doc_type,
-            authority=request.authority,
-            year=request.year,
-            doc_number=request.doc_number,
-            use_hyde=request.use_hyde,
-            use_cache=request.use_cache
-        )
-        return results
-    except Exception as e:
-        logger.error(f"Search API error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    service = RetrievalService(milvus_repo, neo4j_repo)
+    return await service.search(
+        query=request.query,
+        limit=request.limit,
+        use_reranker=request.use_reranker,
+        doc_type=request.doc_type,
+        authority=request.authority,
+        year=request.year,
+        doc_number=request.doc_number,
+        use_hyde=request.use_hyde,
+        use_cache=request.use_cache
+    )

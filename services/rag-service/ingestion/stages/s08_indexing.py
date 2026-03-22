@@ -10,7 +10,10 @@ logger = logging.getLogger(__name__)
 def run(doc: ProcessedDocument, ctx) -> ProcessedDocument:
     """Index chunks into Milvus and update PostgreSQL state."""
     if not doc.chunks:
+        logger.warning("  No chunks to index — skipping")
         return doc
+
+    logger.info(f"  {len(doc.chunks)} chunks ready for embedding+indexing")
 
     doc_id = get_final_doc_id(doc)
     meta = doc.metadata.to_dict()

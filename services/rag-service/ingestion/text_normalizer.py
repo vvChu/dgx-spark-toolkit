@@ -55,10 +55,10 @@ def normalize_ocr_spacing(text: str) -> str:
             fixed_lines.append(line)
             continue
 
-        short_vn_tokens = sum(1 for t in tokens if len(t) <= 2 and re.match(rf'^{_VN_CHARS}+$', t))
+        short_vn_tokens = sum(1 for t in tokens if len(t) <= 3 and re.match(rf'^{_VN_CHARS}+$', t))
         ratio = short_vn_tokens / len(tokens)
 
-        if ratio > 0.30:
+        if ratio > 0.20:
             # This line has excessive spacing — collapse short-char runs
             # Strategy: join runs of 1-2 char Vietnamese tokens
             result = []
@@ -68,7 +68,7 @@ def normalize_ocr_spacing(text: str) -> str:
                     # Start of a short-char run — collect consecutive short VN tokens
                     run = [tokens[i]]
                     j = i + 1
-                    while j < len(tokens) and len(tokens[j]) <= 2 and re.match(rf'^{_VN_CHARS}+$', tokens[j]):
+                    while j < len(tokens) and len(tokens[j]) <= 3 and re.match(rf'^{_VN_CHARS}+$', tokens[j]):
                         run.append(tokens[j])
                         j += 1
                     result.append(''.join(run))
@@ -765,6 +765,28 @@ def detect_garbled_table(text: str) -> bool:
             return True
 
     return False
+
+
+# Compiled regex for markdown table separator detection
+_MARKDOWN_TABLE_RE = re.compile(r'\|.*\|.*\n\|[-:\s|]+\|')
+
+
+def is_table_chunk(text: str, page_is_table: bool = False) -> bool:
+    """Unified table detection: returns True if *text* looks like a table.
+
+    Consolidates the previously duplicated table-detection logic that was
+    scattered across ``s05_chunking``, ``mixins/indexing``, and ``pipeline.py``.
+
+    Checks (in order):
+    1. Caller already flagged the page as tabular (OCR metadata).
+    2. Markdown-style table separator ``|---|---|``.
+    3. Garbled OCR table heuristics (``detect_garbled_table``).
+    """
+    if page_is_table:
+        return True
+    if _MARKDOWN_TABLE_RE.search(text):
+        return True
+    return detect_garbled_table(text)
 
 
 # ---------------------------------------------------------------------------

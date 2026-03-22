@@ -5,7 +5,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 from ingestion.models import ProcessedDocument
-from ingestion.legal_taxonomy import classify_all
+from ingestion.legal_taxonomy import classify_all, classify_source_category
 
 logger = logging.getLogger(__name__)
 
@@ -61,19 +61,7 @@ def run(doc: ProcessedDocument, ctx) -> ProcessedDocument:
     logger.info(f"  Taxonomy: type={taxonomy['doc_type']}, level={taxonomy['legal_level']}, discipline={taxonomy['discipline']}")
 
     # Step 6a: Source category from folder structure (P1-5)
-    _CATEGORY_MAP = {
-        "CP_": "CHINH_PHU", "QH_": "QUOC_HOI", "UBND": "DIA_PHUONG",
-        "Linh vuc": "BO_NGANH", "BCD_": "BAN_CHI_DAO", "BCHTW": "DANG",
-        "Quy chuan": "QUY_CHUAN", "QCVN": "QUY_CHUAN",
-        "Tieu chuan": "TIEU_CHUAN_QT", "TL ": "TAI_LIEU_KT",
-        "TL_": "TAI_LIEU_KT", "TT ": "TRUNG_TAM",
-    }
-    rel_path = doc.identity.rel_path
-    source_cat = "KHAC"
-    for prefix, cat in _CATEGORY_MAP.items():
-        if prefix in rel_path:
-            source_cat = cat
-            break
+    source_cat = classify_source_category(doc.identity.rel_path)
     doc.metadata.source_category = source_cat
     logger.info(f"  source_category: {source_cat}")
 
