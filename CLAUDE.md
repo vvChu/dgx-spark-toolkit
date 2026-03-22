@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vietnamese legal document RAG system running on NVIDIA DGX Spark (GB10 Blackwell, 128GB unified memory). Unified AI Gateway routes to local vLLM models and remote cloud proxies (Claude, Gemini, GPT). Stack: FastAPI backend, React 19 frontend, Milvus vector DB, Neo4j knowledge graph, LiteLLM proxy with 25+ model configs.
+Vietnamese legal document RAG system running on NVIDIA DGX Spark (GB10 Blackwell, 128GB unified memory). Unified AI Gateway routes to local vLLM models and remote cloud proxies (Claude, Gemini, GPT). Stack: FastAPI backend, React 19 frontend, Milvus vector DB, Neo4j knowledge graph, LiteLLM proxy with 19 model configs.
 
 ## Common Commands
 
@@ -20,7 +20,7 @@ cd services/rag-service && pytest tests/            # All unit tests
 cd services/rag-service && pytest tests/test_config.py  # Single test file
 cd services/rag-service && pytest tests/test_config.py::test_name -v  # Single test
 ```
-- `pytest.ini` auto-excludes `integration` and `gpu` markers
+- `pytest.ini` auto-excludes `integration` and `gpu` markers; `asyncio_mode = auto` (no `@pytest.mark.asyncio` needed)
 - CI uses `requirements-ci.txt` (excludes GPU packages like torch, surya-ocr)
 - Tests stub the BGE-M3 embedding module and swap out the lifespan (see `tests/conftest.py`)
 - Required env vars for tests: `NEO4J_PASSWORD`, `LITELLM_MASTER_KEY` (conftest sets safe defaults)
@@ -68,7 +68,7 @@ Layered FastAPI app (Python 3.12):
 - Async reranker wrapped via `asyncio.to_thread()` in `retrieval/reranker.py`
 
 ### AI Gateway (`services/ai-gateway/`)
-LiteLLM proxy with `litellm_config.yaml` — latency-based routing, Redis semantic cache (0.85 threshold), fallback chains.
+LiteLLM proxy with `litellm_config.yaml` — latency-based routing, Redis semantic cache (0.85 threshold), fallback chains. Port mapping: external `:8090` → container `:4000`. Internal services connect via `http://ai-gateway:4000/v1`.
 
 ### Frontend (`services/frontend/`)
 React 19 + Vite 7 + Tailwind CSS 4. No test runner — validated via lint + build in CI.
@@ -91,6 +91,7 @@ React 19 + Vite 7 + Tailwind CSS 4. No test runner — validated via lint + buil
 - **Tests** go in `services/rag-service/tests/` — not as one-off scripts in the rag-service root
 - **Operational scripts** go in `services/rag-service/scripts/`
 - **Agent skills** in `.agents/skills/`, workflows in `.agents/workflows/`
+- **Architecture north star**: `.agents/ARCHITECTURE.md` — canonical identity model, store contracts, and target architecture
 - **Benchmarks** in `services/rag-service/benchmarks/` — one benchmark + one locustfile, no versioned copies
 
 ## CI (GitHub Actions)
