@@ -188,15 +188,18 @@ def rechunk_document(old_chunks: list[dict], doc_id: str) -> list[dict]:
     if not new_chunks:
         return old_chunks
     
-    # [EXP-3] Rewrite hierarchy_path for chunks whose text starts with Điều
-    _dieu_start_re = re.compile(r'(?:^\[.*?\]\s*(?:\[.*?\]\s*:::\s*)?)?([ĐĐD]i[eề]u\s+\d+[^\n]{0,50})')
+    # [EXP-3] Rewrite hierarchy_path for parent chunks containing Điều
+    _dieu_re = re.compile(r'([ĐĐD]i[eề]u\s+\d+\.?(?:\s+[^\n]{0,50})?)')
     for c in new_chunks:
         if c.get("chunk_type") != "parent":
             continue
         hp = c.get("hierarchy_path", "")
         if "Điều" in hp or "Article" in hp:
             continue
-        m = _dieu_start_re.match(c.get("text", ""))
+        text = c.get("text", "")
+        # Strip [doc_id] prefix before searching
+        stripped = re.sub(r'^\[.*?\]\s*(?:\[.*?\]\s*:::\s*)?', '', text)
+        m = _dieu_re.search(stripped[:200])  # Only check first 200 chars
         if m:
             article_label = m.group(1).strip()[:60]
             c["hierarchy_path"] = f"[{doc_id}] -> [{article_label}]"
