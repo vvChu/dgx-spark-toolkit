@@ -92,30 +92,31 @@ def has_ai_leakage(text: str) -> bool:
 # Pattern: single capital letters separated by spaces (OCR artifact)
 _OCR_SPACING_RE = re.compile(r"([A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆ])\s([A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆ])\s([A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆ])")
 
+# [EXP-4] Pattern to join spaced single chars: "C Ộ N G" → "CỘNG"
+_SPACED_CHARS_RE = re.compile(
+    r"(?<!\w)"
+    r"(\w)\s+(?=\w(?:\s+\w){2,}(?:\s|$))"
+)
+
 
 def fix_ocr_spacing(text: str) -> str:
     """Fix OCR double-spacing artifacts in Vietnamese text.
     
-    Detects runs of single uppercase letters separated by spaces
-    and joins them together. E.g. 'C Ộ N G  H Ò A' -> 'CỘNG HÒA'
+    [EXP-4] Simplified: finds lines with 3+ spaced single-char uppercase
+    runs and joins all single-char-space runs on that line.
     """
-    # Only process if the pattern exists
     if not _OCR_SPACING_RE.search(text):
         return text
     
     lines = text.split("\n")
     result = []
     for line in lines:
-        # Check if line has OCR spacing (3+ single chars separated by spaces)
         if _OCR_SPACING_RE.search(line):
-            # Join runs of single-char-space patterns
-            fixed = re.sub(
-                r"(?<![a-zA-ZĐàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ])"
-                r"([A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴa-zđàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ])"
-                r"(?:\s+(?=[A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴa-zđàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]))",
-                r"\1",
-                line,
-            )
+            # Strategy: join all runs of "X Y Z..." where each is a single char
+            fixed = re.sub(r'(?<=\b\w)\s+(?=\w\b)', '', line)
+            # If line became too short or is pure garbage, skip it
+            if len(fixed.strip()) < 10:
+                continue
             result.append(fixed)
         else:
             result.append(line)
