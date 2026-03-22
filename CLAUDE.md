@@ -20,7 +20,7 @@ cd services/rag-service && pytest tests/            # All unit tests
 cd services/rag-service && pytest tests/test_config.py  # Single test file
 cd services/rag-service && pytest tests/test_config.py::test_name -v  # Single test
 ```
-- `pytest.ini` auto-excludes `integration` and `gpu` markers; `asyncio_mode = auto` (no `@pytest.mark.asyncio` needed)
+- `pytest.ini` auto-excludes `integration` and `gpu` markers
 - CI uses `requirements-ci.txt` (excludes GPU packages like torch, surya-ocr)
 - Tests stub the BGE-M3 embedding module and swap out the lifespan (see `tests/conftest.py`)
 - Required env vars for tests: `NEO4J_PASSWORD`, `LITELLM_MASTER_KEY` (conftest sets safe defaults)

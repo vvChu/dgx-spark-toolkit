@@ -1,4 +1,10 @@
-export function MetricBadge({ label, value, threshold = 0.8 }) {
+interface MetricBadgeProps {
+  label: string;
+  value: number;
+  threshold?: number;
+}
+
+export function MetricBadge({ label, value, threshold = 0.8 }: MetricBadgeProps) {
   const percentage = Math.round(value * 100);
   const colorClass = value > threshold ? 'text-green-500' : 'text-yellow-500';
 

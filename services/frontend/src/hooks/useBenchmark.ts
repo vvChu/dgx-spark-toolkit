@@ -1,10 +1,14 @@
 import { useState, useCallback } from 'react';
-import { sendChat, evaluateAnswer } from '../lib/api';
+import { sendChat, evaluateAnswer, EvaluationResponse } from '../lib/api';
 
-export default function useBenchmark(language) {
+export interface BenchmarkResult extends EvaluationResponse {
+  answer: string;
+}
+
+export default function useBenchmark(language: string) {
   const [benchmarkInput, setBenchmarkInput] = useState('');
   const [isBenchmarking, setIsBenchmarking] = useState(false);
-  const [benchmarkResults, setBenchmarkResults] = useState({});
+  const [benchmarkResults, setBenchmarkResults] = useState<Record<string, BenchmarkResult>>({});
 
   const handleRunBenchmark = useCallback(async () => {
     if (!benchmarkInput || isBenchmarking) return;

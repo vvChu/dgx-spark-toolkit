@@ -4,15 +4,28 @@ import ReactMarkdown from 'react-markdown';
 import { GRAFANA_URL } from '../lib/api';
 import { MetricBadge } from './ui/MetricBadge';
 import { LoadingButton } from './ui/LoadingButton';
+import type { Evaluation } from '../hooks/useEvaluation';
+import type { BenchmarkResult } from '../hooks/useBenchmark';
 
 const BENCHMARK_MODELS = ['qwen3.5-35b', 'claude-sonnet-4-6', 'gemini-3.1-pro'];
+
+interface BenchmarkPanelProps {
+  compareMode: boolean;
+  setCompareMode: (value: boolean) => void;
+  benchmarkInput: string;
+  setBenchmarkInput: (value: string) => void;
+  isBenchmarking: boolean;
+  benchmarkResults: Record<string, BenchmarkResult>;
+  evalHistory: Evaluation[];
+  handleRunBenchmark: () => void;
+}
 
 export default function BenchmarkPanel({
   compareMode, setCompareMode,
   benchmarkInput, setBenchmarkInput,
   isBenchmarking, benchmarkResults,
   evalHistory, handleRunBenchmark,
-}) {
+}: BenchmarkPanelProps) {
   return (
     <motion.div
       key="benchmarking"
@@ -63,7 +76,15 @@ export default function BenchmarkPanel({
   );
 }
 
-function CompareView({ benchmarkInput, setBenchmarkInput, isBenchmarking, benchmarkResults, handleRunBenchmark }) {
+interface CompareViewProps {
+  benchmarkInput: string;
+  setBenchmarkInput: (value: string) => void;
+  isBenchmarking: boolean;
+  benchmarkResults: Record<string, BenchmarkResult>;
+  handleRunBenchmark: () => void;
+}
+
+function CompareView({ benchmarkInput, setBenchmarkInput, isBenchmarking, benchmarkResults, handleRunBenchmark }: CompareViewProps) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex space-x-4 mb-6">
@@ -96,7 +117,13 @@ function CompareView({ benchmarkInput, setBenchmarkInput, isBenchmarking, benchm
   );
 }
 
-function ModelCard({ model, result, isBenchmarking }) {
+interface ModelCardProps {
+  model: string;
+  result?: BenchmarkResult;
+  isBenchmarking: boolean;
+}
+
+function ModelCard({ model, result, isBenchmarking }: ModelCardProps) {
   return (
     <div className="w-[400px] flex flex-col glass border-white/10 rounded-3xl p-6">
       <div className="flex items-center justify-between mb-4 pb-4 border-b border-white/5">
@@ -137,7 +164,11 @@ function ModelCard({ model, result, isBenchmarking }) {
   );
 }
 
-function HistoryView({ evalHistory }) {
+interface HistoryViewProps {
+  evalHistory: Evaluation[];
+}
+
+function HistoryView({ evalHistory }: HistoryViewProps) {
   if (evalHistory.length === 0) {
     return (
       <div className="h-64 glass flex flex-col items-center justify-center text-gray-500 rounded-3xl border-dashed border-2 border-white/5">
@@ -154,8 +185,8 @@ function HistoryView({ evalHistory }) {
           <div className="flex items-center justify-between mb-4">
             <div className="text-xs font-bold text-gray-500 uppercase tracking-widest">{ev.timestamp}</div>
             <div className="flex space-x-4">
-              <ScoreBadge label="Faithfulness" value={ev.faithfulness} />
-              <ScoreBadge label="Relevancy" value={ev.relevancy} />
+              <MetricBadge label="Faithfulness" value={ev.faithfulness} />
+              <MetricBadge label="Relevancy" value={ev.relevancy} />
             </div>
           </div>
           <h3 className="text-sm font-bold text-blue-400 mb-2">Q: {ev.query}</h3>
@@ -173,8 +204,4 @@ function HistoryView({ evalHistory }) {
       ))}
     </div>
   );
-}
-
-function ScoreBadge({ label, value }) {
-  return <MetricBadge label={label} value={value} />;
 }

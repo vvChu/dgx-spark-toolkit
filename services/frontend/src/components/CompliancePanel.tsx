@@ -1,11 +1,20 @@
 import { FileCheck, Loader2, Database } from 'lucide-react';
 import { motion } from 'framer-motion';
+import type { ComplianceItem } from '../hooks/useCompliance';
+
+interface CompliancePanelProps {
+  complianceProfile: string;
+  setComplianceProfile: (value: string) => void;
+  isCheckingCompliance: boolean;
+  complianceReport: ComplianceItem[] | null;
+  handleComplianceCheck: () => void;
+}
 
 export default function CompliancePanel({
   complianceProfile, setComplianceProfile,
   isCheckingCompliance, complianceReport,
   handleComplianceCheck,
-}) {
+}: CompliancePanelProps) {
   return (
     <motion.div
       key="compliance"
@@ -31,7 +40,7 @@ export default function CompliancePanel({
             <textarea
               value={complianceProfile}
               onChange={(e) => setComplianceProfile(e.target.value)}
-              placeholder="Dán thông tin dự án, ví dụ: 'Dự án chung cư cao tầng tại Hà Nội, yêu cầu áp dụng BIM Level 2, nộp tệp IFC cho Sở Xây dựng...'"
+              placeholder="D\u00E1n th\u00F4ng tin d\u1EF1 \u00E1n, v\u00ED d\u1EE5: 'D\u1EF1 \u00E1n chung c\u01B0 cao t\u1EA7ng t\u1EA1i H\u00E0 N\u1ED9i, y\u00EAu c\u1EA7u \u00E1p d\u1EE5ng BIM Level 2, n\u1ED9p t\u1EC7p IFC cho S\u1EDF X\u00E2y d\u1EF1ng...'"
               className="flex-1 bg-transparent border-none focus:outline-none text-sm text-gray-300 leading-relaxed resize-none custom-scrollbar"
             />
           </div>
@@ -77,7 +86,7 @@ export default function CompliancePanel({
             <div className="h-full flex flex-col items-center justify-center text-gray-600 space-y-4">
               <Database size={48} className="opacity-10" />
               <p className="text-xs text-center px-12">
-                Hệ thống sẽ tự động trích xuất các yêu cầu từ hồ sơ và đối soát với kho dữ liệu pháp quy trung tâm.
+                H\u1EC7 th\u1ED1ng s\u1EBD t\u1EF1 \u0111\u1ED9ng tr\u00EDch xu\u1EA5t c\u00E1c y\u00EAu c\u1EA7u t\u1EEB h\u1ED3 s\u01A1 v\u00E0 \u0111\u1ED1i so\u00E1t v\u1EDBi kho d\u1EEF li\u1EC7u ph\u00E1p quy trung t\u00E2m.
               </p>
             </div>
           )}

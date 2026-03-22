@@ -1,4 +1,17 @@
-export default function Header({ stats, language, setLanguage }) {
+interface Stats {
+  docs: number;
+  rels: number;
+  milvus: number;
+  total: number;
+}
+
+interface HeaderProps {
+  stats: Stats;
+  language: string;
+  setLanguage: (lang: string) => void;
+}
+
+export default function Header({ stats, language, setLanguage }: HeaderProps) {
   return (
     <header className="h-16 glass flex items-center justify-between px-8 border-b border-[#313244] shadow-md">
       <div className="flex items-center space-x-4">
@@ -16,7 +29,7 @@ export default function Header({ stats, language, setLanguage }) {
 
       <div className="flex items-center space-x-6">
         <div className="flex bg-white/5 p-1 rounded-lg border border-white/10">
-          {['vi', 'en'].map((lang) => (
+          {(['vi', 'en'] as const).map((lang) => (
             <button
               key={lang}
               onClick={() => setLanguage(lang)}
@@ -26,7 +39,7 @@ export default function Header({ stats, language, setLanguage }) {
                 language === lang ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'
               }`}
             >
-              {lang === 'vi' ? 'Tiếng Việt' : 'English'}
+              {lang === 'vi' ? 'Ti\u1EBFng Vi\u1EC7t' : 'English'}
             </button>
           ))}
         </div>

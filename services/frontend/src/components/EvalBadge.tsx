@@ -1,6 +1,11 @@
 import { motion } from 'framer-motion';
+import type { Evaluation } from '../hooks/useEvaluation';
 
-export default function EvalBadge({ evaluation }) {
+interface EvalBadgeProps {
+  evaluation: Evaluation | null;
+}
+
+export default function EvalBadge({ evaluation }: EvalBadgeProps) {
   if (!evaluation) return null;
 
   return (

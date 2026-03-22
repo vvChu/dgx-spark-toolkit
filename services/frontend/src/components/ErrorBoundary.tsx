@@ -1,25 +1,25 @@
-import { Component } from 'react';
+import { Component, ErrorInfo, ReactNode } from 'react';
 
-/**
- * Catches unhandled errors in the React component tree and shows a
- * recovery UI instead of a white screen.
- *
- * Usage:
- *   <ErrorBoundary>
- *     <App />
- *   </ErrorBoundary>
- */
-export default class ErrorBoundary extends Component {
-  constructor(props) {
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null };
   }
 
-  static getDerivedStateFromError(error) {
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error, info) {
+  componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[ErrorBoundary]', error, info.componentStack);
   }
 

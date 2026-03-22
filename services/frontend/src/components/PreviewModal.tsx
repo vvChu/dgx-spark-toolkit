@@ -1,10 +1,25 @@
 import { FileText, AlertTriangle, Loader2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import type { PreviewResponse } from '../lib/api';
+import type { Conflict } from '../hooks/useCompliance';
+
+interface PreviewWithHighlight extends PreviewResponse {
+  highlightBbox?: number[] | null;
+  image_b64?: string;
+}
+
+interface PreviewModalProps {
+  preview: PreviewWithHighlight | null;
+  setPreview: (value: PreviewWithHighlight | null) => void;
+  conflictReport: Conflict[] | null;
+  isAnalyzingConflicts: boolean;
+  handleAnalyzeConflicts: (docId: string) => void;
+}
 
 export default function PreviewModal({
   preview, setPreview,
   conflictReport, isAnalyzingConflicts, handleAnalyzeConflicts,
-}) {
+}: PreviewModalProps) {
   return (
     <AnimatePresence>
       {preview && (
@@ -34,7 +49,7 @@ export default function PreviewModal({
                   className="flex items-center space-x-2 px-4 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-[11px] font-bold transition-all disabled:opacity-50"
                 >
                   {isAnalyzingConflicts ? <Loader2 size={14} className="animate-spin" /> : <AlertTriangle size={14} />}
-                  <span>Kiểm tra mâu thuẫn</span>
+                  <span>Ki\u1EC3m tra m\u00E2u thu\u1EABn</span>
                 </button>
                 <button onClick={() => setPreview(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
                   <X size={24} />
@@ -50,7 +65,7 @@ export default function PreviewModal({
                   <ConflictList conflicts={conflictReport} />
                 ) : (
                   <div className="text-[11px] text-gray-600 italic">
-                    Nhấn "Kiểm tra mâu thuẫn" để chạy AI đánh giá tính nhất quán logic với các văn bản liên quan trong Graph.
+                    Nh\u1EA5n "Ki\u1EC3m tra m\u00E2u thu\u1EABn" \u0111\u1EC3 ch\u1EA1y AI \u0111\u00E1nh gi\u00E1 t\u00EDnh nh\u1EA5t qu\u00E1n logic v\u1EDBi c\u00E1c v\u0103n b\u1EA3n li\u00EAn quan trong Graph.
                   </div>
                 )}
               </div>
@@ -76,7 +91,7 @@ export default function PreviewModal({
                         backgroundColor: 'rgba(59, 130, 246, 0.3)',
                         border: '2px solid rgba(59, 130, 246, 0.8)',
                         borderRadius: '2px',
-                        pointerEvents: 'none',
+                        pointerEvents: 'none' as const,
                         boxShadow: '0 0 20px rgba(59, 130, 246, 0.4)',
                       }}
                     />
@@ -91,11 +106,15 @@ export default function PreviewModal({
   );
 }
 
-function ConflictList({ conflicts }) {
+interface ConflictListProps {
+  conflicts: Conflict[];
+}
+
+function ConflictList({ conflicts }: ConflictListProps) {
   if (conflicts.length === 0) {
     return (
       <div className="p-4 bg-green-500/5 border border-green-500/20 rounded-xl text-[12px] text-green-500">
-        Không phát hiện mâu thuẫn logic với các văn bản lân cận.
+        Kh\u00F4ng ph\u00E1t hi\u1EC7n m\u00E2u thu\u1EABn logic v\u1EDBi c\u00E1c v\u0103n b\u1EA3n l\u00E2n c\u1EADn.
       </div>
     );
   }

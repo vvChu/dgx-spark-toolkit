@@ -67,7 +67,7 @@ class TestRerankerUnit:
         r, mock_model = self._make_reranker()
         mock_model.predict.return_value = [0.5]
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             r.rerank("q", ["doc"], top_k=1)
         )
         assert len(result) == 1

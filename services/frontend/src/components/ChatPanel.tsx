@@ -1,13 +1,29 @@
+import { RefObject } from 'react';
 import { Search, FileText, Activity, ThumbsUp, ThumbsDown, CheckCircle2, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import EvalBadge from './EvalBadge';
+import type { Message } from '../hooks/useChat';
+import type { Evaluation } from '../hooks/useEvaluation';
+import type { GraphNode } from '../lib/api';
+
+interface ChatPanelProps {
+  messages: Message[];
+  input: string;
+  setInput: (value: string) => void;
+  isLoading: boolean;
+  evaluation: Evaluation | null;
+  handleSendMessage: () => void;
+  handleFeedback: (msgIndex: number, isPositive: boolean) => void;
+  handleNodeClick: (node: GraphNode, bbox?: number[] | null) => void;
+  chatEndRef: RefObject<HTMLDivElement | null>;
+}
 
 export default function ChatPanel({
   messages, input, setInput, isLoading, evaluation,
   handleSendMessage, handleFeedback, handleNodeClick, chatEndRef,
-}) {
+}: ChatPanelProps) {
   return (
     <motion.div
       key="chat"
@@ -74,7 +90,7 @@ export default function ChatPanel({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-            placeholder="Tra cứu mối liên hệ hoặc nội dung văn bản pháp luật..."
+            placeholder="Tra c\u1EE9u m\u1ED1i li\u00EAn h\u1EC7 ho\u1EB7c n\u1ED9i dung v\u0103n b\u1EA3n ph\u00E1p lu\u1EADt..."
             aria-label="Search legal documents"
             className="flex-1 bg-transparent px-6 py-4 text-sm focus:outline-none placeholder:text-gray-600"
           />
@@ -91,7 +107,13 @@ export default function ChatPanel({
   );
 }
 
-function FeedbackButtons({ msg, msgIndex, onFeedback }) {
+interface FeedbackButtonsProps {
+  msg: Message;
+  msgIndex: number;
+  onFeedback: (msgIndex: number, isPositive: boolean) => void;
+}
+
+function FeedbackButtons({ msg, msgIndex, onFeedback }: FeedbackButtonsProps) {
   if (msg.feedback) {
     return (
       <div className="text-[10px] font-bold text-blue-500 animate-pulse flex items-center space-x-1">

@@ -68,7 +68,7 @@ class TestRewriteQuery:
         with patch("retrieval.query_rewriter.call_llm", new_callable=AsyncMock) as mock_call:
             mock_call.side_effect = Exception("timeout")
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 rewrite_query("test query")
             )
             assert result == "test query"
@@ -80,7 +80,7 @@ class TestRewriteQuery:
         with patch("retrieval.query_rewriter.call_llm", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = '"improved query"'
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 rewrite_query("original")
             )
             assert result == "improved query"
