@@ -10,42 +10,16 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 echo "🚀 DGX Spark Toolkit — Starting All Services"
 echo "=============================================="
 
-# --- 1. vLLM Qwen 3.5 35B (FP8 Optimized) ---
+# --- 0. Create Docker Network (if needed) ---
 echo ""
-echo "📦 [1/3] Qwen 3.5 35B-FP8 (port 8004)..."
-if docker ps --format '{{.Names}}' | grep -q '^qwen35b$'; then
-    echo "   ✅ Already running"
-else
-    echo "   Starting container..."
-    docker rm -f qwen35b 2>/dev/null || true
-    docker run -d \
-      --name qwen35b \
-      --gpus all \
-      --ipc host \
-      --shm-size 96gb \
-      --restart unless-stopped \
-      -p 8004:8000 \
-      -v /home/vvc/.cache/huggingface/hub/models--Qwen--Qwen3.5-35B-A3B-FP8:/models/model \
-      -v "$PROJECT_DIR/scripts:/app/scripts" \
-      -e PORT=8000 \
-      -e GPU_MEMORY_UTIL=0.55 \
-      --entrypoint python3 \
-      hellohal2064/vllm-qwen3.5-gb10:latest \
-      -m vllm.entrypoints.openai.api_server \
-      --model /models/model/snapshots/0b2752837483aa34b3db6e83e151b150c0e00e49 \
-      --served-model-name qwen3.5-35b \
-      --gpu-memory-utilization 0.55 \
-      --max-num-seqs 2048 \
-      --max-model-len 32768 \
-      --enable-prefix-caching \
-      --enable-chunked-prefill \
-      --trust-remote-code
-    echo "   ✅ Started"
-fi
+echo "📦 [0/2] Creating rag-network..."
+docker network create rag-network 2>/dev/null || true
+echo "   ✅ Network ready"
 
-# --- 2. Docker Compose Stack ---
+# --- 1. Docker Compose Stack ---
 echo ""
-echo "📦 [2/2] Docker Compose Stack (RAG + Gateway + Milvus + Monitoring)..."
+echo "📦 [1/2] Docker Compose Stack (RAG + vLLM + Gateway + Milvus + Monitoring)..."
+# Note: vLLM services (qwen35b, qwen3-4b) are now managed by docker-compose.yml
 cd "$PROJECT_DIR"
 docker compose up -d
 echo "   ✅ Stack started"

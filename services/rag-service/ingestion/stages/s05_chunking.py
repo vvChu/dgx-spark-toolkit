@@ -1,11 +1,10 @@
 """Stage 5: Chunking — Semantic chunking + dedup + central identity assignment."""
 import logging
 import os
-import re
 
 from ingestion.models import ProcessedDocument, Chunk
 from ingestion.chunking import DocumentChunker
-from ingestion.text_normalizer import rejoin_paragraphs, detect_garbled_table, strip_document_boilerplate
+from ingestion.text_normalizer import rejoin_paragraphs, is_table_chunk, strip_document_boilerplate
 from ingestion.stages.s04_identity import get_final_doc_id
 
 logger = logging.getLogger(__name__)
@@ -25,11 +24,7 @@ def run(doc: ProcessedDocument, ctx) -> ProcessedDocument:
         text = rejoin_paragraphs(text)
 
         # Table detection
-        is_tabular = (
-            page.is_table
-            or bool(re.search(r'\|.*\|.*\n\|[-:\s|]+\|', text))
-            or detect_garbled_table(text)
-        )
+        is_tabular = is_table_chunk(text, page_is_table=page.is_table)
 
         if is_tabular:
             semantic_chunks.append({

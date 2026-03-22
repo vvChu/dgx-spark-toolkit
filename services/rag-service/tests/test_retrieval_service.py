@@ -65,10 +65,8 @@ class TestRewriteQuery:
         from retrieval.query_rewriter import rewrite_query, _query_rewrite_cache
         _query_rewrite_cache.clear()
 
-        with patch("retrieval.query_rewriter._get_rewrite_http_client") as mock_fn:
-            mock_client = AsyncMock()
-            mock_client.post.side_effect = Exception("timeout")
-            mock_fn.return_value = mock_client
+        with patch("retrieval.query_rewriter.call_llm", new_callable=AsyncMock) as mock_call:
+            mock_call.side_effect = Exception("timeout")
 
             result = asyncio.get_event_loop().run_until_complete(
                 rewrite_query("test query")
@@ -79,16 +77,8 @@ class TestRewriteQuery:
         from retrieval.query_rewriter import rewrite_query, _query_rewrite_cache
         _query_rewrite_cache.clear()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": '"improved query"'}}]
-        }
-
-        with patch("retrieval.query_rewriter._get_rewrite_http_client") as mock_fn:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_fn.return_value = mock_client
+        with patch("retrieval.query_rewriter.call_llm", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = '"improved query"'
 
             result = asyncio.get_event_loop().run_until_complete(
                 rewrite_query("original")

@@ -2,13 +2,10 @@
 import hashlib
 import logging
 import os
-import threading
 
-from ingestion.models import ProcessedDocument, DocumentIdentity
+from ingestion.models import ProcessedDocument
 
 logger = logging.getLogger(__name__)
-
-SOURCE_DIR = "/app/data/legal_docs_source"
 
 
 def run(doc: ProcessedDocument, ctx) -> ProcessedDocument | None:

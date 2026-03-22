@@ -16,10 +16,10 @@ def run(doc: ProcessedDocument, ctx) -> ProcessedDocument:
     ctx.sync_to_graph(doc_id, doc.metadata.to_dict(), doc.relationships.to_dict())
 
     # Parallel Synthetic Query Generation for parent chunks
-    # [P2] Lowered threshold from 300→150 and cap from 30→60 for broader coverage
-    parent_chunks = [c for c in doc.chunks if c.chunk_type == "parent" and len(c.text) > 150]
+    # [P2] Lowered threshold 300→150→100 and raised cap 30→60→120 for broader coverage
+    parent_chunks = [c for c in doc.chunks if c.chunk_type == "parent" and len(c.text) > 100]
     parent_chunks.sort(key=lambda x: len(x.text), reverse=True)
-    target_chunks = parent_chunks[:60]
+    target_chunks = parent_chunks[:120]
 
     if target_chunks:
         logger.info(f"  Generating synthetic queries for {len(target_chunks)} dense chunks...")

@@ -1,6 +1,4 @@
 import logging
-import json
-import asyncio
 from typing import List, Dict, Any
 
 import httpx
@@ -8,6 +6,7 @@ import httpx
 from repositories.milvus_repo import MilvusRepository
 from retrieval.graph_timeline_retriever import AdvancedGraphRAG
 from core.config import get_settings
+from core.llm_client import call_llm
 
 logger = logging.getLogger(__name__)
 
@@ -118,25 +117,14 @@ Yêu cầu phân tích:
 Trình bày bằng tiếng Việt, có cấu trúc rõ ràng (sử dụng Header và Bullet points).
 """
         try:
-            payload = {
-                "model": self.settings.VLLM_MODEL,
-                "messages": [
+            client = self._http_client or await self.graph_rag._get_client()
+            return await call_llm(
+                client,
+                [
                     {"role": "system", "content": "Bạn là chuyên gia phân tích xung đột pháp luật chuyên sâu."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.1,
-                "max_tokens": 2048
-            }
-
-            client = self._http_client or await self.graph_rag._get_client()
-            resp = await client.post(
-                f"{self.settings.VLLM_API_BASE}/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {self.settings.LITELLM_MASTER_KEY.get_secret_value()}"}
+                max_tokens=2048,
             )
-            if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]["content"].strip()
-            else:
-                return f"Lỗi gọi LLM: {resp.text}"
         except Exception as e:
             return f"Lỗi phân tích: {e}"

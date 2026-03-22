@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from models.schemas import ConflictAnalysisRequest, ComplianceCheckRequest
 from core.database import get_legal_analysis_service, get_compliance_service
 from services.legal_analysis_service import LegalAnalysisService
@@ -18,16 +18,11 @@ async def analyze_conflict(
     """
     Analyze regulatory changes and potential conflicts between a document and its predecessors.
     """
-    try:
-        result = await analysis_service.analyze_conflicts(
-            doc_id=request.doc_id,
-            query=request.query,
-            depth=request.depth
-        )
-        return result
-    except Exception as e:
-        logger.error(f"Legal analysis error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    return await analysis_service.analyze_conflicts(
+        doc_id=request.doc_id,
+        query=request.query,
+        depth=request.depth
+    )
 
 @router.post("/compliance")
 async def check_compliance(
@@ -37,12 +32,7 @@ async def check_compliance(
     """
     Check a project profile for compliance against active regulations.
     """
-    try:
-        result = await compliance_service.check_compliance(
-            project_profile=request.project_profile,
-            focus_area=request.focus_area
-        )
-        return result
-    except Exception as e:
-        logger.error(f"Compliance analysis error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    return await compliance_service.check_compliance(
+        project_profile=request.project_profile,
+        focus_area=request.focus_area
+    )

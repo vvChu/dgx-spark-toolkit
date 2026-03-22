@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
 import os
+import traceback
 
 from core.database import lifespan
 from core.config import get_settings
@@ -60,6 +61,26 @@ app.include_router(evaluation.router)
 # Monitoring - Prometheus Metrics
 from prometheus_fastapi_instrumentator import Instrumentator
 Instrumentator().instrument(app).expose(app, include_in_schema=False, tags=["Monitoring"])
+
+
+# ── Global Exception Handler ────────────────────────────────────────────
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Catch-all for unhandled exceptions — log the full traceback and return
+    a structured 500 response.  Individual routers no longer need their own
+    try/except for the generic case."""
+    logger.error(
+        "Unhandled %s on %s %s: %s",
+        type(exc).__name__,
+        request.method,
+        request.url.path,
+        exc,
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 @app.get("/", tags=["General"])
 async def root():

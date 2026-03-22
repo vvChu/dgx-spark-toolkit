@@ -1,0 +1,6 @@
+timestamp	change_description	overall_score	A	B	C	D	E	time_sec	verdict	fixed_issues
+2026-03-21T02:58:56.873712	baseline_verify	77	47	97	65	-1	100	3.3	PENDING	
+2026-03-21T03:00:08.022194	exp1_post_fix	75	46	91	65	-1	100	2.6	PENDING	
+2026-03-21T03:10:42.357490	baseline_corrected_detect	88	90	97	65	-1	100	2.9	PENDING	
+2026-03-21T03:11:30.546048	exp2_all_fixes_v2	86	90	90	65	-1	100	3.0	PENDING	
+2026-03-21T03:12:33.775875	exp3_md_only_fixes	88	90	100	65	-1	100	2.1	PENDING	

@@ -1,4 +1,9 @@
-"""Stage 7: Embedding — Compute dense + sparse vectors (delegated to index_chunks)."""
+"""Stage 7: Embedding — DEPRECATED pass-through.
+
+Embedding is handled inside s08_indexing's ``index_chunks()`` for batch
+efficiency.  This stage exists only so the 9-stage orchestrator numbering
+is preserved; it does no work.
+"""
 import logging
 
 from ingestion.models import ProcessedDocument
@@ -7,13 +12,5 @@ logger = logging.getLogger(__name__)
 
 
 def run(doc: ProcessedDocument, ctx) -> ProcessedDocument:
-    """Embedding is handled inside index_chunks() for batch efficiency.
-    
-    This stage is a pass-through that validates chunks exist.
-    In a future refactor, embedding could be separated from indexing.
-    """
-    if not doc.chunks:
-        logger.warning("  No chunks to embed — skipping")
-    else:
-        logger.info(f"  {len(doc.chunks)} chunks ready for embedding+indexing")
+    """No-op pass-through — embedding is done inside s08_indexing."""
     return doc

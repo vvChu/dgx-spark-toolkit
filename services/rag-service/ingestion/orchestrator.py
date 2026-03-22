@@ -83,8 +83,8 @@ class PipelineOrchestrator:
     def run_pipeline(self, file_path: str) -> ProcessedDocument | None:
         """Execute all stages on a file. Returns ProcessedDocument or None on skip."""
         import os
+        from ingestion.pipeline_config import SOURCE_DIR
 
-        SOURCE_DIR = "/app/data/legal_docs_source"
         rel_path = os.path.relpath(file_path, SOURCE_DIR)
 
         # Create initial document model

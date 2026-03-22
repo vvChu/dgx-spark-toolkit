@@ -59,13 +59,13 @@ async def run_audit():
 
 @router.get("/pipeline/{action}", response_class=PlainTextResponse)
 async def run_pipeline(action: str):
-    """Run pipeline.py with --apply, --revert, or --dry-run."""
+    """Run export_postprocessor.py with --apply, --revert, or --dry-run."""
     if action not in ("apply", "revert", "dry-run"):
         raise HTTPException(status_code=400, detail="action must be: apply, revert, dry-run")
     try:
         output = await asyncio.to_thread(
             _run_subprocess,
-            [sys.executable, "/app/pipeline.py", f"--{action}"],
+            [sys.executable, "/app/export_postprocessor.py", f"--{action}"],
             120,
         )
         return output

@@ -16,7 +16,7 @@ def _run(coro):
 class TestHyDEGeneratorUnit:
     def _make_generator(self):
         from retrieval.hyde import HyDEGenerator
-        gen = HyDEGenerator()
+        gen = HyDEGenerator(http_client=AsyncMock())
         return gen
 
     def test_empty_query_returns_empty(self):
@@ -27,28 +27,18 @@ class TestHyDEGeneratorUnit:
     def test_successful_generation(self):
         gen = self._make_generator()
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "Hypothetical answer text"}}]
-        }
-
-        with patch("retrieval.hyde._get_hyde_http_client") as mock_client_fn:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_client_fn.return_value = mock_client
+        with patch("retrieval.hyde.call_llm", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = "Hypothetical answer text"
 
             result = _run(gen.generate_hypothetical_answer("Quy định về PCCC?"))
             assert result == "Hypothetical answer text"
-            mock_client.post.assert_called_once()
+            mock_call.assert_called_once()
 
     def test_api_error_returns_original_query(self):
         gen = self._make_generator()
 
-        with patch("retrieval.hyde._get_hyde_http_client") as mock_client_fn:
-            mock_client = AsyncMock()
-            mock_client.post.side_effect = Exception("Connection refused")
-            mock_client_fn.return_value = mock_client
+        with patch("retrieval.hyde.call_llm", new_callable=AsyncMock) as mock_call:
+            mock_call.side_effect = Exception("Connection refused")
 
             result = _run(gen.generate_hypothetical_answer("some query"))
             assert result == "some query"
@@ -56,16 +46,8 @@ class TestHyDEGeneratorUnit:
     def test_empty_content_returns_empty(self):
         gen = self._make_generator()
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": ""}}]
-        }
-
-        with patch("retrieval.hyde._get_hyde_http_client") as mock_client_fn:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_client_fn.return_value = mock_client
+        with patch("retrieval.hyde.call_llm", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = ""
 
             result = _run(gen.generate_hypothetical_answer("test"))
             assert result == ""

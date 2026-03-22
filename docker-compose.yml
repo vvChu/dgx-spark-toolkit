@@ -42,9 +42,9 @@ services:
         condition: service_healthy
     volumes:
       - ./services/rag-service:/app
-      - /home/vvc/Public:/app/data/legal_docs_source
-      - /home/vvc/Public/exports:/app/exports
-      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ${LEGAL_DOCS_DIR}:/app/data/legal_docs_source
+      - ${EXPORT_DIR}:/app/exports
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/home/appuser/.cache/huggingface
       - model_cache:/app/model_cache
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -93,9 +93,9 @@ services:
 
     volumes:
       - ./services/rag-service:/app
-      - /home/vvc/Public:/app/data/legal_docs_source
-      - /home/vvc/Public/exports:/app/exports
-      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ${LEGAL_DOCS_DIR}:/app/data/legal_docs_source
+      - ${EXPORT_DIR}:/app/exports
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/home/appuser/.cache/huggingface
       - model_cache:/app/model_cache
     command: [ "python3", "-m", "ingestion.pipeline" ]
     extra_hosts:
@@ -109,7 +109,7 @@ services:
       ai-gateway:
         condition: service_started
     deploy:
-      replicas: 3
+      replicas: 5
       resources:
         limits:
           cpus: '4'
@@ -215,7 +215,7 @@ services:
       - rag-network
 
   milvus-minio:
-    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: milvus-minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-${MINIO_ACCESS_KEY:-minioadmin}}
@@ -224,7 +224,7 @@ services:
       - minio_data:/minio_data
     command: minio server /minio_data --console-address ":9001"
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -239,8 +239,8 @@ services:
     environment:
       ETCD_ENDPOINTS: milvus-etcd:2379
       MINIO_ADDRESS: milvus-minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-${MINIO_ACCESS_KEY:-minioadmin}}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-${MINIO_SECRET_KEY:-minioadmin}}
+      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-${MINIO_ACCESS_KEY:-minioadmin}}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-${MINIO_SECRET_KEY:-minioadmin}}
     volumes:
       - milvus_data:/var/lib/milvus
     command: [ "milvus", "run", "standalone" ]
@@ -363,7 +363,7 @@ services:
     environment:
       - PORT=8000
     volumes:
-      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
     entrypoint: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
     command: >
       --model Qwen/Qwen3.5-4B
@@ -402,9 +402,9 @@ services:
       - GPU_MEMORY_UTIL=0.50
       - MAX_MODEL_LEN=24576
     volumes:
-      - /home/vvc/.cache/huggingface/hub/models--Qwen--Qwen3.5-35B-A3B-FP8:/models/model
-      - /home/vvc/Codebase/dgx-spark-toolkit/scripts:/app/scripts
-      - /home/vvc/.cache/huggingface:/root/.cache/huggingface
+      - ${QWEN35B_MODEL_DIR}:/models/model
+      - ./scripts:/app/scripts
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
     entrypoint: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
     command: >
       --model /models/model/snapshots/0b2752837483aa34b3db6e83e151b150c0e00e49

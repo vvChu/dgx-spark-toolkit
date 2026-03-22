@@ -237,3 +237,23 @@ def classify_all(
         "discipline": disc,
     }
 
+
+# ─────────────────────────────────────────────────────────────────────
+# 5. SOURCE_CATEGORY — Phân loại nguồn theo thư mục
+# ─────────────────────────────────────────────────────────────────────
+_CATEGORY_MAP = {
+    "CP_": "CHINH_PHU", "QH_": "QUOC_HOI", "UBND": "DIA_PHUONG",
+    "Linh vuc": "BO_NGANH", "BCD_": "BAN_CHI_DAO", "BCHTW": "DANG",
+    "Quy chuan": "QUY_CHUAN", "QCVN": "QUY_CHUAN",
+    "Tieu chuan": "TIEU_CHUAN_QT", "TL ": "TAI_LIEU_KT",
+    "TL_": "TAI_LIEU_KT", "TT ": "TRUNG_TAM",
+}
+
+
+def classify_source_category(rel_path: str) -> str:
+    """Classify source category from the relative file path (folder structure)."""
+    for prefix, cat in _CATEGORY_MAP.items():
+        if prefix in rel_path:
+            return cat
+    return "KHAC"
+

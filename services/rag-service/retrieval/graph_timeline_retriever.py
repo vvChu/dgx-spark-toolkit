@@ -3,6 +3,8 @@ import logging
 from neo4j import AsyncDriver
 import httpx
 
+from core.llm_client import call_llm
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,10 +76,6 @@ class AdvancedGraphRAG:
         if not timeline:
             return ""
 
-        # Import lazily to avoid circular imports; settings is cached so this is cheap
-        from core.config import get_settings
-        settings = get_settings()
-
         prompt = f"""Dựa trên dòng thời gian pháp lý sau đây, hãy trả lời câu hỏi của người dùng: "{user_query}"
 
         Dòng thời gian (Timeline):
@@ -91,27 +89,15 @@ class AdvancedGraphRAG:
         """
 
         try:
-            payload = {
-                "model": settings.VLLM_MODEL,
-                "messages": [
+            client = await self._get_client()
+            return await call_llm(
+                client,
+                [
                     {"role": "system", "content": "Bạn là chuyên gia về pháp luật và đồ thị tri thức. Hãy tóm tắt timeline pháp lý một cách chính xác."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.1,
-                "max_tokens": 1024
-            }
-
-            client = await self._get_client()
-            resp = await client.post(
-                f"{settings.VLLM_API_BASE}/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {settings.LITELLM_MASTER_KEY.get_secret_value()}"},
-                timeout=60.0
+                timeout=60.0,
             )
-            if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]["content"].strip()
-            else:
-                logger.error(f"LLM timeline summary failed: {resp.text}")
         except Exception as e:
             logger.error(f"Error generating timeline summary: {e}")
 

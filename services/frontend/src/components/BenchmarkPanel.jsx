@@ -2,6 +2,8 @@ import { Activity, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import { GRAFANA_URL } from '../lib/api';
+import { MetricBadge } from './ui/MetricBadge';
+import { LoadingButton } from './ui/LoadingButton';
 
 const BENCHMARK_MODELS = ['qwen3.5-35b', 'claude-sonnet-4-6', 'gemini-3.1-pro'];
 
@@ -72,14 +74,15 @@ function CompareView({ benchmarkInput, setBenchmarkInput, isBenchmarking, benchm
           placeholder="Enter a complex legal query for benchmarking..."
           className="flex-1 glass border-white/10 rounded-xl px-6 py-3 text-sm focus:outline-none"
         />
-        <button
+        <LoadingButton
           onClick={handleRunBenchmark}
-          disabled={isBenchmarking || !benchmarkInput}
+          loading={isBenchmarking}
+          disabled={!benchmarkInput}
           className="px-8 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl font-bold transition-all flex items-center space-x-2"
         >
-          {isBenchmarking ? <Loader2 className="animate-spin" size={18} /> : <Activity size={18} />}
+          <Activity size={18} />
           <span>Run All</span>
-        </button>
+        </LoadingButton>
       </div>
 
       <div className="flex-1 overflow-x-auto overflow-y-hidden pb-4 custom-scrollbar">
@@ -173,12 +176,5 @@ function HistoryView({ evalHistory }) {
 }
 
 function ScoreBadge({ label, value }) {
-  return (
-    <div className="flex items-center space-x-2">
-      <span className="text-[10px] uppercase font-bold text-gray-500">{label}:</span>
-      <span className={`text-sm font-black ${value > 0.8 ? 'text-green-500' : 'text-yellow-500'}`}>
-        {Math.round(value * 100)}%
-      </span>
-    </div>
-  );
+  return <MetricBadge label={label} value={value} />;
 }

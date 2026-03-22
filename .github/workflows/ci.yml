@@ -26,14 +26,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-timeout
+          pip install pytest pytest-timeout pytest-cov
           pip install -r requirements-ci.txt
 
       - name: Run unit tests
         env:
           NEO4J_PASSWORD: ci_test_placeholder_safe
           LITELLM_MASTER_KEY: sk-ci-test-placeholder-safe
-        run: python -m pytest tests/ -v --timeout=60
+        run: python -m pytest tests/ -v --timeout=60 --cov=. --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: services/rag-service/coverage.xml
 
   frontend-build:
     name: Frontend Build
