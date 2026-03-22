@@ -1,0 +1,5 @@
+exports/
+*.log
+__pycache__/
+results.tsv
+*.bak

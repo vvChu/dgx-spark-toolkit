@@ -188,6 +188,19 @@ def rechunk_document(old_chunks: list[dict], doc_id: str) -> list[dict]:
     if not new_chunks:
         return old_chunks
     
+    # [EXP-3] Rewrite hierarchy_path for chunks whose text starts with Điều
+    _dieu_start_re = re.compile(r'(?:^\[.*?\]\s*(?:\[.*?\]\s*:::\s*)?)?([ĐĐD]i[eề]u\s+\d+[^\n]{0,50})')
+    for c in new_chunks:
+        if c.get("chunk_type") != "parent":
+            continue
+        hp = c.get("hierarchy_path", "")
+        if "Điều" in hp or "Article" in hp:
+            continue
+        m = _dieu_start_re.match(c.get("text", ""))
+        if m:
+            article_label = m.group(1).strip()[:60]
+            c["hierarchy_path"] = f"[{doc_id}] -> [{article_label}]"
+    
     # Force child generation for parent chunks without children
     parent_ids_with_children = set()
     for c in new_chunks:
@@ -319,6 +332,37 @@ def strip_boilerplate(text: str) -> str:
     return text.strip()
 
 
+# [EXP-3] Fix broken markdown tables (pipe rows without separator)
+_PIPE_ROW_RE = re.compile(r'^(\s*\|[^|]+(?:\|[^|]+)+\|)\s*$', re.MULTILINE)
+_SEP_ROW_RE = re.compile(r'^\s*\|[-:\s|]+\|\s*$', re.MULTILINE)
+
+
+def fix_broken_tables(text: str) -> str:
+    """Insert separator rows after header rows in broken markdown tables.
+    
+    Detects table-like pipe rows that lack separator rows and inserts
+    a proper | --- | --- | separator after the first pipe row.
+    """
+    if not _PIPE_ROW_RE.search(text):
+        return text
+    if _SEP_ROW_RE.search(text):
+        return text  # Already has separator, not broken
+    
+    lines = text.split('\n')
+    result = []
+    inserted = False
+    for line in lines:
+        result.append(line)
+        if not inserted and _PIPE_ROW_RE.match(line):
+            # Count columns
+            cols = line.count('|') - 1
+            if cols >= 2:
+                sep = '| ' + ' | '.join(['---'] * cols) + ' |'
+                result.append(sep)
+                inserted = True
+    return '\n'.join(result)
+
+
 def generate_markdown(doc_id: str, rel_path: str, meta: dict,
                       summary: str, chunks: list[dict]) -> str:
     """Generate formatted markdown from document data."""
@@ -370,6 +414,8 @@ def generate_markdown(doc_id: str, rel_path: str, meta: dict,
         display_text = fix_ocr_spacing(display_text)
         # [EXP-1] Strip AI leakage from markdown
         display_text = strip_ai_leakage(display_text)
+        # [EXP-3] Fix broken markdown tables
+        display_text = fix_broken_tables(display_text)
         
         if not display_text.strip():
             continue
