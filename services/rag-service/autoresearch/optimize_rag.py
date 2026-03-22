@@ -42,6 +42,87 @@ EXPORT_MD_DIR = os.path.join(EXPORT_DIR, "markdown")
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# EXP-1: AI LEAKAGE STRIPPING
+# ═════════════════════════════════════════════════════════════════════════
+
+_AI_PATTERNS = [
+    re.compile(r"\bcertainly\b", re.IGNORECASE),
+    re.compile(r"\bI'll\b"),
+    re.compile(r"\bAs an AI\b", re.IGNORECASE),
+    re.compile(r"\bHere is\b", re.IGNORECASE),
+    re.compile(r"\bI cannot\b", re.IGNORECASE),
+    re.compile(r"\bI would\b", re.IGNORECASE),
+    re.compile(r"\bI will\b", re.IGNORECASE),
+    re.compile(r"\bHere's\b", re.IGNORECASE),
+    re.compile(r"Xin lỗi", re.IGNORECASE),
+    re.compile(r"Dưới đây là", re.IGNORECASE),
+    re.compile(r"Tôi xin", re.IGNORECASE),
+]
+
+# Full-sentence patterns to remove (the AI monologue lines)
+_AI_SENTENCE_RE = re.compile(
+    r"(?:^|\n)[^\n]*(?:"
+    r"(?:certainly|I'll|As an AI|Here is|I cannot|I would|I will|Here's)"
+    r"|(?:Xin lỗi|Dưới đây là|Tôi xin)"
+    r")[^\n]*(?:\n|$)",
+    re.IGNORECASE,
+)
+
+
+def strip_ai_leakage(text: str) -> str:
+    """Remove AI monologue sentences from text."""
+    cleaned = _AI_SENTENCE_RE.sub("\n", text)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+def has_ai_leakage(text: str) -> bool:
+    """Check if text contains AI leakage patterns."""
+    lower = text.lower()
+    for p in ["certainly,", "i'll", "i will", "as an ai", "here is",
+              "here's", "i cannot", "i would", "xin lỗi", "dưới đây là"]:
+        if p in lower:
+            return True
+    return False
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# EXP-1: OCR SPACING FIX
+# ═════════════════════════════════════════════════════════════════════════
+
+# Pattern: single capital letters separated by spaces (OCR artifact)
+_OCR_SPACING_RE = re.compile(r"([A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆ])\s([A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆ])\s([A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆ])")
+
+
+def fix_ocr_spacing(text: str) -> str:
+    """Fix OCR double-spacing artifacts in Vietnamese text.
+    
+    Detects runs of single uppercase letters separated by spaces
+    and joins them together. E.g. 'C Ộ N G  H Ò A' -> 'CỘNG HÒA'
+    """
+    # Only process if the pattern exists
+    if not _OCR_SPACING_RE.search(text):
+        return text
+    
+    lines = text.split("\n")
+    result = []
+    for line in lines:
+        # Check if line has OCR spacing (3+ single chars separated by spaces)
+        if _OCR_SPACING_RE.search(line):
+            # Join runs of single-char-space patterns
+            fixed = re.sub(
+                r"(?<![a-zA-ZĐàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ])"
+                r"([A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴa-zđàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ])"
+                r"(?:\s+(?=[A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴa-zđàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]))",
+                r"\1",
+                line,
+            )
+            result.append(fixed)
+        else:
+            result.append(line)
+    return "\n".join(result)
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # STAGE 1: RE-CHUNK existing JSON exports
 # ═════════════════════════════════════════════════════════════════════════
 
@@ -75,6 +156,9 @@ def rechunk_document(old_chunks: list[dict], doc_id: str) -> list[dict]:
     full_text = "\n\n".join(texts)
     if len(full_text) < 50:
         return old_chunks
+    
+    # [EXP-1] Strip AI leakage from merged text before chunking
+    full_text = strip_ai_leakage(full_text)
     
     # Get source info from first parent
     source = parents[0].get("source", "")
@@ -155,6 +239,12 @@ def enrich_and_export(json_path: str, dry_run: bool = False) -> dict:
     # Re-chunk
     new_chunks = rechunk_document(old_chunks, doc_id)
     
+    # [EXP-1] Post-process: strip AI leakage from all chunk texts
+    for chunk in new_chunks:
+        text = chunk.get("text", "")
+        if has_ai_leakage(text):
+            chunk["text"] = strip_ai_leakage(text)
+    
     # Enrich chunks with doc-level fields
     for i, chunk in enumerate(new_chunks):
         chunk["doc_id"] = doc_id
@@ -199,12 +289,23 @@ def enrich_and_export(json_path: str, dry_run: bool = False) -> dict:
 # MARKDOWN GENERATION
 # ═════════════════════════════════════════════════════════════════════════
 
-# Vietnamese boilerplate patterns  
+# Vietnamese boilerplate patterns — expanded for better coverage
 _BOILERPLATE_PATTERNS = [
     re.compile(r"CỘNG\s+HÒA\s+XÃ\s+HỘI\s+CHỦ\s+NGHĨA\s+VIỆT\s+NAM", re.IGNORECASE),
     re.compile(r"Độc\s+lập\s*[-–—]\s*Tự\s+do\s*[-–—]\s*Hạnh\s+phúc", re.IGNORECASE),
     re.compile(r"(?:^|\n)\s*Nơi\s+nhận\s*:.*?(?=\n\s*(?:[A-ZĐ]|\d)|\Z)", re.DOTALL),
     re.compile(r"(?:^|\n)\s*-?\s*Lưu\s*:\s*VT[,;]?\s*[A-Z]*\.?\s*(?:\n|$)", re.IGNORECASE),
+    # [EXP-1] Additional boilerplate patterns
+    re.compile(r"Số\s*:\s*\d+/\w+[-/]\w+", re.IGNORECASE),  # Document number prefix
+    re.compile(r"(?:Hà Nội|TP\.?\s*HCM|Đà Nẵng),?\s*ngày\s+\d+\s+tháng\s+\d+\s+năm\s+\d+", re.IGNORECASE),  # Date line
+    re.compile(r"Kính\s+gửi\s*:.*?(?:\n|$)", re.IGNORECASE),  # Salutation
+]
+
+# [EXP-1] OCR boilerplate - badly OCR'd government header
+_OCR_BOILERPLATE_PATTERNS = [
+    re.compile(r"CONG\s*(?:HOA|NGH)", re.IGNORECASE),
+    re.compile(r"D[oọ]c\s+l[aậ]p", re.IGNORECASE),
+    re.compile(r"CONGHOA\s+xA\s+HOI", re.IGNORECASE),
 ]
 
 
@@ -212,6 +313,8 @@ def strip_boilerplate(text: str) -> str:
     """Strip government boilerplate from content text."""
     for pat in _BOILERPLATE_PATTERNS:
         text = pat.sub("\n", text)
+    for pat in _OCR_BOILERPLATE_PATTERNS:
+        text = pat.sub("", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
@@ -263,6 +366,10 @@ def generate_markdown(doc_id: str, rel_path: str, meta: dict,
         display_text = re.sub(r"^\[.*?\]\s*:::\s*", "", display_text)
         # Strip boilerplate from content
         display_text = strip_boilerplate(display_text)
+        # [EXP-1] Fix OCR spacing in markdown
+        display_text = fix_ocr_spacing(display_text)
+        # [EXP-1] Strip AI leakage from markdown
+        display_text = strip_ai_leakage(display_text)
         
         if not display_text.strip():
             continue
@@ -327,6 +434,7 @@ def main():
     total_new_children = 0
     total_old_articles = 0
     total_new_articles = 0
+    ai_fixed = 0
     
     for i, json_path in enumerate(json_files, 1):
         result = enrich_and_export(json_path, dry_run=dry_run)
