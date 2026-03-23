@@ -63,7 +63,7 @@ class RAGRouter:
             base64_image = base64.b64encode(f.read()).decode("utf-8")
 
         response = self.client.chat.completions.create(
-            model="qwen3.5-9b-rag",
+            model=os.environ.get("VLLM_MODEL", "rag-core"),
             messages=[
                 {
                     "role": "user",

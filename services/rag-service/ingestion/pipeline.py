@@ -79,7 +79,8 @@ class ProductionIngestor(MetadataMixin, ExtractionMixin, IndexingMixin, GraphMix
         settings = get_settings()
 
         self.vision = VisionExtractor()
-        logger.info("Initializing Embedding Model using qwen3.5-9b-rag")
+        vllm_model = os.environ.get("VLLM_MODEL", "rag-core")
+        logger.info(f"Initializing LLM via Gateway: {vllm_model} | Embedding: BAAI/bge-m3")
 
         from services.retrieval_service import get_embedding_model
         self.model = get_embedding_model()
