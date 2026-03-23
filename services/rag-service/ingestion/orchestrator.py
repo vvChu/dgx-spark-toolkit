@@ -38,6 +38,7 @@ PIPELINE_TOTAL = Counter(
 
 class StageError(Exception):
     """Raised when a pipeline stage fails."""
+
     def __init__(self, stage_name: str, cause: Exception):
         self.stage_name = stage_name
         self.cause = cause

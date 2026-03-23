@@ -28,7 +28,8 @@ RAG_SERVICE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAG_SERVICE_DIR)
 
 from ingestion.chunking import (
-    VietLawArticleChunker, VietLawSectionChunker,
+    VietLawArticleChunker, VietLawNumberedSectionChunker,
+    VietLawSectionChunker,
     GenericFallbackChunker, _split_into_children, _is_noise_chunk,
 )
 
@@ -107,7 +108,7 @@ def fix_ocr_spacing(text: str) -> str:
     """
     if not _OCR_SPACING_RE.search(text):
         return text
-    
+
     lines = text.split("\n")
     result = []
     for line in lines:
@@ -139,10 +140,10 @@ def rechunk_document(old_chunks: list[dict], doc_id: str) -> list[dict]:
         [c for c in old_chunks if c.get("chunk_type") in ("parent", "preamble")],
         key=lambda x: (x.get("page", 0), 0),
     )
-    
+
     if not parents:
         return old_chunks
-    
+
     # Merge all parent texts (strip [doc_id] prefix for clean re-chunking)
     texts = []
     for p in parents:
@@ -153,42 +154,47 @@ def rechunk_document(old_chunks: list[dict], doc_id: str) -> list[dict]:
         text = re.sub(r"^\[.*?\]\s*:::\s*", "", text)
         if text.strip():
             texts.append(text.strip())
-    
+
     full_text = "\n\n".join(texts)
     if len(full_text) < 50:
         return old_chunks
-    
+
     # [EXP-1] Strip AI leakage from merged text before chunking
     full_text = strip_ai_leakage(full_text)
-    
+
     # Get source info from first parent
     source = parents[0].get("source", "")
-    
+
     # Try chunking strategies in order on merged text
     new_chunks = []
-    
-    # Strategy 1: VietLawArticleChunker (detects Điều patterns)
+
+    # Strategy 1: VietLawArticleChunker (detects Điều X patterns)
     law_chunker = VietLawArticleChunker()
     new_chunks = law_chunker.chunk(full_text, source, 1, doc_id)
-    
+
     if not new_chunks:
-        # Strategy 2: VietLawSectionChunker
+        # Strategy 1.5: VietLawNumberedSectionChunker (QCVN numeric sections 3.1, 3.1.2)
+        numsec_chunker = VietLawNumberedSectionChunker()
+        new_chunks = numsec_chunker.chunk(full_text, source, 1, doc_id)
+
+    if not new_chunks:
+        # Strategy 2: VietLawSectionChunker (semantic paragraph gaps)
         sec_chunker = VietLawSectionChunker()
         new_chunks = sec_chunker.chunk(full_text, source, 1, doc_id)
-    
+
     if not new_chunks:
         # Strategy 3: Generic fallback
         fb_chunker = GenericFallbackChunker()
         new_chunks = fb_chunker.chunk(full_text, source, 1, doc_id)
-    
+
     if not new_chunks:
         return old_chunks
-    
+
     # Filter noise
     new_chunks = [c for c in new_chunks if not _is_noise_chunk(c.get("text", ""))]
     if not new_chunks:
         return old_chunks
-    
+
     # [EXP-3] Rewrite hierarchy_path for parent chunks containing Điều
     _dieu_re = re.compile(r'([ĐĐD]i[eề]u\s+\d+\.?(?:\s+[^\n]{0,50})?)')
     for c in new_chunks:
@@ -204,18 +210,18 @@ def rechunk_document(old_chunks: list[dict], doc_id: str) -> list[dict]:
         if m:
             article_label = m.group(1).strip()[:60]
             c["hierarchy_path"] = f"[{doc_id}] -> [{article_label}]"
-    
+
     # Force child generation for parent chunks without children
     parent_ids_with_children = set()
     for c in new_chunks:
         if c.get("chunk_type") == "child":
             parent_ids_with_children.add(c.get("parent_id"))
-    
+
     extra_children = []
     for c in new_chunks:
         if (c.get("chunk_type") == "parent"
             and c.get("parent_id") not in parent_ids_with_children
-            and len(c.get("text", "")) > 300):
+                and len(c.get("text", "")) > 300):
             children = _split_into_children(
                 c["text"], doc_id, source, c.get("page", 1),
                 c["parent_id"], c.get("hierarchy_path", ""),
@@ -223,9 +229,9 @@ def rechunk_document(old_chunks: list[dict], doc_id: str) -> list[dict]:
                 min_child_length=200,
             )
             extra_children.extend(children)
-    
+
     new_chunks.extend(extra_children)
-    
+
     return new_chunks
 
 
@@ -239,29 +245,29 @@ def enrich_and_export(json_path: str, dry_run: bool = False) -> dict:
         data = json.loads(Path(json_path).read_text(errors="replace"))
     except Exception as e:
         return {"status": "error", "error": str(e)}
-    
+
     doc_id = data.get("doc_id", "")
     meta = data.get("metadata", {})
     summary = data.get("summary", "")
     old_chunks = data.get("chunks", [])
-    
+
     if not old_chunks:
         return {"status": "skip", "reason": "no chunks"}
-    
+
     # Count old stats
     old_parents = sum(1 for c in old_chunks if c.get("chunk_type") == "parent")
     old_children = sum(1 for c in old_chunks if c.get("chunk_type") == "child")
     old_articles = sum(1 for c in old_chunks if "Điều" in c.get("hierarchy_path", ""))
-    
+
     # Re-chunk
     new_chunks = rechunk_document(old_chunks, doc_id)
-    
+
     # [EXP-1] Post-process: strip AI leakage from all chunk texts
     for chunk in new_chunks:
         text = chunk.get("text", "")
         if has_ai_leakage(text):
             chunk["text"] = strip_ai_leakage(text)
-    
+
     # Enrich chunks with doc-level fields
     for i, chunk in enumerate(new_chunks):
         chunk["doc_id"] = doc_id
@@ -270,27 +276,27 @@ def enrich_and_export(json_path: str, dry_run: bool = False) -> dict:
         # Preserve synthetic_queries from old chunks if available
         if i < len(old_chunks) and old_chunks[i].get("synthetic_queries"):
             chunk["synthetic_queries"] = old_chunks[i]["synthetic_queries"]
-    
+
     # Count new stats
     new_parents = sum(1 for c in new_chunks if c.get("chunk_type") == "parent")
     new_children = sum(1 for c in new_chunks if c.get("chunk_type") == "child")
     new_articles = sum(1 for c in new_chunks if "Điều" in c.get("hierarchy_path", ""))
-    
+
     result = {
         "status": "ok",
         "doc_id": doc_id,
         "old": {"total": len(old_chunks), "parents": old_parents, "children": old_children, "articles": old_articles},
         "new": {"total": len(new_chunks), "parents": new_parents, "children": new_children, "articles": new_articles},
     }
-    
+
     if dry_run:
         return result
-    
+
     # Write updated JSON
     data["chunks"] = new_chunks
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    
+
     # Re-generate markdown
     safe_filename = doc_id.replace("/", "_").replace("\\", "_").replace(":", "_").replace(" ", "_")
     md_path = os.path.join(EXPORT_MD_DIR, f"{safe_filename}.md")
@@ -298,7 +304,7 @@ def enrich_and_export(json_path: str, dry_run: bool = False) -> dict:
     md_content = generate_markdown(doc_id, rel_path, meta, summary, new_chunks)
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md_content)
-    
+
     return result
 
 
@@ -351,7 +357,7 @@ def fix_broken_tables(text: str) -> str:
         return text
     if _SEP_ROW_RE.search(text):
         return text  # Already has separator, not broken
-    
+
     lines = text.split('\n')
     result = []
     inserted = False
@@ -371,7 +377,7 @@ def generate_markdown(doc_id: str, rel_path: str, meta: dict,
                       summary: str, chunks: list[dict]) -> str:
     """Generate formatted markdown from document data."""
     lines = [f"# Document: {doc_id}\n"]
-    
+
     # Metadata
     lines.append("## Metadata")
     meta_display = [
@@ -384,11 +390,11 @@ def generate_markdown(doc_id: str, rel_path: str, meta: dict,
         if val and val not in ("unknown", "UNKNOWN", ""):
             lines.append(f"- **{label}:** {val}")
     lines.append(f"- **Original Path:** {rel_path}\n")
-    
+
     # Summary
     lines.append("## Summary")
     lines.append(f"{summary}\n")
-    
+
     # Content from parent chunks
     lines.append("## Content")
     parent_chunks = sorted(
@@ -397,7 +403,7 @@ def generate_markdown(doc_id: str, rel_path: str, meta: dict,
     )
     if not parent_chunks:
         parent_chunks = chunks
-    
+
     # Dedup
     seen = set()
     prev_heading = None
@@ -407,7 +413,7 @@ def generate_markdown(doc_id: str, rel_path: str, meta: dict,
         if fp in seen:
             continue
         seen.add(fp)
-        
+
         # Strip [doc_id] prefix from display
         display_text = re.sub(r"^\[.*?\]\s*", "", text)
         # Strip context prefix
@@ -420,20 +426,20 @@ def generate_markdown(doc_id: str, rel_path: str, meta: dict,
         display_text = strip_ai_leakage(display_text)
         # [EXP-3] Fix broken markdown tables
         display_text = fix_broken_tables(display_text)
-        
+
         if not display_text.strip():
             continue
-        
+
         # Extract heading from hierarchy_path
         h_path = chunk.get("hierarchy_path", "")
         heading = _extract_heading(h_path, doc_id)
         if heading and heading != prev_heading:
             lines.append(f"\n### {heading}")
             prev_heading = heading
-        
+
         lines.append(display_text)
         lines.append("")
-    
+
     return "\n".join(lines)
 
 
@@ -465,18 +471,18 @@ def _extract_heading(hierarchy_path: str, doc_id: str) -> str | None:
 
 def main():
     import glob
-    
+
     dry_run = "--dry-run" in sys.argv
-    
+
     json_files = sorted(glob.glob(os.path.join(EXPORT_JSON_DIR, "*.json")))
     json_files = [f for f in json_files if not f.endswith(".bak")]
-    
+
     if not json_files:
         print("No JSON exports found!")
         sys.exit(1)
-    
+
     print(f"\n  {'[DRY RUN] ' if dry_run else ''}Processing {len(json_files)} exports...\n")
-    
+
     stats = {"ok": 0, "skip": 0, "error": 0}
     total_old_parents = 0
     total_new_parents = 0
@@ -485,11 +491,11 @@ def main():
     total_old_articles = 0
     total_new_articles = 0
     ai_fixed = 0
-    
+
     for i, json_path in enumerate(json_files, 1):
         result = enrich_and_export(json_path, dry_run=dry_run)
         stats[result.get("status", "error")] += 1
-        
+
         if result["status"] == "ok":
             total_old_parents += result["old"]["parents"]
             total_new_parents += result["new"]["parents"]
@@ -497,10 +503,10 @@ def main():
             total_new_children += result["new"]["children"]
             total_old_articles += result["old"]["articles"]
             total_new_articles += result["new"]["articles"]
-        
+
         if i % 20 == 0:
             print(f"  Progress: {i}/{len(json_files)}")
-    
+
     # Summary
     print(f"\n  {'=' * 50}")
     print(f"  {'[DRY RUN] ' if dry_run else ''}Done: {stats['ok']} ok, {stats['skip']} skip, {stats['error']} error")

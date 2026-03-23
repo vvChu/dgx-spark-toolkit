@@ -1,6 +1,9 @@
 """Full database reset script — wipes Milvus, Neo4j, PostgreSQL state, and exports."""
-import sys; sys.path.insert(0, '/app')
-import os, glob, shutil
+import sys
+sys.path.insert(0, '/app')
+import os
+import glob
+import shutil
 from pymilvus import connections, utility, Collection
 from neo4j import GraphDatabase
 from sqlalchemy import create_engine, text
@@ -51,7 +54,7 @@ with engine.begin() as conn:
     # Count before
     before = conn.execute(text("SELECT status, COUNT(*) FROM ingestion_state GROUP BY status ORDER BY status")).fetchall()
     print(f"    Before: {dict(before)}")
-    
+
     # Reset all to PENDING
     conn.execute(text("""
         UPDATE ingestion_state
@@ -60,7 +63,7 @@ with engine.begin() as conn:
             completed_timestamp = NULL,
             error = NULL
     """))
-    
+
     after = conn.execute(text("SELECT status, COUNT(*) FROM ingestion_state GROUP BY status ORDER BY status")).fetchall()
     print(f"    After:  {dict(after)}")
     print(f"    ✓ All {dict(after).get('PENDING', 0)} docs reset to PENDING")

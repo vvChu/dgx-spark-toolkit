@@ -18,6 +18,10 @@ NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASS = os.getenv("NEO4J_PASSWORD") or os.getenv("NEO4J_PASS", "")
 JSON_MODEL = os.getenv("JSON_MODEL", "qwen3.5-35b")
 
+# Image preprocessing & OCR rendering
+IMAGE_PREPROCESS = os.getenv("IMAGE_PREPROCESS", "1") == "1"
+OCR_RENDER_DPI = int(os.getenv("OCR_RENDER_DPI", "200"))
+
 # Settings-dependent values — populated on first access
 MILVUS_HOST: str = ""
 MILVUS_PORT: str = ""

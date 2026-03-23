@@ -43,6 +43,7 @@ GRAPH_SEARCH_TOOL = {
     }
 }
 
+
 @router.post("/chat", tags=["Generation"], response_model=ChatResponse)
 async def chat_endpoint(
     request: ChatRequest,

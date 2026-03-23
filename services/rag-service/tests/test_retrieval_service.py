@@ -13,8 +13,12 @@ os.environ.setdefault("LITELLM_MASTER_KEY", "sk-ci-test-placeholder-safe")
 
 # Stub heavy embedding module (same as conftest.py)
 _fake_mod = types.ModuleType("retrieval.embeddings.bge_m3_hybrid")
+
+
 class _FakeEmb:
     def __init__(self, *a, **kw): pass
+
+
 _fake_mod.BGE_M3_HybridEmbedding = _FakeEmb
 sys.modules.setdefault("retrieval.embeddings.bge_m3_hybrid", _fake_mod)
 

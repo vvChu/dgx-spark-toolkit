@@ -27,6 +27,7 @@ _SPACED_CHAR_RE = re.compile(
     rf'({_VN_CHARS})\s{{1,3}}(?={_VN_CHARS}(?:\s{{1,3}}{_VN_CHARS}))'
 )
 
+
 def normalize_ocr_spacing(text: str) -> str:
     """Fix character-separated Vietnamese text from scanned PDFs.
 
@@ -135,6 +136,9 @@ _BOILERPLATE_REGEX = [
     # Combined single-line digital signature block
     # e.g. "Ký bởi: Cổng Thông tin ... Email: xxx@yyy Cơ quan: ... Thời gian ký: ..."
     re.compile(r'(?i)^\s*(?:Ký bởi|Người ký)\s*:.*(?:Email|Cơ quan|Thời gian ký).*$'),
+    # Repeating technical standard page headers (P4 fix)
+    # e.g. "QCVN 124:2021/BTTTT" or "TCVN 7909:2015" appearing as page header
+    re.compile(r'^\s*(?:QCVN|TCVN|TCCS)\s+\d+[:\-]\d{4}(?:\/[A-ZĐ]+)?\s*$'),
 ]
 
 
@@ -370,6 +374,36 @@ _STUCK_WORD_FIXES = [
     ('quảlý', 'quả lý'),
     ('nhàở', 'nhà ở'),
     ('trờicó', 'trời có'),
+    # Additional from corpus analysis — QCVN/TCVN technical standard corpus
+    # IMPORTANT: Longer patterns MUST come before shorter ones to avoid partial matching
+    # Most frequent merges from QCVN 124 audit:
+    ('cóthểcó', 'có thể có'),
+    ('cóthểđạt', 'có thể đạt'),
+    ('cóthểđược', 'có thể được'),
+    ('cóthểsử', 'có thể sử'),
+    ('cóthểđo', 'có thể đo'),
+    ('cóthể', 'có thể'),
+    ('làmột', 'là một'),
+    ('Làmột', 'Là một'),
+    ('đốivới', 'đối với'),
+    ('Đốivới', 'Đối với'),
+    ('nhưsau', 'như sau'),
+    ('vàvà', 'và và'),
+    ('làgiá', 'là giá'),
+    ('cóphải', 'có phải'),
+    ('phảiđược', 'phải được'),
+    ('cóthêm', 'có thêm'),
+    ('vàcóthể', 'và có thể'),
+    ('hoặclà', 'hoặc là'),
+    ('khôngđược', 'không được'),
+    ('màcác', 'mà các'),
+    ('trênmột', 'trên một'),
+    ('theocác', 'theo các'),
+    ('dướiđây', 'dưới đây'),
+    ('từng', 'từng'),   # keep — not a merge
+    ('sauđây', 'sau đây'),
+    ('trongmột', 'trong một'),
+    ('mộtsố', 'một số'),
     # Additional from corpus analysis (quality evaluation 2025-03)
     # IMPORTANT: Longer patterns MUST come before shorter ones to avoid partial matching
     ('đãcóhạ', 'đã có hạ'),
@@ -550,10 +584,10 @@ _BLOCK_START_PATTERNS = [
 ]
 
 
-
 def _is_block_start(line: str) -> bool:
     """Check if a line starts a new structural block."""
     return any(p.match(line) for p in _BLOCK_START_PATTERNS)
+
 
 # A line that is "continuation-friendly": ends with a lowercase letter, comma,
 # digit (common in area/population data), opening paren, or Vietnamese

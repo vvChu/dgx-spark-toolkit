@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────────────────────────────────────────────────
 PRIMARY_MODEL = os.getenv("PRIMARY_VISION_MODEL", "rag-core")          # Qwen 35B local
-FALLBACK_MODEL = os.getenv("FALLBACK_VISION_MODEL", "gemini-2.5-flash") # Gemini cloud
+FALLBACK_MODEL = os.getenv("FALLBACK_VISION_MODEL", "gemini-2.5-flash")  # Gemini cloud
 GATEWAY_URL = os.getenv("VLLM_API_BASE", "http://ai-gateway:4000/v1")
 API_KEY = os.getenv("LITELLM_MASTER_KEY", "")
 
@@ -180,7 +180,7 @@ def llm_extract_page(img_bytes: bytes, page_num: int = 0,
         },
     ]
 
-    raw = _call_llm(messages, max_tokens=4096, temperature=0.0, task=f"ocr_p{page_num}")
+    raw = _call_llm(messages, max_tokens=8192, temperature=0.0, task=f"ocr_p{page_num}")
     if not raw:
         return {"text": "", "is_table": False, "layout": [], "source": "llm_failed"}
 

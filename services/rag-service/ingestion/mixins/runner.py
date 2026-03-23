@@ -12,6 +12,9 @@ from ingestion.pipeline_config import SOURCE_DIR, MAX_WORKERS
 
 logger = logging.getLogger(__name__)
 
+# Supported file extensions for ingestion
+_SUPPORTED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.jpg', '.jpeg', '.png', '.xls', '.xlsx'}
+
 
 class RunnerMixin:
     """Entry points and worker loop management."""
@@ -38,17 +41,17 @@ class RunnerMixin:
 
     def _scan_and_enqueue(self):
         """Scan filesystem and push all unprocessed files to Redis Stream."""
-        logger.info("Scanning filesystem for PDF files...")
-        pdf_files = []
+        logger.info("Scanning filesystem for supported files...")
+        doc_files = []
         for root, _, files in os.walk(SOURCE_DIR):
             for file in files:
-                if file.lower().endswith('.pdf'):
-                    pdf_files.append(os.path.join(root, file))
+                if os.path.splitext(file)[1].lower() in _SUPPORTED_EXTENSIONS:
+                    doc_files.append(os.path.join(root, file))
 
-        logger.info(f"Found {len(pdf_files)} PDF files. Filtering already-queued...")
+        logger.info(f"Found {len(doc_files)} files. Filtering already-queued...")
 
         to_enqueue = []
-        for f in pdf_files:
+        for f in doc_files:
             rel_path = os.path.relpath(f, SOURCE_DIR)
             with self._processed_cache_lock:
                 if rel_path in self.processed_cache:
@@ -120,15 +123,15 @@ class RunnerMixin:
     def _run_legacy(self):
         """Legacy mode: direct filesystem polling with ThreadPoolExecutor."""
         logger.info(f"Starting parallel ingestion scan (legacy mode)...")
-        pdf_files = []
+        doc_files = []
         for root, _, files in os.walk(SOURCE_DIR):
             for file in files:
-                if file.lower().endswith('.pdf'):
-                    pdf_files.append(os.path.join(root, file))
+                if os.path.splitext(file)[1].lower() in _SUPPORTED_EXTENSIONS:
+                    doc_files.append(os.path.join(root, file))
 
-        logger.info(f"Found {len(pdf_files)} PDF files. Processing with {MAX_WORKERS} workers...")
+        logger.info(f"Found {len(doc_files)} files. Processing with {MAX_WORKERS} workers...")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            executor.map(self.safe_process, pdf_files)
+            executor.map(self.safe_process, doc_files)
 
         logger.info("Initial scan complete. Starting live watch...")
         event_handler = _LegacyWatchHandler(self)
@@ -150,7 +153,7 @@ class _QueueWatchHandler(FileSystemEventHandler):
         self.ingestor = ingestor
 
     def on_created(self, event):
-        if not event.is_directory and event.src_path.lower().endswith('.pdf'):
+        if not event.is_directory and os.path.splitext(event.src_path)[1].lower() in _SUPPORTED_EXTENSIONS:
             rel_path = os.path.relpath(event.src_path, SOURCE_DIR)
             logger.info(f"New file detected, enqueuing: {rel_path}")
             time.sleep(2)
@@ -169,7 +172,7 @@ class _LegacyWatchHandler(FileSystemEventHandler):
         self._active_threads: set = set()
 
     def on_created(self, event):
-        if not event.is_directory and event.src_path.lower().endswith('.pdf'):
+        if not event.is_directory and os.path.splitext(event.src_path)[1].lower() in _SUPPORTED_EXTENSIONS:
             logger.info(f"New file detected: {event.src_path}")
 
             def _process(path):

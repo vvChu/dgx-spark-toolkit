@@ -5,12 +5,14 @@ from repositories.neo4j_repo import Neo4jRepository
 
 logger = logging.getLogger(__name__)
 
+
 class LifecycleService:
     """
     Orchestrates document lifecycle operations across all data stores.
     """
+
     def __init__(
-        self, 
+        self,
         state_manager: PostgresStateManager,
         milvus_repo: MilvusRepository,
         neo4j_repo: Neo4jRepository
@@ -25,7 +27,7 @@ class LifecycleService:
         Valid statuses typically include: ACTIVE, OUTDATED, REPLACED.
         """
         logger.info(f"Starting cascading status sync for doc_id: {doc_id} -> {new_status}")
-        
+
         errors = []
 
         # 1. Update Postgres State (Source of truth for ingestion files)
@@ -49,6 +51,6 @@ class LifecycleService:
         if errors:
             logger.error(f"Cascading sync for {doc_id} encountered errors: {errors}")
             return {"status": "partial_success", "errors": errors}
-        
+
         logger.info(f"Successfully synchronized status for {doc_id} across all stores.")
         return {"status": "success", "doc_id": doc_id, "new_status": new_status}

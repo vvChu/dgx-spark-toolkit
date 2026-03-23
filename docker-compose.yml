@@ -25,6 +25,11 @@ services:
       - REDIS_URL=redis://litellm-redis:6379/1
       - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-rag-core}
       - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-gemini-2.5-flash}
+      - IMAGE_PREPROCESS=${IMAGE_PREPROCESS:-1}
+      - OCR_RENDER_DPI=${OCR_RENDER_DPI:-200}
+      - SURYA_DEVICE=${SURYA_DEVICE:-auto}
+      - CHUNK_MAX_CHARS=${CHUNK_MAX_CHARS:-14500}
+      - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
     working_dir: /app
     command: ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -90,6 +95,11 @@ services:
       - REDIS_URL=redis://litellm-redis:6379/1
       - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-rag-core}
       - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-gemini-2.5-flash}
+      - IMAGE_PREPROCESS=${IMAGE_PREPROCESS:-1}
+      - OCR_RENDER_DPI=${OCR_RENDER_DPI:-200}
+      - SURYA_DEVICE=${SURYA_DEVICE:-auto}
+      - CHUNK_MAX_CHARS=${CHUNK_MAX_CHARS:-14500}
+      - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
 
     volumes:
       - ./services/rag-service:/app
@@ -109,14 +119,14 @@ services:
       ai-gateway:
         condition: service_started
     deploy:
-      replicas: 5
+      replicas: 3
       resources:
         limits:
-          cpus: '4'
-          memory: 12G
+          cpus: '6'
+          memory: 20G
         reservations:
           cpus: '2'
-          memory: 6G
+          memory: 8G
     healthcheck:
       disable: true
     networks:

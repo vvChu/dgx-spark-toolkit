@@ -130,7 +130,7 @@ def strip_ai_monologue_lines(text: str) -> str:
         # Starred analysis bullets that are AI reasoning, not document content
         r'^\s*\*\s+\*\*(?:Note|Reconstruct|Plan|Structure|OCR Text):?\*\*.*$',
     ]
-    
+
     lines = text.split('\n')
     cleaned_lines = []
     for line in lines:
@@ -141,7 +141,7 @@ def strip_ai_monologue_lines(text: str) -> str:
                 break
         if not should_remove:
             cleaned_lines.append(line)
-    
+
     return '\n'.join(cleaned_lines)
 
 
@@ -156,44 +156,44 @@ def dedup_content_blocks(text: str) -> str:
     idx = text.find(content_marker)
     if idx == -1:
         return text
-    
+
     header = text[:idx + len(content_marker)]
     body = text[idx + len(content_marker):]
-    
+
     # Split body into blocks by double newlines
     blocks = re.split(r'\n\n+', body)
-    
+
     seen_hashes = set()
     unique_blocks = []
     dedup_count = 0
-    
+
     for block in blocks:
         stripped = block.strip()
         if not stripped:
             continue
-        
-        # Don't dedup page markers, headings, or warning placeholders  
-        if (stripped.startswith('<!-- Trang') or 
-            stripped.startswith('### ') or 
+
+        # Don't dedup page markers, headings, or warning placeholders
+        if (stripped.startswith('<!-- Trang') or
+            stripped.startswith('### ') or
             stripped.startswith('## ') or
-            '⚠️' in stripped):
+                '⚠️' in stripped):
             unique_blocks.append(block)
             continue
-        
+
         # Hash the normalized content
         block_hash = hashlib.md5(stripped.encode('utf-8')).hexdigest()
         if block_hash in seen_hashes:
             dedup_count += 1
             continue
-        
+
         seen_hashes.add(block_hash)
         unique_blocks.append(block)
-    
+
     result = header + '\n' + '\n\n'.join(unique_blocks)
-    
+
     # Clean up excessive blank lines (>2 consecutive)
     result = re.sub(r'\n{4,}', '\n\n\n', result)
-    
+
     return result
 
 
@@ -208,11 +208,11 @@ def clean_summary_section(text: str) -> str:
     content_start = text.find('\n## Content')
     if summary_start == -1 or content_start == -1:
         return text
-    
+
     header = text[:summary_start + len('## Summary\n')]
     summary = text[summary_start + len('## Summary\n'):content_start]
     rest = text[content_start:]
-    
+
     # Strip AI analysis markers from summary
     summary = re.sub(r'\*\*(?:Header|Content Snippets?|Key Points?|Note|Overview|Structure|Document Type|Issuing Authority|Recipients?|Sender|Date):?\*\*:?\s*', '', summary)
     # Strip markdown bold
@@ -223,7 +223,7 @@ def clean_summary_section(text: str) -> str:
     summary = re.sub(r'^\s{2,}[*\-+]\s+', '', summary, flags=re.MULTILINE)
     # Clean up excessive whitespace
     summary = re.sub(r'\n{3,}', '\n\n', summary)
-    
+
     return header + summary + rest
 
 
@@ -238,36 +238,36 @@ def cleanup_file(filepath: str, dry_run: bool = False) -> dict:
     """Clean a single markdown file. Returns stats dict."""
     with open(filepath, 'r', encoding='utf-8') as f:
         original = f.read()
-    
+
     original_lines = len(original.split('\n'))
-    
+
     # Step 1: Strip <think> blocks
     cleaned = strip_think_blocks(original)
-    
+
     # Step 2: Strip AI monologue lines
     cleaned = strip_ai_monologue_lines(cleaned)
-    
+
     # Step 3: Dedup content blocks
     cleaned = dedup_content_blocks(cleaned)
-    
+
     # Step 4: OCR artifact cleanup
     cleaned = strip_random_emojis(cleaned)
     cleaned = strip_digital_signature_lines(cleaned)
     cleaned = fix_ocr_typos(cleaned)
-    
+
     # Step 5: Summary section cleanup (strip AI analysis markers)
     cleaned = clean_summary_section(cleaned)
-    
+
     # Step 6: Remove empty page markers
     cleaned = strip_empty_pages(cleaned)
-    
+
     # Step 7: Clean up excessive blank lines
     cleaned = re.sub(r'\n{4,}', '\n\n\n', cleaned)
     cleaned = cleaned.rstrip() + '\n'
-    
+
     cleaned_lines = len(cleaned.split('\n'))
     removed = original_lines - cleaned_lines
-    
+
     stats = {
         "file": os.path.basename(filepath),
         "original_lines": original_lines,
@@ -276,11 +276,11 @@ def cleanup_file(filepath: str, dry_run: bool = False) -> dict:
         "changed": original != cleaned,
         "had_think_tags": '</think>' in original or '<think>' in original,
     }
-    
+
     if not dry_run and stats["changed"]:
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(cleaned)
-    
+
     return stats
 
 
@@ -290,7 +290,7 @@ def main():
     parser.add_argument("--file", type=str, help="Process a single file")
     parser.add_argument("--dir", type=str, default=DEFAULT_EXPORT_DIR, help="Export directory")
     args = parser.parse_args()
-    
+
     if args.file:
         files = [args.file]
     else:
@@ -302,33 +302,33 @@ def main():
             for f in os.listdir(args.dir)
             if f.endswith('.md')
         ])
-    
+
     if not files:
         print("No markdown files found.")
         sys.exit(0)
-    
+
     mode = "DRY RUN" if args.dry_run else "CLEANUP"
     print(f"{'='*60}")
     print(f"  Markdown Export Cleanup — {mode}")
     print(f"  Files: {len(files)}")
     print(f"{'='*60}\n")
-    
+
     total_removed = 0
     files_changed = 0
     files_with_think = 0
-    
+
     for filepath in files:
         stats = cleanup_file(filepath, dry_run=args.dry_run)
-        
+
         if stats["had_think_tags"]:
             files_with_think += 1
-        
+
         if stats["changed"]:
             files_changed += 1
             total_removed += stats["removed_lines"]
             indicator = "🔴" if stats["had_think_tags"] else "🟡"
             print(f"  {indicator} {stats['file']}: {stats['original_lines']} → {stats['cleaned_lines']} lines (-{stats['removed_lines']})")
-        
+
     print(f"\n{'='*60}")
     print(f"  Summary")
     print(f"  Files scanned:     {len(files)}")

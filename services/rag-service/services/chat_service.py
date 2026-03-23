@@ -74,7 +74,7 @@ class ChatService:
 
         # Format context for LLM
         context_str = "\n\n".join([
-            f"[Source: {r.get('doc_number', 'unknown')}#page={r['page']}&rect={r.get('bbox', [0,0,1000,1000])}]\n{r['text']}"
+            f"[Source: {r.get('doc_number', 'unknown')}#page={r['page']}&rect={r.get('bbox', [0, 0, 1000, 1000])}]\n{r['text']}"
             for r in all_context_used
         ])
 

@@ -14,6 +14,7 @@ if not audit_logger.handlers:
 
 logger = logging.getLogger(__name__)
 
+
 def clean_llm_text(text: str, source_id: str = "unknown", is_summary: bool = False) -> str:
     """
     Robustly clean LLM output for ingestion.
@@ -31,11 +32,32 @@ def clean_llm_text(text: str, source_id: str = "unknown", is_summary: bool = Fal
     text = re.sub(r'</think>', '', text)
     text = re.sub(r'</thought>', '', text)
 
+    # [Fix #5a] Strip base64 binary strings EARLY (before original_len calc)
+    # so the Safety Guard doesn't block legitimate base64 removal
+    # Base64 strings: 60+ chars of [A-Za-z0-9+/=] with no spaces
+    text = re.sub(
+        r'(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{60,}={0,2}(?=[^A-Za-z0-9+/]|$)',
+        '[BASE64_DATA]',
+        text
+    )
+
+    # [Fix #1 post-hoc] Strip prompt echo EARLY (before original_len)
+    # Prevents Safety Guard from rolling back when a page is mostly prompt text
+    _PROMPT_ECHO_PATTERNS = [
+        r'(?im)^\s*\d+\.\s+(?:Giữ nguyên cấu trúc|BẢNG BIỂU|KHÔNG dùng markdown|Giữ nguyên số hiệu).*$',
+        r'(?im)^.*CHỈ VĂN BẢN THUẦN TÚY.*$',
+        r'(?im)^.*Bỏ QUA HOÀN TOÀN.*$',
+        r'(?im)^(####\s*)?9\.\s+CHỈ VĂN BẢN THUẦN TÚY.*',
+        r'(?im)^\s*(?:Bỏ qua hoàn toàn|KHÔNG trích xuất)\s*(?:.*)?:-?[^\n]*$',
+    ]
+    for _p in _PROMPT_ECHO_PATTERNS:
+        text = re.sub(_p, '', text)
+
     original_len = len(text)
-    
+
     # 1. (Legacy pattern — kept for compatibility, already handled above)
     text_cleaned = text
-    
+
     # 2. Strip "Thinking Process:" or "Reasoning:" blocks and everything after them if they contain prompts
     # Often Qwen 35B outputs a detailed "Thinking Process" tree.
     thought_patterns = [
@@ -131,10 +153,10 @@ def clean_llm_text(text: str, source_id: str = "unknown", is_summary: bool = Fal
         r'(?i).*?Trả về TOÀN BỘ nội dung.*',
         r'(?i).*?Chỉ trả về nội dung văn bản.*',
     ]
-    
+
     for pattern in patterns_to_nuke:
         text_cleaned = re.sub(pattern, '', text_cleaned)
-    
+
     # Cleanup any leftover "Thinking Process" headers that might have been missed
     text_cleaned = re.sub(r'(?i)Thinking Process:.*?(?=\n\n|\n[A-Z]|\Z)', '', text_cleaned, flags=re.DOTALL)
 
@@ -142,22 +164,101 @@ def clean_llm_text(text: str, source_id: str = "unknown", is_summary: bool = Fal
     text_cleaned = re.sub(r'^\s*\d+\.\s+\*\*.*$', '', text_cleaned, flags=re.MULTILINE)
     # Strip orphaned bullet-point analysis lines
     text_cleaned = re.sub(r'^\s*\*\s+.*?(?:Header Info|Key information|Identify key|Document type|Issuing Authority|Responsibility|Recipients|Sender|Date:).*$', '', text_cleaned, flags=re.MULTILINE)
-    
+
     # 6. Strip isolated page numbers at start or end of block
     text_cleaned = re.sub(r'^\s*\d+\s*\n', '', text_cleaned)
     text_cleaned = re.sub(r'\n\s*\d+\s*$', '', text_cleaned)
     text_cleaned = re.sub(r'(?i)^\s*Trang\s+\d+.*?\n', '', text_cleaned)
 
+    # [P4] Strip CÔNG BÁO header/footer lines (Công báo scan artifacts)
+    # Pattern: "82   CÔNG BÁO/Số 997 + 998/Ngày 27-12-2019" or standalone
+    text_cleaned = re.sub(
+        r'(?m)^\s*\d{0,4}\s*CÔNG BÁO\/Số\s+[\d\s+]+\/Ngày[^\n]*\n?',
+        '', text_cleaned
+    )
+    text_cleaned = re.sub(
+        r'(?m)^\s*CÔNG BÁO\s*\/[^\n]*\n?',
+        '', text_cleaned
+    )
+
+    # [P3] Fix cross-line word merge: when a line ends with a lowercase char
+    # and next line starts with Uppercase+lowercase without space — add a space
+    # This handles OCR line-break joins like: "vềbảo" → "về bảo"
+    # Negative lookahead exempts technical unit suffixes: dBm, kHz, MHz, nGy, kVp...
+    _TECH_UNIT_SUFFIXES = r'(?!(Bm|Hz|Gy|Vp|Pa\b|Wb|Nm|Am|Cd|Wp|VA\b))'
+    text_cleaned = re.sub(
+        r'([a-zà-ỹđắặẵẳăầấẩẫậáàảãạéèẻẽẹíìỉĩịóòỏõọúùủũụýỳỷỹỵ])'
+        + _TECH_UNIT_SUFFIXES +
+        r'([A-ZĐẮẶẴẲĂẦẤẨẪẬÁÀẢÃẠÉÈẺẼẸÍÌỈĨỊÓÒỎÕỌÚÙỦŨỤÝỲỶỸỴ][a-zà-ỹđ])',
+        r'\1 \3',
+        text_cleaned
+    )
+
+    # [P1] Ensure paragraph breaks before numbered list items (1. 2. 3.)
+    # When a numbered item immediately follows another line with no blank line
+    text_cleaned = re.sub(
+        r'(?m)([^\n])\n(\d+\.\s+[A-ZĐÀÁẢÃẠĂẮẶ])',
+        r'\1\n\n\2',
+        text_cleaned
+    )
+    # Ensure paragraph break before lettered sub-items (a. b. c.)
+    text_cleaned = re.sub(
+        r'(?m)([^\n])\n([a-z]\)\s+\S)',
+        r'\1\n\n\2',
+        text_cleaned
+    )
+
+    # [Fix #4] Vietnamese preposition/conjunction word-merge fix
+    # Targeted approach for most common merge patterns found in corpus audit
+    _COMMON_MERGES = [
+        # Prepositions + next word start
+        (r'(?<![A-Z])(của)(các|cơ|tổ|cá|đơn|bộ|nhà|nước|người|quy|nhưng)', r'\1 \2'),
+        (r'(?<![A-Z])(và)(hệ|các|tổ|cơ|đơn|bộ|nhà|phục|việc|theo|quy|điều|được|chỉ|máy|cấu|khả|số)', r'\1 \2'),
+        (r'(?<![A-Z])(để)(có|thực|phục|đảm|đáp|đạt|cung|kiểm|xử|thi|đoạt)', r'\1 \2'),
+        (r'(?<![A-Z])(về)(mã|quy|yêu|phạm|đối|các|điều|tiêu|phương)', r'\1 \2'),
+        (r'(?<![A-Z])(là)(một|cơ|số|các|chính|tổ|nhà|nguồn|khả|để|cần)', r'\1 \2'),
+        (r'(?<![A-Z])(trong)(khi|các|việc|phạm|và|suốt)', r'\1 \2'),
+        (r'(?<![A-Z])(có)(thể|nhiều|đầy|tối|thể|được)', r'\1 \2'),
+        (r'(?<![A-Z])(được)(các|thiết|thực|xác|quy|sử|cấp|áp)', r'\1 \2'),
+        (r'(?<![A-Z])(của)(quy|các|cơ)', r'\1 \2'),
+        # Very common standalone merges found in corpus (top frequency)
+        (r'\bcóthể\b', 'có thể'),
+        (r'\blàmột\b', 'là một'),
+        (r'\bvàchỉ\b', 'và chỉ'),
+        (r'\bcủaquy\b', 'của quy'),
+        (r'\bvàmáy\b', 'và máy'),
+        (r'\bđểđáp\b', 'để đáp'),
+        (r'\bcóđầy\b', 'có đầy'),
+        (r'\bvàcấu\b', 'và cấu'),
+        (r'\bvàkhả\b', 'và khả'),
+        (r'\bvàsau\b', 'và sau'),
+        (r'\bcómột\b', 'có một'),
+        (r'\blàcần\b', 'là cần'),
+        (r'\bđượcáp\b', 'được áp'),
+        # Compound word merges common in QCVN docs
+        (r'(phục vụ|phụcvụ)(kết|cho|các|đáp|được|đo)', r'phục vụ \2'),
+        (r'(sai số|saisof)(tần|tốc)', r'sai số \2'),
+        (r'(bao gồm|baogồm)(các|cả|một)', r'bao gồm \2'),
+        (r'(?i)(một số|mộtsố)(quy|điều|vấn|hành|trường)', r'một số \2'),
+        # Strip extra spaces from earlier fixes (cleanup)
+        (r'  +', r' '),
+    ]
+    for pattern, repl in _COMMON_MERGES:
+        text_cleaned = re.sub(pattern, repl, text_cleaned)
+
+    # [Fix #5a base64 already done above]
+    # [Fix #1 prompt echo already done above]
+
     cleaned = text_cleaned.strip()
-    
+
     # Absolute Quality Safety Guard: Check character ratio
     # If is_summary is True, we allow more aggressive cleaning as summaries are small and often filled with junk
     ratio_threshold = 0.50 if is_summary else 0.30
-    
-    if original_len > 100: 
+
+    if original_len > 100:
         removed_len = original_len - len(cleaned)
         ratio = removed_len / original_len
-        
+
         if ratio > ratio_threshold:
             audit_logger.warning(
                 f"HIGH_CLEANING_RATIO detected for {source_id}: {ratio:.2%} stripped ({removed_len}/{original_len} chars). "

@@ -120,7 +120,7 @@ class RedisQueue:
             if msg:
                 data = msg[0][1]
                 retries = int(data.get("retries", 0)) + 1
-                
+
                 if retries >= MAX_RETRIES:
                     # Move to dead letter queue
                     data["error"] = error

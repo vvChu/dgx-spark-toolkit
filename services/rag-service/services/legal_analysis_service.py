@@ -10,6 +10,7 @@ from core.llm_client import call_llm
 
 logger = logging.getLogger(__name__)
 
+
 class LegalAnalysisService:
     def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None):
         self.milvus_repo = milvus_repo
@@ -22,7 +23,7 @@ class LegalAnalysisService:
         Compare a document with its predecessors to identify regulatory changes or conflicts.
         """
         logger.info(f"Analyzing conflicts for {doc_id} with query: '{query}' (depth={depth})")
-        
+
         # 1. Get the legal timeline/predecessors from Neo4j
         timeline = await self.graph_rag.get_legal_timeline(doc_id)
         if not timeline or len(timeline) < 2:
@@ -35,14 +36,14 @@ class LegalAnalysisService:
         # The timeline is [Newest -> ... -> Oldest] or [Oldest -> ... -> Newest] depending on query.
         # get_legal_timeline query ORDER BY length(path) DESC returns the full path.
         # It's better to explicitly find the 'target' of REPLACES/AMENDS.
-        
+
         predecessors = []
         for entry in timeline:
             if entry.get("id") != doc_id:
                 predecessors.append(entry)
                 if len(predecessors) >= depth:
                     break
-        
+
         if not predecessors:
             return {"status": "no_predecessors", "timeline": timeline}
 
@@ -52,11 +53,11 @@ class LegalAnalysisService:
             query_vector=await self._get_query_embedding(query),
             sparse_vector={},  # empty sparse vector for intra-doc search
             limit=5,
-            expr=f"doc_number == '{doc_id.split('/')[-1]}'" 
+            expr=f"doc_number == '{doc_id.split('/')[-1]}'"
         )
         # Note: doc_number in Milvus usually doesn't include the namespace part if extracted via regex.
         # But doc_id in graph is Namespace/Number.
-        
+
         new_context = "\n".join([hit.entity.get("text") for hit in new_results[0]]) if new_results else "No content found."
 
         # 3. Retrieve relevant chunks from PREDECESSOR(S)
@@ -65,7 +66,7 @@ class LegalAnalysisService:
             pred_id = pred["id"]
             # Extract number from ID (Namespace/Number)
             pred_num = pred_id.split('/')[-1] if '/' in pred_id else pred_id
-            
+
             pred_results = await self.milvus_repo.hybrid_search(
                 query_vector=await self._get_query_embedding(query),
                 sparse_vector={},

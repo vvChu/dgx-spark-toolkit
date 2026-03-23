@@ -6,6 +6,7 @@ from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+
 class TelegramNotifier:
     def __init__(self):
         settings = get_settings()
@@ -38,17 +39,18 @@ class TelegramNotifier:
         header = f"🚀 <b>INGESTION PROGRESS UPDATE</b>\n\n"
         milestone_text = f"✅ Đã xử lý thêm <b>50 tài liệu</b> (Tổng cộng: {count})\n\n"
         doc_list = "<b>Danh sách 50 tài liệu vừa hoàn tất:</b>\n"
-        
+
         # Format the list with bullet points
         items = [f"• {os.path.basename(f)}" for f in files]
         full_list = "\n".join(items)
-        
+
         # Telegram has a 4096 char limit, truncate if necessary
         message = header + milestone_text + doc_list + full_list
         if len(message) > 4000:
             message = message[:3997] + "..."
-            
+
         await self.send_message(message)
+
 
 # Global instance
 import os

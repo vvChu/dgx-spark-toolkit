@@ -36,7 +36,7 @@ EXPORT_MD_DIR = os.environ.get("EXPORT_MD_DIR", "/app/exports/markdown")
 
 # Vietnamese AI monologue phrases (high-precision patterns)
 _AI_PATTERNS_VN = [
-    # Introductory/conversational phrases 
+    # Introductory/conversational phrases
     r"(?i)(?:^|\n)\s*Dưới đây là[^.]*[.:]?\s*\n",
     r"(?i)(?:^|\n)\s*Xin lỗi[^.]*[.!]?\s*\n",
     r"(?i)(?:^|\n)\s*Tôi xin[^.]*[.:]?\s*\n",
@@ -123,16 +123,16 @@ def fix_table_gfm_v2(text: str) -> str:
 
     for i, line in enumerate(lines):
         stripped = line.strip()
-        
+
         # Count pipes in the line
         pipe_count = stripped.count("|")
-        
+
         # A pipe-row: starts with | and has at least 3 | characters
         is_pipe_row = (
             stripped.startswith("|") and stripped.endswith("|")
             and pipe_count >= 3
         )
-        
+
         # Also catch rows that have pipes but don't start/end with them
         # e.g., "STT | Tên | Giá trị" (common in OCR output)
         is_loose_pipe_row = (
@@ -260,22 +260,22 @@ def extract_doc_number_from_path(filepath: str) -> str:
     Handles QCVN patterns and standard Vietnamese legal document IDs.
     """
     basename = os.path.basename(filepath).replace(".json", "").replace(".md", "")
-    
+
     # QCVN special handling
     m = _QCVN_FILENAME_RE.search(basename)
     if m:
         return f"QCVN {m.group(1)}:{m.group(2)}/{m.group(3)}"
-    
+
     # Standard full pattern: TT01-2023-BTP → 01/2023/TT-BTP
     m = _DOC_NUM_FILENAME_RE.search(basename)
     if m:
         return f"{m.group(2)}/{m.group(3)}/{m.group(1)}-{m.group(4)}"
-    
+
     # Simple pattern: QD08-TTg → 08/QĐ-TTg
     m = _DOC_NUM_SIMPLE_RE.search(basename)
     if m:
         return f"{m.group(2)}/{m.group(1)}-{m.group(3)}"
-    
+
     return ""
 
 
@@ -287,13 +287,13 @@ def process_markdown_file(filepath: str, dry_run: bool = False) -> dict:
     """Apply all fixes to a single markdown file."""
     text = Path(filepath).read_text(errors="replace")
     original = text
-    
+
     # P2: Strip AI monologue
     text = strip_ai_monologue(text)
-    
+
     # P1: Fix table GFM
     text = fix_table_gfm_v2(text)
-    
+
     # P5: Strip boilerplate from Content section
     # Only apply to the Content section, not metadata
     content_match = re.search(r"(## Content\s*\n)(.*)", text, re.DOTALL)
@@ -302,12 +302,12 @@ def process_markdown_file(filepath: str, dry_run: bool = False) -> dict:
         content = content_match.group(2)
         content = strip_boilerplate_extended(content)
         text = pre + content
-    
+
     changed = text != original
-    
+
     if changed and not dry_run:
         Path(filepath).write_text(text, encoding="utf-8")
-    
+
     return {"changed": changed, "path": filepath}
 
 
@@ -317,9 +317,9 @@ def process_json_file(filepath: str, dry_run: bool = False) -> dict:
         data = json.loads(Path(filepath).read_text(errors="replace"))
     except Exception:
         return {"changed": False, "path": filepath, "error": "parse_failed"}
-    
+
     changed = False
-    
+
     # P4: Fix missing doc_number
     meta = data.get("metadata", {})
     current_dn = meta.get("doc_number", "").strip()
@@ -331,7 +331,7 @@ def process_json_file(filepath: str, dry_run: bool = False) -> dict:
             for c in data.get("chunks", []):
                 c["doc_number"] = extracted
             changed = True
-    
+
     # P2: Strip AI monologue from chunk text
     for c in data.get("chunks", []):
         old_text = c.get("text", "")
@@ -339,7 +339,7 @@ def process_json_file(filepath: str, dry_run: bool = False) -> dict:
         if new_text != old_text:
             c["text"] = new_text
             changed = True
-    
+
     # P5: Strip boilerplate from chunk text
     for c in data.get("chunks", []):
         old_text = c.get("text", "")
@@ -347,11 +347,11 @@ def process_json_file(filepath: str, dry_run: bool = False) -> dict:
         if new_text != old_text:
             c["text"] = new_text
             changed = True
-    
+
     if changed and not dry_run:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-    
+
     return {"changed": changed, "path": filepath}
 
 
@@ -384,31 +384,31 @@ def apply_all_fixes(dry_run: bool = False):
     """Apply all P1-P5 fixes to all exports."""
     if not dry_run:
         backup_exports()
-    
+
     md_files = sorted(glob.glob(os.path.join(EXPORT_MD_DIR, "*.md")))
     json_files = sorted(glob.glob(os.path.join(EXPORT_JSON_DIR, "*.json")))
-    
+
     md_changed = 0
     json_changed = 0
-    
+
     for f in md_files:
         if f.endswith(".bak"):
             continue
         r = process_markdown_file(f, dry_run=dry_run)
         if r["changed"]:
             md_changed += 1
-    
+
     for f in json_files:
         if f.endswith(".bak"):
             continue
         r = process_json_file(f, dry_run=dry_run)
         if r["changed"]:
             json_changed += 1
-    
+
     action = "Would fix" if dry_run else "Fixed"
     logger.info(f"{action} {md_changed}/{len(md_files)} markdown files")
     logger.info(f"{action} {json_changed}/{len(json_files)} JSON files")
-    
+
     return {"md_changed": md_changed, "json_changed": json_changed,
             "md_total": len(md_files), "json_total": len(json_files)}
 
@@ -423,9 +423,9 @@ def main():
     group.add_argument("--apply", action="store_true", help="Apply fixes to exports")
     group.add_argument("--revert", action="store_true", help="Revert to backup copies")
     group.add_argument("--dry-run", action="store_true", help="Show what would change")
-    
+
     args = parser.parse_args()
-    
+
     if args.revert:
         revert_exports()
     elif args.apply:

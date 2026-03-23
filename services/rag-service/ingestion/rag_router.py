@@ -4,6 +4,7 @@ from typing import List, Dict, Union
 import base64
 import os
 
+
 class LegalMetadata(BaseModel):
     title: str
     issue_date: str
@@ -13,6 +14,7 @@ class LegalMetadata(BaseModel):
     keywords: List[str]
     summary: str
     relations: List[Dict[str, str]]
+
 
 class RAGRouter:
     def __init__(self):
@@ -36,7 +38,7 @@ class RAGRouter:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"{text[:200000]}"}
             ],
-            temperature=0.1, # Maximized determinism
+            temperature=0.1,  # Maximized determinism
             max_tokens=2048,
             # Force JSON strictly using Pydantic schema
             response_format={"type": "json_schema", "json_schema": {"name": "metadata_schema", "strict": True, "schema": LegalMetadata.model_json_schema()}}
@@ -59,7 +61,7 @@ class RAGRouter:
         """OCR với native vision - Gửi ảnh trực tiếp"""
         with open(image_path, "rb") as f:
             base64_image = base64.b64encode(f.read()).decode("utf-8")
-        
+
         response = self.client.chat.completions.create(
             model="qwen3.5-9b-rag",
             messages=[

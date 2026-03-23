@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, text
 
 logger = logging.getLogger(__name__)
 
+
 class PostgresStateManager:
     def __init__(self):
         db_url = os.environ.get("DATABASE_URL")

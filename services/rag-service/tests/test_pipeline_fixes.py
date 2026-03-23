@@ -94,7 +94,7 @@ class TestI3ChildLength:
             "Các biện pháp xử lý vi phạm hành chính phải tuân thủ đúng quy trình quy định tại Luật XLVPHC."
         )
         children = _split_into_children(
-            long_text, "doc", "src.pdf", 1, "p:1:art_0", "[doc]", [0,0,1000,1000]
+            long_text, "doc", "src.pdf", 1, "p:1:art_0", "[doc]", [0, 0, 1000, 1000]
         )
         for child in children:
             text = child["text"]
@@ -108,10 +108,12 @@ class TestI5SafeTrunc:
 
     def test_trunc_preserves_chars(self):
         def safe_trunc(val, limit):
-            if not val: return ""
+            if not val:
+                return ""
             v_str = str(val)
             v_bytes = v_str.encode('utf-8')
-            if len(v_bytes) <= limit: return v_str
+            if len(v_bytes) <= limit:
+                return v_str
             while len(v_str.encode('utf-8')) > limit and v_str:
                 v_str = v_str[:-1]
             return v_str
@@ -125,10 +127,12 @@ class TestI5SafeTrunc:
 
     def test_trunc_short_text(self):
         def safe_trunc(val, limit):
-            if not val: return ""
+            if not val:
+                return ""
             v_str = str(val)
             v_bytes = v_str.encode('utf-8')
-            if len(v_bytes) <= limit: return v_str
+            if len(v_bytes) <= limit:
+                return v_str
             while len(v_str.encode('utf-8')) > limit and v_str:
                 v_str = v_str[:-1]
             return v_str

@@ -3,7 +3,8 @@ import sys
 sys.path.insert(0, '/app')
 
 from ingestion.table_extraction import _extract_page_tables
-import subprocess, os
+import subprocess
+import os
 
 # Find the QCVN_113 2023 PDF
 result = subprocess.run(

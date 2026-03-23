@@ -7,7 +7,7 @@ import os
 
 # --- Configuration ---
 AI_GATEWAY_URL = "/v1/chat/completions"
-MODELS = ["qwen3.5-35b", "smartest-brain"] # smartest-brain is the cloud fallback
+MODELS = ["qwen3.5-35b", "smartest-brain"]  # smartest-brain is the cloud fallback
 SECURE_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 
 # Test Queries (Realistic RAG scenarios)
@@ -22,9 +22,10 @@ QUERIES = [
     "Kiến trúc MoE (Mixture of Experts) của Qwen 3.5 có gì đặc biệt?"
 ]
 
+
 class RAGExtremeLoadTester(HttpUser):
-    wait_time = between(1, 4) # Realistic user pacing
-    
+    wait_time = between(1, 4)  # Realistic user pacing
+
     @task(3)
     def test_qwen_35b(self):
         self._test_chat("qwen3.5-35b")
@@ -50,13 +51,13 @@ class RAGExtremeLoadTester(HttpUser):
         start_time = time.time()
         with self.client.post(AI_GATEWAY_URL, json=payload, headers=headers, name=f"Chat: {model_id}", catch_response=True) as response:
             duration = (time.time() - start_time) * 1000
-            
+
             if response.status_code == 200:
                 try:
                     res_json = response.json()
                     tokens = res_json.get("usage", {}).get("completion_tokens", 0)
                     cache_hit = "True" if response.headers.get("x-litellm-cache-hit") == "HIT" else "False"
-                    
+
                     # Custom metrics for reporting
                     events.request.fire(
                         request_type="AI_METRIC",
@@ -64,7 +65,7 @@ class RAGExtremeLoadTester(HttpUser):
                         response_time=duration,
                         response_length=tokens
                     )
-                    
+
                     if tokens > 0:
                         tps = tokens / (duration / 1000)
                         response.success()
@@ -76,14 +77,17 @@ class RAGExtremeLoadTester(HttpUser):
             else:
                 response.failure(f"HTTP {response.status_code}: {response.text}")
 
+
 @events.init_command_line_parser.add_listener
 def _(parser):
     parser.add_argument("--test-id", type=str, default="load_test_v5", help="Unique ID for this test run")
+
 
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
     print(f"🚀 Starting Extreme RAG Load Test v5")
     print(f"🎯 Target: 100 Concurrent Users | Models: {MODELS}")
+
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):

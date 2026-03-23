@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # Characters that must not appear unescaped inside Milvus filter string literals
 _FILTER_UNSAFE = re.compile(r'["\\\x00-\x1f]')
 
+
 def _sanitize_filter_value(value: str) -> str:
     """Escape or strip characters that could break a Milvus filter expression."""
     return _FILTER_UNSAFE.sub('', str(value))
@@ -109,7 +110,7 @@ class RetrievalService:
         model = get_embedding_model()
         query_embeddings = await loop.run_in_executor(None, model.embed_query, query)
         q_vector_np = np.array(query_embeddings["dense"])
-        
+
         if use_cache:
             cached_results = _semantic_cache.get().get(query, q_vector_np)
             if cached_results:
@@ -119,7 +120,7 @@ class RetrievalService:
         # Step 1: Query Rewriting
         rewritten_query = await rewrite_query(query)
         search_query = rewritten_query
-        
+
         # Step 2: HyDE
         if use_hyde:
             hyde_doc = await _hyde_gen.get().generate_hypothetical_answer(rewritten_query)
@@ -153,7 +154,7 @@ class RetrievalService:
         initial_limit = min(limit * 10 if use_reranker else limit, 100)
         results = await self.milvus.hybrid_search(query_vector, sparse_query, limit=initial_limit, expr=expr)
         HYBRID_RECALL_10.inc()
-        
+
         top_results = []
         if results:
             raw_hits = results[0]
@@ -161,7 +162,7 @@ class RetrievalService:
                 docs = [hit.entity.get("text") for hit in raw_hits]
                 reranker = get_reranker()
                 reranked = await reranker.rerank(query, docs, top_k=limit)
-                
+
                 # Build hit_map; keep first occurrence if text is duplicated in results
                 hit_map: dict = {}
                 for hit in raw_hits:
@@ -178,11 +179,11 @@ class RetrievalService:
                     ent = hit.entity
                     milvus_score = hit.score
                     table_boost = 0.2 if ent.get("is_table", False) else 0.0
-                    
+
                     # Absolute Quality: Boost ACTIVE documents and penalize OUTDATED ones
                     status = ent.get("validity_status", "ACTIVE")
                     validity_boost = 0.15 if status == "ACTIVE" else (-0.3 if status == "OUTDATED" else 0.0)
-                    
+
                     hybrid_score = (float(score) * 0.8) + (float(milvus_score) * 0.2) + table_boost + validity_boost
                     top_results.append(_build_result_item(ent, doc_text, hybrid_score))
                 top_results.sort(key=lambda x: x["score"], reverse=True)
@@ -226,5 +227,5 @@ class RetrievalService:
 
         if use_cache and top_results:
             _semantic_cache.get().set(search_query, query_vector_np, top_results)
-            
+
         return {"results": top_results}

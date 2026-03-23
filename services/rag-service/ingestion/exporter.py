@@ -18,12 +18,13 @@ _CONTENT_BOILERPLATE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE
 )
 
+
 class DataExporter:
     def __init__(self, export_dir: str = "/app/exports"):
         self.export_dir = export_dir
         self.json_dir = os.path.join(export_dir, "json")
         self.md_dir = os.path.join(export_dir, "markdown")
-        
+
         # Create directories if they don't exist
         try:
             os.makedirs(self.json_dir, exist_ok=True)
@@ -37,7 +38,7 @@ class DataExporter:
         try:
             # Sanitize doc_id for filename (replace / and other chars)
             safe_filename = doc_id.replace('/', '_').replace('\\', '_').replace(':', '_').replace(' ', '_')
-            
+
             # 1. Export JSON
             json_path = os.path.join(self.json_dir, f"{safe_filename}.json")
             json_data = {
@@ -49,13 +50,13 @@ class DataExporter:
             }
             with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump(json_data, f, ensure_ascii=False, indent=2)
-            
+
             # 2. Export Markdown
             md_path = os.path.join(self.md_dir, f"{safe_filename}.md")
             md_content = self._generate_markdown(rel_path, doc_id, meta, summary, chunks)
             with open(md_path, 'w', encoding='utf-8') as f:
                 f.write(md_content)
-                
+
             logger.info(f"Successfully exported data for {doc_id} to {self.export_dir}")
         except Exception as e:
             logger.error(f"Failed to export data for {doc_id}: {e}")
@@ -84,8 +85,17 @@ class DataExporter:
 
         last = parts[-1].strip().strip("[]")
         # Skip noise-only segments
-        if not last or last == doc_id or last.lower() == "header":
+        if not last or last == doc_id or last.lower() in ("header", "table"):
             return None
+
+        # [P2] Handle numbered section format from VietLawNumberedSectionChunker
+        # e.g. "Article 3.2.1" -> "#### 3.2.1" or "Article 8.2.1.2" -> "#### 8.2.1.2"
+        article_match = re.match(r'Article\s+(\d+(?:\.\d+)*)', last, re.IGNORECASE)
+        if article_match:
+            section_num = article_match.group(1)
+            depth = section_num.count('.')
+            hashes = '####' if depth >= 1 else '###'
+            return f"{hashes} {section_num}"  # Return with hashes prefix for caller to use directly
 
         # If it looks like a legal marker, extract ONLY the marker part
         # Prevent body text from leaking into the heading
@@ -233,6 +243,29 @@ class DataExporter:
 
         return False
 
+    @staticmethod
+    def _wrap_xml_blocks(text: str) -> str:
+        """[Fix #5b] Detect XML/code content and wrap in a fenced code block.
+
+        Applicable to technical annexes (Phụ lục) containing XML examples (edXML)
+        or structured data that should not be rendered as prose.
+        """
+        import re as _re
+        # Already wrapped?
+        if '```xml' in text or '```json' in text:
+            return text
+        # Detect XML: starts with <?xml or contains edXML namespace tags
+        if _re.search(r'<\?xml|<edXML|<edXMLEnvelope|xmlns:edXML', text):
+            xml_match = _re.search(r'(<\?xml|<edXML)', text)
+            if xml_match:
+                pre = text[:xml_match.start()].rstrip()
+                xml_body = text[xml_match.start():]
+                # Clean up any BASE64_DATA placeholders for readability
+                xml_body = xml_body.replace('[BASE64_DATA]', '... [base64 binary data] ...')
+                result = f"{pre}\n\n```xml\n{xml_body.strip()}\n```" if pre else f"```xml\n{xml_body.strip()}\n```"
+                return result
+        return text
+
     def _generate_markdown(self, rel_path: str, doc_id: str, meta: Dict[str, Any],
                            summary: str, chunks: List[Dict[str, Any]]) -> str:
         """Generate a formatted markdown string with natural document flow."""
@@ -360,6 +393,30 @@ class DataExporter:
                         lines.append(body_part)
                     lines.append("")
                     continue
+
+            # [P2] Numbered section inline detection (1.1., 3.2.4. at start of text)
+            # Emit #### heading for numbered sections without Điều/Chương prefix
+            num_section_match = re.match(
+                r'^(\d+\.(?:\d+\.)*\d*\.?)\s+([^\n]{3,80})\n(.+)',
+                text, re.DOTALL
+            )
+            if num_section_match and not prev_heading:
+                sec_num = num_section_match.group(1).rstrip('.')
+                sec_title = num_section_match.group(2).strip()
+                body_part = num_section_match.group(3).strip()
+                depth = sec_num.count('.')
+                hashes = '#####' if depth >= 2 else '####'
+                heading_line = f"{hashes} {sec_num}. {sec_title}"
+                if len(heading_line) <= 120:
+                    lines.append(heading_line)
+                    prev_heading = f"{sec_num}. {sec_title}"
+                    if body_part:
+                        lines.append(body_part)
+                    lines.append("")
+                    continue
+
+            # [Fix #5b] Detect XML/code blocks and wrap in code fence
+            text = self._wrap_xml_blocks(text)
 
             lines.append(text)
             lines.append("")

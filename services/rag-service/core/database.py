@@ -13,6 +13,8 @@ from ingestion.state_manager import PostgresStateManager
 logger = logging.getLogger(__name__)
 
 # Global state holder for the application lifecycle
+
+
 class AppState:
     neo4j_driver = None
     milvus_client = None
@@ -21,7 +23,9 @@ class AppState:
     redis_queue = None
     async_state_manager = None
 
+
 state = AppState()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -107,11 +111,13 @@ async def lifespan(app: FastAPI):
 
 # --- Dependencies for FastAPI Routers ---
 
+
 async def get_neo4j_repo(request: Request) -> Neo4jRepository:
     """Dependency to inject the Neo4jRepository."""
     if not request.app.state.neo4j_driver:
         raise RuntimeError("Neo4j driver is not initialized.")
     return Neo4jRepository(request.app.state.neo4j_driver)
+
 
 async def get_milvus_repo(request: Request) -> MilvusRepository:
     """Dependency to inject the MilvusRepository."""
@@ -119,15 +125,18 @@ async def get_milvus_repo(request: Request) -> MilvusRepository:
         raise RuntimeError("Milvus client is not initialized.")
     return MilvusRepository(request.app.state.milvus_client)
 
+
 async def get_state_manager(request: Request) -> PostgresStateManager:
     """Dependency to inject the PostgresStateManager."""
     if not request.app.state.state_manager:
         raise RuntimeError("Postgres state manager is not initialized.")
     return request.app.state.state_manager
 
+
 async def get_http_client(request: Request) -> httpx.AsyncClient:
     """Dependency to inject the shared HTTP client."""
     return request.app.state.http_client
+
 
 async def get_legal_analysis_service(
     milvus_repo: MilvusRepository = Depends(get_milvus_repo),
@@ -137,9 +146,10 @@ async def get_legal_analysis_service(
     """Dependency to inject the LegalAnalysisService."""
     from services.legal_analysis_service import LegalAnalysisService
     from retrieval.graph_timeline_retriever import AdvancedGraphRAG
-    
+
     graph_rag = AdvancedGraphRAG(neo4j_repo.driver, http_client)
     return LegalAnalysisService(milvus_repo, graph_rag, http_client)
+
 
 async def get_compliance_service(
     milvus_repo: MilvusRepository = Depends(get_milvus_repo),

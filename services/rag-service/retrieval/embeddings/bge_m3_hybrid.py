@@ -5,6 +5,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class BGE_M3_HybridEmbedding:
     def __init__(self):
         import os
@@ -16,12 +17,12 @@ class BGE_M3_HybridEmbedding:
             device=self.device
         )
         self.dim = 1024
-    
+
     def encode(self, texts: list[str], batch_size=16) -> list[dict]:
         """Provides backward compatible list format for downstream components if needed"""
         if isinstance(texts, str):
             texts = [texts]
-        
+
         embeddings = self.model.encode(
             texts,
             batch_size=batch_size,
@@ -30,17 +31,17 @@ class BGE_M3_HybridEmbedding:
             return_sparse=True,
             return_colbert_vecs=False
         )
-        
+
         results = []
         dense_vecs = embeddings['dense_vecs'].tolist()
         sparse_vecs = self._convert_sparse_to_milvus(embeddings['lexical_weights'])
-        
+
         for i in range(len(texts)):
             results.append({
                 "dense": dense_vecs[i],
                 "sparse": sparse_vecs[i]
             })
-            
+
         return results
 
     # [P1-4] Instruction prefixes for domain-specific embedding quality
@@ -51,10 +52,10 @@ class BGE_M3_HybridEmbedding:
         """Returns the dictionary format suitable for batch collection operations"""
         if isinstance(texts, str):
             texts = [texts]
-        
+
         # [P1-4] Add instruction prefix for better domain-specific embeddings
         prefixed = [self._DOC_PREFIX + t for t in texts]
-        
+
         embeddings = self.model.encode(
             prefixed,
             batch_size=batch_size,
@@ -63,17 +64,17 @@ class BGE_M3_HybridEmbedding:
             return_sparse=True,
             return_colbert_vecs=False
         )
-        
+
         return {
             "dense": embeddings['dense_vecs'].tolist(),
             "sparse": self._convert_sparse_to_milvus(embeddings['lexical_weights'])
         }
-    
+
     def embed_query(self, query: str) -> dict:
         """Embed a single query returning dict format"""
         # [P1-4] Add instruction prefix for query
         prefixed = self._QUERY_PREFIX + query
-        
+
         embeddings = self.model.encode(
             [prefixed],
             batch_size=1,
@@ -82,12 +83,12 @@ class BGE_M3_HybridEmbedding:
             return_sparse=True,
             return_colbert_vecs=False
         )
-        
+
         return {
             "dense": np.array(embeddings['dense_vecs'])[0].tolist(),
             "sparse": self._convert_sparse_to_milvus(embeddings['lexical_weights'])[0]
         }
-    
+
     def _convert_sparse_to_milvus(self, lexical_weights: list[dict]) -> list[dict]:
         """Convert BGE-M3 lexical weights to Milvus SparseVector format (dict[int, float])"""
         sparse_list = []

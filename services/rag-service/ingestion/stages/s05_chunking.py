@@ -6,6 +6,7 @@ from ingestion.models import ProcessedDocument, Chunk
 from ingestion.chunking import DocumentChunker
 from ingestion.text_normalizer import rejoin_paragraphs, is_table_chunk, strip_document_boilerplate
 from ingestion.stages.s04_identity import get_final_doc_id
+from ingestion.doc_boundary import strip_issuing_document
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,12 @@ def run(doc: ProcessedDocument, ctx) -> ProcessedDocument:
     doc_id = get_final_doc_id(doc)
     chunker = ctx.chunker
 
+    # [doc_boundary] Strip issuing Thông tư/QĐ pages for QCVN/TCVN/tiêu chuẩn ngành
+    doc_type = doc.metadata.type if doc.metadata else None
+    doc.raw_pages = strip_issuing_document(doc.raw_pages, doc_type=doc_type)
+
     semantic_chunks = []
+
     for page in doc.raw_pages:
         text = page.text
 

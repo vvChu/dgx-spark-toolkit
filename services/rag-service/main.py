@@ -82,9 +82,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         content={"detail": "Internal server error"},
     )
 
+
 @app.get("/", tags=["General"])
 async def root():
     return {"message": f"BIM RAG Service is running (v{__version__} Enterprise Structure)", "docs": "/docs", "health": "/health"}
+
 
 @app.get("/health", tags=["General"])
 async def health(request: Request):
@@ -119,6 +121,7 @@ async def health(request: Request):
         status_code=status_code,
         content={"status": "ok" if all_ok else "degraded", "version": __version__, "checks": checks}
     )
+
 
 @app.get("/health/pipeline", tags=["Monitoring"])
 async def pipeline_health(request: Request):

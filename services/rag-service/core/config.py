@@ -8,6 +8,7 @@ _WEAK_PASSWORDS = frozenset({
     "litellm_pwd", "minioadmin", "placeholder_key", "changeme",
 })
 
+
 class Settings(BaseSettings):
     # Milvus Configuration
     MILVUS_HOST: str = "milvus-standalone"

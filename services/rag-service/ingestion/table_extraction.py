@@ -45,7 +45,6 @@ _TABLE_SETTINGS_TEXT = {
 }
 
 
-
 # ─────────────────────────────────────────────────────────────
 # Common Vietnamese words / token prefixes found in table headers.
 # Used to detect reversed text from rotated PDF text layers.
@@ -86,7 +85,6 @@ def _clean_cell(cell) -> str:
         return ""
     text = str(cell).strip().replace("\n", " ").replace("  ", " ")
     return _fix_mirrored_text(text)
-
 
 
 def _cells_to_markdown(cells: list[list]) -> str:

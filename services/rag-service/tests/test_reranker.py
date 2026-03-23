@@ -43,6 +43,7 @@ class TestRerankerUnit:
         """If GPU loading fails, Reranker should retry on CPU."""
         with patch("retrieval.reranker.CrossEncoder") as MockCE:
             call_count = 0
+
             def side_effect(name, device="cpu"):
                 nonlocal call_count
                 call_count += 1

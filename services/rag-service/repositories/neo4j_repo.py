@@ -4,10 +4,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class Neo4jRepository:
     """
     Repository pattern for encapsulating Neo4j Knowledge Graph queries.
     """
+
     def __init__(self, driver: AsyncDriver):
         self._driver = driver
 
@@ -36,7 +38,7 @@ class Neo4jRepository:
         except Exception as e:
             logger.error(f"Graph query failed: {e}")
             return []
-            
+
     async def get_guided_circulars(self, doc_id: str):
         query = """
         MATCH (d:Document)<-[:REFERENCES*1..2]-(guided:Document)

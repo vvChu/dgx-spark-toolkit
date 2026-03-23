@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
 @router.post("/search", tags=["Retrieval"], response_model=SearchResponse)
 @router.post("/retrieve", tags=["Retrieval"], include_in_schema=False)
 async def search_endpoint(

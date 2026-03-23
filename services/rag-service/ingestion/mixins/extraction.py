@@ -1,46 +1,30 @@
-"""PDF extraction mixin — page-level processing with Vision OCR fallback."""
+"""PDF extraction mixin — page-level processing with smart routing.
+
+Routing decision (per-page):
+  NATIVE       → fitz digital text + pdfplumber tables (skip OCR)
+  SCAN_SIMPLE  → Image preproc + LLM Vision OCR
+  SCAN_COMPLEX → Image preproc + LLM Vision OCR (table-aware)
+"""
 import logging
+import os
 import re
 
 import fitz
 
 from concurrent.futures import ThreadPoolExecutor
 from ingestion.cloud_vision import llm_extract_page as _llm_extract_page
+from ingestion.pdf_classifier import classify_pdf, classify_page, PdfType
+from ingestion.image_preprocessor import preprocess_page_image
 from ingestion import pipeline_config
 
 logger = logging.getLogger(__name__)
 
+# DPI for rendering scanned pages — configurable via env var
+OCR_RENDER_DPI = int(os.environ.get("OCR_RENDER_DPI", "200"))
+
 
 class ExtractionMixin:
     """Methods for PDF text extraction (digital + OCR)."""
-
-    def is_scanned_pdf(self, file_path):
-        """Quick check if a PDF is mostly scanned or digital."""
-        try:
-            doc = fitz.open(file_path)
-            if len(doc) == 0:
-                return False
-            text = ""
-            for i in range(min(3, len(doc))):
-                text += doc[i].get_text()
-            doc.close()
-            return len(text.strip()) < 100
-        except Exception as e:
-            logger.error(f"  Error checking PDF type for {file_path}: {e}")
-            return True
-
-    def _check_text_quality(self, text_raw: str) -> bool:
-        """Check if digital text has OCR spacing issues (broken Vietnamese tokens).
-
-        Returns True if text quality is bad and OCR should be forced.
-        """
-        _VN_CHAR_RE = re.compile(r'^[A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴa-zđàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵ]+$')
-        tokens = text_raw.split()
-        if len(tokens) <= 5:
-            return False
-        short_vn = sum(1 for t in tokens if len(t) <= 2 and _VN_CHAR_RE.match(t))
-        spacing_ratio = short_vn / len(tokens)
-        return spacing_ratio > 0.30
 
     def _extract_digital_page(self, file_path: str, page, i: int):
         """Fast digital text extraction path with layout analysis.
@@ -131,6 +115,8 @@ class ExtractionMixin:
     def _extract_ocr_page(self, img_bytes: bytes, i: int, digital_text: str):
         """Vision OCR extraction path for scanned / bad-quality pages.
 
+        Applies image preprocessing before sending to LLM Vision OCR.
+
         Args:
             img_bytes: JPEG bytes of the rendered page.
             i: Zero-based page index.
@@ -139,7 +125,10 @@ class ExtractionMixin:
         Returns:
             dict with text/page/layout keys, or an error dict.
         """
-        res = _llm_extract_page(img_bytes, page_num=i + 1, digital_text=digital_text)
+        # Apply image preprocessing (upscale, deskew, denoise, binarize, CLAHE)
+        enhanced_bytes = preprocess_page_image(img_bytes, dpi=OCR_RENDER_DPI)
+
+        res = _llm_extract_page(enhanced_bytes, page_num=i + 1, digital_text=digital_text)
         if res.get("text", ""):
             return {
                 "text": res["text"],
@@ -152,7 +141,7 @@ class ExtractionMixin:
         return {"page": i + 1, "error": "No text extracted"}
 
     def _process_single_page(self, file_path: str, i: int, total_pages: int):
-        """Helper for parallel page processing.
+        """Smart per-page routing using PDF classifier.
 
         Each worker opens its own fitz.Document instance — fitz.Document is not
         thread-safe even for reads, so sharing a single instance across threads
@@ -169,18 +158,15 @@ class ExtractionMixin:
                     logger.info(f"  Skipping page 1 (digital signature metadata only)")
                     return None
 
-                if len(text_raw) > 100:
-                    if self._check_text_quality(text_raw):
-                        logger.info(f"  [P1-3] Page {i+1}: bad text layer → forcing OCR")
-                        pix = page.get_pixmap(dpi=150)
-                        img_bytes = pix.tobytes("jpeg")
-                        # Fall through to OCR path below
-                    else:
-                        # Digital text quality is good — use fast path
-                        return self._extract_digital_page(file_path, page, i)
+                # Per-page classification
+                page_type = classify_page(page, i)
+
+                if page_type == PdfType.NATIVE:
+                    # Digital text quality is good — use fast path
+                    return self._extract_digital_page(file_path, page, i)
                 else:
-                    # Page is scanned/image
-                    pix = page.get_pixmap(dpi=150)
+                    # SCAN_SIMPLE or SCAN_COMPLEX — render and OCR
+                    pix = page.get_pixmap(dpi=OCR_RENDER_DPI)
                     img_bytes = pix.tobytes("jpeg")
 
             # doc is now closed; run the vision call outside the fitz context
@@ -191,10 +177,18 @@ class ExtractionMixin:
             return {"page": i + 1, "error": str(e)}
 
     def extract_pdf(self, file_path):
-        """Hybrid extraction: digital text first, Vision OCR fallback page-by-page (Parallel)."""
+        """Hybrid extraction: digital text first, Vision OCR fallback page-by-page (Parallel).
+
+        Uses PDF classifier for document-level routing hints, but ultimately
+        each page is classified individually for maximum accuracy.
+        """
         chunks = []
         failed_pages = []
         try:
+            # Document-level classification for logging
+            doc_type = classify_pdf(file_path)
+            logger.info(f"  [ROUTE] {os.path.basename(file_path)}: {doc_type.value}")
+
             with fitz.open(file_path) as probe:
                 total_pages = len(probe)
 
@@ -219,3 +213,41 @@ class ExtractionMixin:
             return [], [0]
 
         return chunks, failed_pages
+
+    # ── Non-PDF extraction ────────────────────────────────────────────────
+
+    def extract_docx(self, file_path: str) -> tuple[list, list]:
+        """Extract text and tables from DOCX files."""
+        try:
+            from ingestion.doc_converter import extract_docx
+            return extract_docx(file_path)
+        except ImportError:
+            logger.warning("[DOC] doc_converter module not available")
+            return [], []
+        except Exception as e:
+            logger.error(f"DOCX extraction failed for {file_path}: {e}")
+            return [], [0]
+
+    def extract_image(self, file_path: str) -> tuple[list, list]:
+        """Extract text from image files (JPG/PNG) via LLM Vision."""
+        try:
+            from ingestion.doc_converter import extract_image
+            return extract_image(file_path)
+        except ImportError:
+            logger.warning("[DOC] doc_converter module not available")
+            return [], []
+        except Exception as e:
+            logger.error(f"Image extraction failed for {file_path}: {e}")
+            return [], [0]
+
+    def extract_spreadsheet(self, file_path: str) -> tuple[list, list]:
+        """Extract tables from Excel files (XLS/XLSX)."""
+        try:
+            from ingestion.doc_converter import extract_spreadsheet
+            return extract_spreadsheet(file_path)
+        except ImportError:
+            logger.warning("[DOC] doc_converter module not available")
+            return [], []
+        except Exception as e:
+            logger.error(f"Spreadsheet extraction failed for {file_path}: {e}")
+            return [], [0]

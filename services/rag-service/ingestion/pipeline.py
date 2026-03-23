@@ -222,8 +222,39 @@ class ProductionIngestor(MetadataMixin, ExtractionMixin, IndexingMixin, GraphMix
 
         raw_chunks = []
         failed_pages = []
-        if ext == '.pdf':
-            raw_chunks, failed_pages = self.extract_pdf(file_path)
+        _ext_dispatch = {
+            '.pdf': 'extract_pdf',
+            '.docx': 'extract_docx',
+            '.doc': None,  # handled separately via doc_converter
+            '.jpg': 'extract_image',
+            '.jpeg': 'extract_image',
+            '.png': 'extract_image',
+            '.xls': 'extract_spreadsheet',
+            '.xlsx': 'extract_spreadsheet',
+        }
+        method_name = _ext_dispatch.get(ext)
+        if ext == '.doc':
+            try:
+                from ingestion.doc_converter import extract_doc
+                raw_chunks, failed_pages = extract_doc(file_path)
+            except Exception as e:
+                logger.error(f"DOC extraction failed: {e}")
+                failed_pages = [0]
+        elif method_name and hasattr(self, method_name):
+            raw_chunks, failed_pages = getattr(self, method_name)(file_path)
+        else:
+            logger.warning(f"Unsupported file format: {ext} for {rel_path}")
+            return
+
+        # [doc_boundary] Strip issuing Thông tư/QĐ pages for technical standards
+        if raw_chunks:
+            from ingestion.doc_boundary import strip_issuing_document, detect_technical_standard
+            _std_id = detect_technical_standard(raw_chunks)
+            if _std_id:
+                _before = len(raw_chunks)
+                raw_chunks = strip_issuing_document(raw_chunks, doc_type=None)
+                if len(raw_chunks) < _before:
+                    logger.info(f"  [doc_boundary] '{_std_id}': stripped {_before - len(raw_chunks)} issuing-doc pages")
 
         if failed_pages:
             logger.warning(f"  {rel_path} HAS FAILED PAGES: {failed_pages}")
@@ -300,11 +331,11 @@ class ProductionIngestor(MetadataMixin, ExtractionMixin, IndexingMixin, GraphMix
             if fn_doc_num and re.match(r'^\d+/', fn_doc_num):
                 doc_id = f"{namespace}/{fn_doc_num}"
             else:
-                clean_fn = os.path.basename(file_path).replace(' ', '_').replace('.pdf', '')
+                clean_fn = os.path.splitext(os.path.basename(file_path))[0].replace(' ', '_')
                 doc_id = f"{namespace}/{raw_doc_num}_{clean_fn}" if raw_doc_num else f"{namespace}/{clean_fn}"
 
         if not doc_id:
-            doc_id = f"{namespace}/{os.path.basename(file_path).replace(' ', '_').replace('.pdf', '')}"
+            doc_id = f"{namespace}/{os.path.splitext(os.path.basename(file_path))[0].replace(' ', '_')}"
         doc_id = re.sub(r'[^\w\d\-_/.]', '_', doc_id)
 
         # De-duplication check

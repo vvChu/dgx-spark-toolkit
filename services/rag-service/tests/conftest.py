@@ -35,6 +35,7 @@ async def _test_lifespan(_app):
 
 app.router.lifespan_context = _test_lifespan
 
+
 @pytest.fixture
 def client():
     """TestClient wired to the FastAPI app."""
