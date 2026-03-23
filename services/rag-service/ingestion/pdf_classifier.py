@@ -23,6 +23,19 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Prometheus metrics for classification tracking
+try:
+    from prometheus_client import Counter
+    CLASSIFY_COUNTER = Counter(
+        "pdf_classify_total", "Pages classified by PDF tier",
+        ["tier"]  # NATIVE, SCAN_SIMPLE, SCAN_COMPLEX
+    )
+except (ImportError, ValueError):
+    class _DummyCounter:
+        def labels(self, **kw): return self
+        def inc(self, amount=1): pass
+    CLASSIFY_COUNTER = _DummyCounter()
+
 
 class PdfType(str, Enum):
     """PDF processing tier."""
@@ -99,6 +112,7 @@ def classify_pdf(file_path: str, sample_pages: int = 5) -> PdfType:
         # Mixed content — treat as native if >50% pages have text
         result = PdfType.NATIVE if text_ratio > 0.5 else PdfType.SCAN_SIMPLE
 
+    CLASSIFY_COUNTER.labels(tier=result.value).inc()
     logger.info(
         f"[CLASSIFY] {file_path.split('/')[-1]}: {result.value} "
         f"(avg_chars={avg_chars:.0f}, text_ratio={text_ratio:.0%}, "

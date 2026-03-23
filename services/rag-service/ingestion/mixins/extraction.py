@@ -19,6 +19,19 @@ from ingestion import pipeline_config
 
 logger = logging.getLogger(__name__)
 
+# Prometheus metrics for extraction routing
+try:
+    from prometheus_client import Counter as _Counter
+    ROUTE_COUNTER = _Counter(
+        "extraction_route_total", "Pages routed by extraction type",
+        ["route"]  # digital, ocr_simple, ocr_complex
+    )
+except (ImportError, ValueError):
+    class _DummyC:
+        def labels(self, **kw): return self
+        def inc(self, amount=1): pass
+    ROUTE_COUNTER = _DummyC()
+
 # DPI for rendering scanned pages — configurable via env var
 OCR_RENDER_DPI = int(os.environ.get("OCR_RENDER_DPI", "200"))
 
@@ -163,9 +176,12 @@ class ExtractionMixin:
 
                 if page_type == PdfType.NATIVE:
                     # Digital text quality is good — use fast path
+                    ROUTE_COUNTER.labels(route="digital").inc()
                     return self._extract_digital_page(file_path, page, i)
                 else:
                     # SCAN_SIMPLE or SCAN_COMPLEX — render and OCR
+                    route_label = "ocr_complex" if page_type == PdfType.SCAN_COMPLEX else "ocr_simple"
+                    ROUTE_COUNTER.labels(route=route_label).inc()
                     pix = page.get_pixmap(dpi=OCR_RENDER_DPI)
                     img_bytes = pix.tobytes("jpeg")
 

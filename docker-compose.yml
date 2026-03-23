@@ -30,6 +30,7 @@ services:
       - SURYA_DEVICE=${SURYA_DEVICE:-auto}
       - CHUNK_MAX_CHARS=${CHUNK_MAX_CHARS:-14500}
       - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
+      - REMOVE_WATERMARKS=${REMOVE_WATERMARKS:-0}
     working_dir: /app
     command: ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -100,6 +101,7 @@ services:
       - SURYA_DEVICE=${SURYA_DEVICE:-auto}
       - CHUNK_MAX_CHARS=${CHUNK_MAX_CHARS:-14500}
       - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
+      - REMOVE_WATERMARKS=${REMOVE_WATERMARKS:-0}
 
     volumes:
       - ./services/rag-service:/app

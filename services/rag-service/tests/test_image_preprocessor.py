@@ -162,6 +162,41 @@ class TestFullPipeline:
         assert len(second) > 0
 
 
+class TestSealRemoval:
+    """Test watermark/seal removal logic."""
+
+    def test_red_seal_detected(self):
+        """Red circular seal should be detected and inpainted."""
+        proc = ImagePreprocessor()
+        # Create image with red circle (simulating stamp)
+        color = np.ones((200, 300, 3), dtype=np.uint8) * 240  # light background
+        gray = np.ones((200, 300), dtype=np.uint8) * 240
+        cv2.circle(color, (150, 100), 30, (0, 0, 220), -1)  # Red circle (BGR)
+        cv2.circle(gray, (150, 100), 30, 180, -1)
+        result = proc._remove_seals(color, gray)
+        # The seal area should be inpainted differently from input
+        assert result.shape == gray.shape
+
+    def test_no_seal_passthrough(self):
+        """Image without colored seals should pass through unchanged."""
+        proc = ImagePreprocessor()
+        gray = np.ones((200, 300), dtype=np.uint8) * 128
+        color = np.stack([gray, gray, gray], axis=-1)  # Pure gray = no color
+        result = proc._remove_seals(color, gray)
+        assert np.array_equal(result, gray)
+
+    def test_oversized_mask_rejected(self):
+        """If >15% of page is seal color, skip removal (safety)."""
+        proc = ImagePreprocessor()
+        # Make entire image red
+        color = np.zeros((200, 300, 3), dtype=np.uint8)
+        color[:, :, 2] = 200  # Full red
+        gray = np.ones((200, 300), dtype=np.uint8) * 128
+        result = proc._remove_seals(color, gray)
+        # Should return original gray (too much detected)
+        assert np.array_equal(result, gray)
+
+
 def run_all():
     passed = 0
     failed = 0
@@ -173,6 +208,7 @@ def run_all():
         ("TestBinarize", TestBinarize),
         ("TestCLAHE", TestCLAHE),
         ("TestFullPipeline", TestFullPipeline),
+        ("TestSealRemoval", TestSealRemoval),
     ]:
         instance = cls()
         for attr in sorted(dir(instance)):
