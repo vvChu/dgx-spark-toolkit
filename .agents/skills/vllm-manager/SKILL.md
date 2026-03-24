@@ -9,7 +9,7 @@ This skill provides agents with the knowledge and tools to manage **vLLM model s
 
 | Model | Alias | Port | Container | VRAM | Status |
 |-------|-------|------|-----------|------|--------|
-| Qwen3.5 35B | `rag-core` | 8004 | `qwen35b` | ~55GB | ✅ MoE + FlashInfer |
+| Qwen3.5 35B | `rag-core` | 8004 | `qwen35b` | ~35GB (50G limit) | ✅ MoE + FlashInfer |
 | Qwen3.5 4B | `rag-light` | 8003 | `qwen3-4b` | ~8GB | ✅ Fast Fallback |
 
 > **Tip**: ALWAYS use functional aliases (**rag-core**, **rag-light**) instead of hardcoded model names in your code and requests.
@@ -92,16 +92,19 @@ python3 benchmark_qwen35b.py
 ## Container Launch Commands (Reference)
 
 ```bash
-# Qwen 3.5 35B-FP8 (Optimized for GB10 — 180+ tokens/s)
-docker run -d --name qwen35b --gpus all --ipc host --shm-size 64gb -p 8004:8000 \
+# Qwen 3.5 35B (Optimized for GB10 — via docker-compose)
+# Managed by docker-compose.yml service: vllm-35b
+# Key params: gpu-memory-utilization=0.50, max-model-len=24576, kv-cache-dtype=fp8
+docker compose up -d vllm-35b
+
+# Direct run (reference only):
+docker run -d --name qwen35b --gpus all -p 8004:8000 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
-  -v /home/vvc/Codebase/dgx-spark-toolkit/scripts:/app/scripts \
-  -e MODEL_ID=Qwen/Qwen3.5-35B-A3B-FP8 \
   -e SERVED_MODEL_NAME=rag-core \
   -e PORT=8000 \
-  -e GPU_MEMORY_UTILIZATION=0.78 \
-  hellohal2064/vllm-qwen3.5-gb10:latest \
-  --max-model-len 32768 --enable-prefix-caching --enable-chunked-prefill \
-  --speculative-model Qwen/Qwen3.5-35B-A3B-FP8 --num-speculative-tokens 3 \
-  --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code
+  hellohal2064/vllm-qwen3.5-gb10:blackwell-sm121 \
+  --model /models/model --served-model-name qwen3.5-35b \
+  --gpu-memory-utilization 0.50 --max-model-len 24576 \
+  --kv-cache-dtype fp8 --enable-prefix-caching --enable-chunked-prefill \
+  --trust-remote-code
 ```

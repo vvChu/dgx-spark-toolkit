@@ -1,11 +1,11 @@
 ---
 name: stop-vllm
 command: /stop-vllm
-description: Stop all model containers (9B and 35B)
+description: Stop all vLLM model containers (35B and 4B)
 type: workflow
 category: custom
 enabled: true
-version: v3.0
+version: v4.0
 ---
 
 // turbo-all
@@ -14,5 +14,5 @@ version: v3.0
 
 1. Stop model containers:
 ```bash
-docker stop vllm-9b qwen35b 2>/dev/null && echo "✅ Model containers stopped"
+cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose stop vllm-35b vllm-4b && echo "✅ Model containers stopped (qwen35b, qwen3-4b)"
 ```

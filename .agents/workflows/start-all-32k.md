@@ -1,33 +1,36 @@
 ---
 name: start-all-32k
 command: /start-all-32k
-description: Production mode - Start everything (rag-core + rag-light + RAG Service)
+description: Production mode — Start everything (rag-core 35B + rag-light 4B + RAG stack)
 type: workflow
 category: custom
 enabled: true
-version: v3.0
+version: v4.0
 ---
 
 // turbo-all
 
 ## Steps
 
-1. Start Qwen models:
+1. Start vLLM models + full stack:
 ```bash
-docker compose up -d qwen35b vllm-fallback
+cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose up -d
 ```
 
-2. Start RAG backend:
+2. Show status:
 ```bash
-cd /home/vvc/Codebase/dgx-spark-toolkit && ./switch-vllm.sh prod && docker compose up -d
+echo "⏳ Waiting for services..."
+sleep 10
+docker compose -f /home/vvc/Codebase/dgx-spark-toolkit/docker-compose.yml ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 ```
 
 3. Prime AI Gateway fallbacks:
 ```bash
-for model in "rag-core" "rag-light" "smartest-brain"; do
+for model in "rag-core" "rag-light"; do
   curl -m 10 -s http://localhost:8090/v1/chat/completions \
     -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"model\": \"$model\", \"messages\": [{\"role\": \"user\", \"content\": \"ping\"}], \"max_tokens\": 5}" > /dev/null || true
 done
+echo "✅ All services started (Production mode)"
 ```

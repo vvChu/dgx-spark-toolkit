@@ -1,15 +1,16 @@
 ---
 name: track-ingestion
 command: /track-ingestion
-description: Mở màn hình RAG Ingestion Live Tracking
+description: Live tracking of RAG ingestion pipeline progress
 type: workflow
 category: custom
 enabled: true
-version: v3.0
+version: v4.0
 ---
 
-Chạy lệnh sau trong terminal để mở màn hình theo dõi tiến trình RAG Ingestion thời gian thực (nhấn Ctrl+C để thoát bất cứ lúc nào):
+Theo dõi tiến trình RAG Ingestion thời gian thực (Ctrl+C để thoát):
 
+1. Show ingestion watcher logs (live):
 ```bash
-python3 /home/vvc/Codebase/dgx-spark-toolkit/track_ingestion.py
+docker compose -f /home/vvc/Codebase/dgx-spark-toolkit/docker-compose.yml logs -f --tail 100 rag-watcher
 ```

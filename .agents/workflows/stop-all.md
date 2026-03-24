@@ -5,24 +5,19 @@ description: Stop all vLLM model containers and the Docker Compose stack
 type: workflow
 category: custom
 enabled: true
-version: v3.0
+version: v4.0
 ---
 
 // turbo-all
 
 ## Steps
 
-1. Stop vLLM containers:
+1. Stop Docker Compose stack (includes models):
 ```bash
-docker stop qwen35-vllm qwen35b 2>/dev/null; echo "✅ vLLM containers stopped"
+cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose down; echo "✅ All services stopped"
 ```
 
-2. Stop Docker Compose stack:
-```bash
-cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose down 2>/dev/null || docker-compose down; echo "✅ Stack stopped"
-```
-
-3. Confirm:
+2. Confirm:
 ```bash
 echo "🛑 All services stopped. Restart with: /start-all"
 ```

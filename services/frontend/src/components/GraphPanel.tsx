@@ -37,7 +37,7 @@ export default function GraphPanel({ graphData, onNodeClick, onNodeRightClick }:
             const bckgDimensions = [textWidth, fontSize].map((n: number) => n + fontSize * 0.2);
 
             ctx.fillStyle = 'rgba(10, 10, 20, 0.8)';
-            ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y - bckgDimensions[1] / 2, ...bckgDimensions);
+            ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y - bckgDimensions[1] / 2, bckgDimensions[0], bckgDimensions[1]);
 
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';

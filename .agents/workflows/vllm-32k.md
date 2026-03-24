@@ -1,23 +1,23 @@
 ---
 name: vllm-32k
 command: /vllm-32k
-description: Start vLLM 9B model only with 32k context (640 tokens/s)
+description: Start vLLM model containers only (35B + 4B), no RAG stack
 type: workflow
 category: custom
 enabled: true
-version: v3.0
+version: v4.0
 ---
 
 // turbo-all
 
 ## Steps
 
-1. Configure 32k context and restart service:
+1. Start model containers via compose:
 ```bash
-cd /home/vvc/Codebase/dgx-spark-toolkit && ./switch-vllm.sh prod
+cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose up -d vllm-35b vllm-4b
 ```
 
 2. Confirm status:
 ```bash
-docker ps --filter name=vllm-9b
+docker ps --filter name=qwen --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 ```
