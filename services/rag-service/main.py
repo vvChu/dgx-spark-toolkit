@@ -10,6 +10,7 @@ from core.config import get_settings
 from core.logging_config import setup_logging
 from api.routers import search, chat, admin, analysis
 from api.routers import stats, graph, preview, evaluation
+from api.routers import chat_stream
 
 __version__ = "2.0.0"
 
@@ -57,6 +58,11 @@ app.include_router(stats.router)
 app.include_router(graph.router)
 app.include_router(preview.router)
 app.include_router(evaluation.router)
+app.include_router(chat_stream.router)
+
+# Rate Limiting
+from core.rate_limiter import RateLimitMiddleware
+app.add_middleware(RateLimitMiddleware)
 
 # Monitoring - Prometheus Metrics
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -93,14 +99,24 @@ async def health(request: Request):
     """Real health check — verifies Milvus and Neo4j connectivity."""
     checks = {}
 
-    # Milvus
+    # Milvus — with auto-reconnect on channel failure
     milvus_client = getattr(request.app.state, "milvus_client", None)
     if milvus_client:
         try:
             await milvus_client.list_collections()
             checks["milvus"] = "ok"
         except Exception as e:
-            checks["milvus"] = f"error: {e}"
+            err_msg = str(e)
+            checks["milvus"] = f"error: {err_msg}"
+            # Auto-reconnect on permanent channel/connection failures
+            if "Channel is closed" in err_msg or "not ready" in err_msg:
+                try:
+                    from core.database import reconnect_milvus, state
+                    await reconnect_milvus()
+                    request.app.state.milvus_client = state.milvus_client
+                    checks["milvus"] = "reconnected"
+                except Exception as re_err:
+                    checks["milvus"] = f"reconnect failed: {re_err}"
     else:
         checks["milvus"] = "not initialized"
 
@@ -115,7 +131,7 @@ async def health(request: Request):
     else:
         checks["neo4j"] = "not initialized"
 
-    all_ok = all(v == "ok" for v in checks.values())
+    all_ok = all(v in ("ok", "reconnected") for v in checks.values())
     status_code = 200 if all_ok else 503
     return JSONResponse(
         status_code=status_code,

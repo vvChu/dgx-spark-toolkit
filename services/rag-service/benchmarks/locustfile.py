@@ -92,3 +92,93 @@ def on_test_start(environment, **kwargs):
 @events.test_stop.add_listener
 def on_test_stop(environment, **kwargs):
     print(f"🏁 Load Test Finished. Exporting results...")
+
+
+# ── RAG Service Direct Testing ──────────────────────────────────────────
+RAG_QUERIES = [
+    "Quy chuẩn phòng cháy chữa cháy cho nhà cao tầng",
+    "Quy định về an toàn lao động trong xây dựng",
+    "Tiêu chuẩn BIM ISO 19650 áp dụng tại Việt Nam",
+    "Nghị định 15/2021 về quản lý dự án đầu tư xây dựng",
+    "Thông tư hướng dẫn quy hoạch xây dựng đô thị",
+    "Quy chuẩn kỹ thuật quốc gia về thiết kế kết cấu thép",
+]
+
+
+class RAGServiceTester(HttpUser):
+    """Load-test RAG service endpoints directly (not via AI Gateway).
+
+    Usage:
+        locust -f locustfile.py --host http://localhost:8005 RAGServiceTester
+    """
+    wait_time = between(0.5, 2)
+
+    @task(5)
+    def test_search(self):
+        query = random.choice(RAG_QUERIES)
+        with self.client.post(
+            "/search",
+            json={"query": query, "limit": 5, "use_hyde": False, "use_cache": True},
+            name="RAG: /search",
+            catch_response=True,
+        ) as resp:
+            if resp.status_code == 200:
+                data = resp.json()
+                cached = data.get("cached", False)
+                count = len(data.get("results", []))
+                if cached:
+                    events.request.fire(
+                        request_type="RAG_METRIC", name="CacheHit:/search",
+                        response_time=resp.elapsed.total_seconds() * 1000,
+                        response_length=count,
+                    )
+                resp.success()
+            elif resp.status_code == 429:
+                resp.failure("Rate limited")
+            else:
+                resp.failure(f"HTTP {resp.status_code}")
+
+    @task(3)
+    def test_chat(self):
+        query = random.choice(RAG_QUERIES)
+        with self.client.post(
+            "/chat",
+            json={"query": query, "language": "vi"},
+            name="RAG: /chat",
+            catch_response=True,
+        ) as resp:
+            if resp.status_code == 200:
+                resp.success()
+            elif resp.status_code == 429:
+                resp.failure("Rate limited")
+            else:
+                resp.failure(f"HTTP {resp.status_code}")
+
+    @task(2)
+    def test_chat_stream(self):
+        query = random.choice(RAG_QUERIES)
+        with self.client.post(
+            "/chat/stream",
+            json={"query": query, "language": "vi"},
+            name="RAG: /chat/stream",
+            catch_response=True,
+            stream=True,
+        ) as resp:
+            if resp.status_code == 200:
+                # Read the SSE stream
+                full_content = ""
+                for line in resp.iter_lines():
+                    if line and line.startswith("data: "):
+                        full_content += line[6:]
+                        if "[DONE]" in line:
+                            break
+                resp.success()
+            elif resp.status_code == 429:
+                resp.failure("Rate limited")
+            else:
+                resp.failure(f"HTTP {resp.status_code}")
+
+    @task(1)
+    def test_health(self):
+        self.client.get("/health", name="RAG: /health")
+

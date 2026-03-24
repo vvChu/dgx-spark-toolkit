@@ -47,14 +47,8 @@ def _send_milestone_notification(ctx):
         if count and file_list:
             from core.notifier import notifier
             import asyncio
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.ensure_future(notifier.notify_milestone(count, file_list))
-                else:
-                    loop.run_until_complete(notifier.notify_milestone(count, file_list))
-            except RuntimeError:
-                asyncio.run(notifier.notify_milestone(count, file_list))
+            asyncio.run(notifier.notify_milestone(count, file_list))
             logger.info(f"Sent Telegram notification for milestone {count}")
     except Exception as e:
         logger.error(f"Failed to send milestone notification: {e}")
+

@@ -127,13 +127,14 @@ class RetrievalService:
             if hyde_doc:
                 search_query = f"{rewritten_query}\n{hyde_doc}"
 
-        # embed_query now returns a dictionary containing 'dense' and 'sparse'
-        query_embeddings = await loop.run_in_executor(None, model.embed_query, search_query)
+        # Only re-embed if query was actually modified by rewrite/HyDE
+        if search_query != query:
+            query_embeddings = await loop.run_in_executor(None, model.embed_query, search_query)
         query_vector_np = np.array(query_embeddings["dense"])
         query_vector = query_embeddings["dense"]
         sparse_query = query_embeddings["sparse"]
 
-        if use_cache:
+        if use_cache and search_query != query:
             cached_results = _semantic_cache.get().get(search_query, query_vector_np)
             if cached_results:
                 return {"results": cached_results, "cached": True}

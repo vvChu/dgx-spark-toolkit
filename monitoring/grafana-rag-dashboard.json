@@ -333,6 +333,98 @@
                     "legendFormat": "Fallback Requests"
                 }
             ]
+        },
+        {
+            "title": "Rate Limit Rejections (429/min)",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 48
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(rag_rate_limit_rejected_total[5m])) by (path_group) * 300",
+                    "legendFormat": "{{path_group}}"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "color": {"mode": "palette-classic"},
+                    "custom": {"fillOpacity": 30}
+                }
+            }
+        },
+        {
+            "title": "Semantic Cache Hit Rate (%)",
+            "type": "gauge",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 48
+            },
+            "targets": [
+                {
+                    "expr": "rate(rag_semantic_cache_hits_total[5m]) / (rate(http_requests_total{handler=\"/search\"}[5m]) + 0.001) * 100",
+                    "legendFormat": "Cache Hit %"
+                }
+            ],
+            "fieldConfig": {
+                "defaults": {
+                    "max": 100,
+                    "min": 0,
+                    "unit": "percent",
+                    "thresholds": {
+                        "steps": [
+                            {"color": "red", "value": 0},
+                            {"color": "yellow", "value": 20},
+                            {"color": "green", "value": 50}
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "title": "Streaming vs Blocking Chat Latency",
+            "type": "timeseries",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 48
+            },
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{handler=\"/chat\"}[5m]))",
+                    "legendFormat": "/chat P50"
+                },
+                {
+                    "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{handler=\"/chat/stream\"}[5m]))",
+                    "legendFormat": "/chat/stream P50"
+                },
+                {
+                    "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{handler=\"/chat\"}[5m]))",
+                    "legendFormat": "/chat P95"
+                },
+                {
+                    "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{handler=\"/chat/stream\"}[5m]))",
+                    "legendFormat": "/chat/stream P95"
+                }
+            ]
         }
     ],
     "schemaVersion": 39,

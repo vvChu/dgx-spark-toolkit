@@ -53,7 +53,7 @@ class TestSemanticCache:
             vec = np.zeros(3)
             vec[i % 3] = 1.0
             cache.set(f"q{i}", vec, [{"text": f"r{i}"}])
-        assert len(cache.cache) == 2
+        assert len(cache._keys) == 2
 
     def test_expired_entries_cleaned(self):
         cache = SemanticCache(threshold=0.9, ttl_seconds=0)

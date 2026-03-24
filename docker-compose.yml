@@ -37,9 +37,9 @@ services:
       - "8005:8000"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
-      interval: 60s
-      timeout: 30s
-      retries: 10
+      interval: 30s
+      timeout: 10s
+      retries: 3
       start_period: 120s
     depends_on:
       milvus-standalone:
@@ -79,9 +79,9 @@ services:
       - MKL_NUM_THREADS=4
       - MAX_WORKERS=${MAX_WORKERS:-1}
       - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
-      - VLLM_MODEL=qwen3.5-35b
-      - VISION_MODEL=qwen3.5-35b
-      - JSON_MODEL=qwen3.5-35b
+      - VLLM_MODEL=${VLLM_MODEL_CORE:-rag-core}
+      - VISION_MODEL=${VLLM_MODEL_CORE:-rag-core}
+      - JSON_MODEL=${VLLM_MODEL_CORE:-rag-core}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
       - NEO4J_URI=bolt://neo4j-graph:7687
       - NEO4J_USER=neo4j
@@ -102,6 +102,9 @@ services:
       - CHUNK_MAX_CHARS=${CHUNK_MAX_CHARS:-14500}
       - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
       - REMOVE_WATERMARKS=${REMOVE_WATERMARKS:-0}
+      - HF_HOME=/home/appuser/.cache/huggingface
+      - HF_HUB_DOWNLOAD_TIMEOUT=5
+      - EMBEDDING_MODEL=/home/appuser/.cache/huggingface/hub/models--BAAI--bge-m3/snapshots/5617a9f61b028005a4858fdac845db406aefb181
 
     volumes:
       - ./services/rag-service:/app
@@ -121,11 +124,11 @@ services:
       ai-gateway:
         condition: service_started
     deploy:
-      replicas: 3
+      replicas: 2
       resources:
         limits:
           cpus: '6'
-          memory: 20G
+          memory: 14G
         reservations:
           cpus: '2'
           memory: 8G
@@ -402,7 +405,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 80G
+          memory: 50G
         reservations:
           devices:
             - driver: nvidia
@@ -419,7 +422,7 @@ services:
       - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
     entrypoint: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
     command: >
-      --model /models/model/snapshots/0b2752837483aa34b3db6e83e151b150c0e00e49
+      --model /models/model/snapshots/${QWEN35B_SNAPSHOT:-0b2752837483aa34b3db6e83e151b150c0e00e49}
       --served-model-name qwen3.5-35b
       --host 0.0.0.0
       --port 8000

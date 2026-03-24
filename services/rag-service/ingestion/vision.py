@@ -463,9 +463,9 @@ def call_vision_fallback(img_bytes, ocr_text, page_num):
                 json=payload,
             )
 
-            if resp.status_code == 429:
+            if resp.status_code == 429 or resp.status_code >= 500:
                 wait_time = retry_delay * (2 ** attempt)
-                logger.warning(f"Rate limited (429) on page {page_num}. Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
+                logger.warning(f"Server error ({resp.status_code}) on page {page_num}. Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
                 time.sleep(wait_time)
                 continue
 

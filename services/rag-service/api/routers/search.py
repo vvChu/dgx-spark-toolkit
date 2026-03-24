@@ -1,10 +1,6 @@
 from fastapi import APIRouter, Depends
 from models.schemas import SearchRequest, SearchResponse
-from core.database import get_neo4j_repo, get_milvus_repo
-from repositories.neo4j_repo import Neo4jRepository
-from repositories.milvus_repo import MilvusRepository
-from services.retrieval_service import RetrievalService
-from retrieval.query_rewriter import rewrite_query
+from core.database import get_retrieval_service
 
 import logging
 
@@ -17,13 +13,11 @@ router = APIRouter()
 @router.post("/retrieve", tags=["Retrieval"], include_in_schema=False)
 async def search_endpoint(
     request: SearchRequest,
-    milvus_repo: MilvusRepository = Depends(get_milvus_repo),
-    neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo)
+    service=Depends(get_retrieval_service),
 ):
     """
     Perform semantic search with optional reranking and graph augmentation.
     """
-    service = RetrievalService(milvus_repo, neo4j_repo)
     return await service.search(
         query=request.query,
         limit=request.limit,

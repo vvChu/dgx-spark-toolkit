@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 class AppState:
     neo4j_driver = None
     milvus_client = None
+    _milvus_uri: str = None
     state_manager: PostgresStateManager = None
     http_client: httpx.AsyncClient = None
     redis_queue = None
@@ -25,6 +26,26 @@ class AppState:
 
 
 state = AppState()
+
+
+async def _create_milvus_client(uri: str) -> AsyncMilvusClient:
+    """Create a new AsyncMilvusClient. Factored out for reconnect reuse."""
+    return AsyncMilvusClient(uri=uri)
+
+
+async def reconnect_milvus():
+    """Tear down a dead Milvus client and create a fresh one.
+
+    Called automatically by the /health endpoint when it detects
+    'Channel is closed' or similar unrecoverable gRPC errors.
+    """
+    if state.milvus_client:
+        try:
+            await state.milvus_client.close()
+        except Exception:
+            pass  # channel is already dead, ignore
+    state.milvus_client = await _create_milvus_client(state._milvus_uri)
+    logger.warning("Milvus client reconnected to %s", state._milvus_uri)
 
 
 @asynccontextmanager
@@ -49,7 +70,8 @@ async def lifespan(app: FastAPI):
     # Init Milvus
     try:
         uri = f"http://{settings.MILVUS_HOST}:{settings.MILVUS_PORT}"
-        state.milvus_client = AsyncMilvusClient(uri=uri)
+        state._milvus_uri = uri
+        state.milvus_client = await _create_milvus_client(uri)
         logger.info(f"Successfully connected to Milvus at {uri}.")
     except Exception as e:
         logger.error(f"Failed to connect to Milvus: {e}")
@@ -162,3 +184,22 @@ async def get_compliance_service(
 
     graph_rag = AdvancedGraphRAG(neo4j_repo.driver, http_client)
     return ComplianceService(milvus_repo, graph_rag, http_client)
+
+
+async def get_retrieval_service(
+    milvus_repo: MilvusRepository = Depends(get_milvus_repo),
+    neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
+) -> "RetrievalService":
+    """Dependency to inject the RetrievalService."""
+    from services.retrieval_service import RetrievalService
+    return RetrievalService(milvus_repo, neo4j_repo)
+
+
+async def get_chat_service(
+    milvus_repo: MilvusRepository = Depends(get_milvus_repo),
+    neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
+    http_client: httpx.AsyncClient = Depends(get_http_client),
+) -> "ChatService":
+    """Dependency to inject the ChatService."""
+    from services.chat_service import ChatService
+    return ChatService(milvus_repo, neo4j_repo, http_client)

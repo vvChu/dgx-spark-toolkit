@@ -17,7 +17,7 @@ def run(doc: ProcessedDocument, ctx) -> ProcessedDocument:
     chunker = ctx.chunker
 
     # [doc_boundary] Strip issuing Thông tư/QĐ pages for QCVN/TCVN/tiêu chuẩn ngành
-    doc_type = doc.metadata.type if doc.metadata else None
+    doc_type = doc.metadata.doc_type if doc.metadata else None
     doc.raw_pages = strip_issuing_document(doc.raw_pages, doc_type=doc_type)
 
     semantic_chunks = []

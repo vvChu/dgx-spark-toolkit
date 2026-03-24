@@ -61,7 +61,7 @@ with engine.begin() as conn:
         SET status = 'PENDING',
             updated_at = NOW(),
             completed_timestamp = NULL,
-            error = NULL
+            content_hash = ''
     """))
 
     after = conn.execute(text("SELECT status, COUNT(*) FROM ingestion_state GROUP BY status ORDER BY status")).fetchall()
