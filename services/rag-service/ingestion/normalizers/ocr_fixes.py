@@ -28,11 +28,22 @@ def normalize_ocr_spacing(text: str) -> str:
     Detects lines where Vietnamese characters are separated by excessive spaces
     (e.g. 'B Ộ  XÂY D Ự NG' → 'BỘ XÂY DỰNG') and collapses them.
 
+    Also strips OCR noise characters (box-drawing, geometric shapes, etc.)
+    that are never valid in Vietnamese legal text.
+
     Only applies to lines where >30% of tokens are single characters,
     to avoid collapsing normal spaced text.
     """
     if not text:
         return text
+
+    # Strip OCR noise characters — box drawing, geometric shapes, scan artifacts
+    # These are never valid in Vietnamese legal/technical text
+    text = re.sub(r'[▯◻⬜█▶◀▲▼♦♣♠♥←→↑↓│┤┐└┘┌├─┼┴┬┌╔╗╚╝║═╬╣╠╩╦▒░▓■□●○◇◆★☆✓✗✘☐☑☒]', '', text)
+    # Strip isolated underscores/tildes that are scan noise (not in URLs or code)
+    text = re.sub(r'(?<!\w)[_~]{3,}(?!\w)', '', text)
+    # Collapse resulting multi-spaces
+    text = re.sub(r'  +', ' ', text)
 
     lines = text.split('\n')
     fixed_lines = []

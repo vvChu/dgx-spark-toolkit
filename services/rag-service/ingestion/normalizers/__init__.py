@@ -28,6 +28,7 @@ from ingestion.normalizers.boilerplate import (
 from ingestion.normalizers.structure import (
     rejoin_broken_headings,
     rejoin_paragraphs,
+    rejoin_cross_page_paragraphs,
     normalize_section_headings,
     format_legal_structure,
 )
@@ -55,6 +56,7 @@ __all__ = [
     # Structure
     'rejoin_broken_headings',
     'rejoin_paragraphs',
+    'rejoin_cross_page_paragraphs',
     'normalize_section_headings',
     'format_legal_structure',
     # Tables

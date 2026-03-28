@@ -34,6 +34,7 @@ from ingestion.normalizers.boilerplate import (  # noqa: F401
 from ingestion.normalizers.structure import (  # noqa: F401
     rejoin_broken_headings,
     rejoin_paragraphs,
+    rejoin_cross_page_paragraphs,
     normalize_section_headings,
     format_legal_structure,
 )

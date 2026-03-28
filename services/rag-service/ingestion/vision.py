@@ -429,6 +429,9 @@ def call_vision_fallback(img_bytes, ocr_text, page_num):
         "3. Giữ nguyên tất cả số điều khoản (Điều X, X.Y, X.Y.Z), số liệu kỹ thuật, đơn vị đo lường.\n"
         "4. Giữ nguyên cấu trúc 'Điều', 'Chương', 'Mục', 'Phần' và thụt lề.\n"
         "5. NẾU TRANG CÓ BẢNG BIỂU, BẮT BUỘC chuyển sang MARKDOWN TABLE, giữ nguyên chính xác từng ô dữ liệu.\n"
+        "6. SỬA LỖI DÍNH CHỮ: Nếu thấy các từ bị dính không có khoảng trắng (ví dụ: 'cóthể', 'BộXây'), hãy tách chúng đúng cách.\n"
+        "7. NỐI LUỒNG VĂN BẢN: Nếu thấy Header/Footer/Số trang xen giữa một câu đang dở, hãy bỏ chúng đi và nối câu lại.\n"
+        "8. XÓA RÁC TRANG: Bỏ qua các nội dung lặp (tiêu đề đầu trang, số trang 'Trang X/Y', watermark).\n"
         "Trả về CHỈ nội dung đã sao chép, không giải thích, không thêm bất kỳ nội dung nào ngoài tài liệu."
     )
 

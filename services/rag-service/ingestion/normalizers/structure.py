@@ -1,7 +1,8 @@
 """Legal document structure formatting utilities.
 
 Handles paragraph rejoining, heading detection, section number splitting,
-and conversion of Vietnamese legal markers to Markdown headings.
+cross-page text flow joining, and conversion of Vietnamese legal markers
+to Markdown headings.
 """
 import re
 import logging
@@ -293,3 +294,117 @@ def format_legal_structure(text: str) -> str:
         result.append(line)
 
     return "\n".join(result)
+
+
+# ---------------------------------------------------------------------------
+# Cross-Page Text Flow Joining
+# ---------------------------------------------------------------------------
+
+# Signals that a page's text ends mid-sentence
+_CROSS_PAGE_CONT_END_RE = re.compile(
+    r"""[a-zàáảãạăắằẳẵặâấầẩẫậđèéẻẽẹêếềểễệ"""
+    r"""ìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữự"""
+    r"""ỳýỷỹỵ0-9,;:\-–]\s*$""",
+    re.UNICODE,
+)
+
+# Signals that the next page's text starts as a continuation
+_CROSS_PAGE_CONT_START_RE = re.compile(
+    r'^[a-zàáảãạăắằẳẵặâấầẩẫậđèéẻẽẹêếềểễệ'
+    r'ìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữự'
+    r'ỳýỷỹỵ]',
+    re.UNICODE,
+)
+
+
+def rejoin_cross_page_paragraphs(page_texts: list[str]) -> list[str]:
+    """Join text that was broken across page boundaries.
+
+    When a page ends with a continuation signal (lowercase letter, comma,
+    semicolon, digit) AND the next page starts with a lowercase letter,
+    the broken sentence is merged.
+
+    Args:
+        page_texts: List of extracted text per page (index = page number).
+
+    Returns:
+        List of text per page, with cross-page breaks healed.
+        Joined text is appended to the earlier page; later page has the
+        joined portion removed.
+
+    Examples:
+        Page N ends:  "...quy định về việc xây dựng công trình có"
+        Page N+1 starts: "chiều cao trên 15 tầng..."
+        → Merged: Page N gets "...có chiều cao trên 15 tầng"
+
+    Safety:
+        - Does NOT join if next page starts with a structural marker
+          (Điều, Chương, numbered list, heading, table)
+        - Only joins the FIRST line of the next page
+        - Preserves all remaining content on both pages
+    """
+    if not page_texts or len(page_texts) < 2:
+        return page_texts
+
+    result = list(page_texts)  # Copy to avoid mutating input
+
+    for i in range(len(result) - 1):
+        current = result[i]
+        next_page = result[i + 1]
+
+        if not current or not next_page:
+            continue
+
+        # Get last non-empty line of current page
+        current_lines = current.rstrip().split('\n')
+        last_line = ''
+        for line in reversed(current_lines):
+            if line.strip():
+                last_line = line
+                break
+
+        if not last_line:
+            continue
+
+        # Get first non-empty line of next page
+        next_lines = next_page.lstrip().split('\n')
+        first_line = ''
+        first_line_idx = 0
+        for idx, line in enumerate(next_lines):
+            if line.strip():
+                first_line = line.strip()
+                first_line_idx = idx
+                break
+
+        if not first_line:
+            continue
+
+        # Check: current page ends with continuation signal
+        if not _CROSS_PAGE_CONT_END_RE.search(last_line):
+            continue
+
+        # Check: next page starts with continuation (lowercase)
+        if not _CROSS_PAGE_CONT_START_RE.match(first_line):
+            continue
+
+        # Safety: don't join if next page starts with structural element
+        if _is_block_start(first_line):
+            continue
+
+        # Merge: append first line of next page to current page
+        merged_line = last_line.rstrip() + ' ' + first_line
+        current_lines_clean = [l for l in current_lines if l.strip()]
+        if current_lines_clean:
+            current_lines_clean[-1] = merged_line
+        result[i] = '\n'.join(current_lines_clean)
+
+        # Remove the joined line from next page
+        remaining = next_lines[first_line_idx + 1:]
+        result[i + 1] = '\n'.join(remaining).lstrip()
+
+        logger.debug(
+            f"[CROSS-PAGE] Joined p{i+1}→p{i+2}: "
+            f"...{last_line[-30:]} + {first_line[:30]}..."
+        )
+
+    return result
