@@ -9,8 +9,8 @@ This skill provides agents with the knowledge and tools to manage **vLLM model s
 
 | Model | Alias | Port | Container | VRAM | Status |
 |-------|-------|------|-----------|------|--------|
-| Qwen3.5 35B | `rag-core` | 8004 | `qwen35b` | ~35GB (50G limit) | ✅ MoE + FlashInfer |
-| Qwen3.5 4B | `rag-light` | 8003 | `qwen3-4b` | ~8GB | ✅ Fast Fallback |
+| Qwen3.5 35B | `rag-core` | 8004 | `qwen35b` | ~35GB (50G limit) | ✅ MoE + FlashInfer + Tool Calling |
+| Qwen3.5 9B AWQ | `rag-light` | 8003 | `qwen3-9b` | ~10GB | ✅ Fast Fallback (AWQ 4-bit) |
 
 > **Tip**: ALWAYS use functional aliases (**rag-core**, **rag-light**) instead of hardcoded model names in your code and requests.
 
@@ -35,7 +35,7 @@ docker ps -a --filter "name=qwen" --format "table {{.Names}}\t{{.Status}}\t{{.Po
 
 # Check model readiness (direct)
 curl -s http://localhost:8004/v1/models | jq   # Core (35B)
-curl -s http://localhost:8003/v1/models | jq   # Light (4B)
+curl -s http://localhost:8003/v1/models | jq   # Light (9B)
 
 # Check via AI Gateway (Functional Aliases)
 curl -s http://localhost:8090/v1/models -H "Authorization: Bearer $LITELLM_MASTER_KEY" | jq

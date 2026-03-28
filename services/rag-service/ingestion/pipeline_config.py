@@ -12,15 +12,19 @@ import os
 # Pure env-var reads (no Settings dependency) — safe at module level
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "2"))
 MAX_DIGITAL_WORKERS = int(os.getenv("MAX_DIGITAL_WORKERS", "10"))
-SOURCE_DIR = "/app/data/legal_docs_source"
+SOURCE_DIR = os.getenv("SOURCE_DIR", "/app/data/legal_docs_source")
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j-graph:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASS = os.getenv("NEO4J_PASSWORD") or os.getenv("NEO4J_PASS", "")
-JSON_MODEL = os.getenv("JSON_MODEL", "qwen3.5-35b")
+JSON_MODEL = os.getenv("JSON_MODEL", "rag-core")
+# Free-tier-first models: use Google Direct API free quota, fallback to rag-core when exhausted
+SYNTHETIC_QUERY_MODEL = os.getenv("SYNTHETIC_QUERY_MODEL", "gemma-3-27b")       # ~56K RPD free (4 keys)
+TEXT_METADATA_MODEL = os.getenv("TEXT_METADATA_MODEL", "gemini-3.1-flash-lite")  # ~4K RPD free, 2.8s latency
+RELATIONSHIP_MODEL = os.getenv("RELATIONSHIP_MODEL", "gemma-3-27b")             # ~84K RPD free, text-only (no competition with OCR)
 
 # Image preprocessing & OCR rendering
 IMAGE_PREPROCESS = os.getenv("IMAGE_PREPROCESS", "1") == "1"
-OCR_RENDER_DPI = int(os.getenv("OCR_RENDER_DPI", "200"))
+OCR_RENDER_DPI = int(os.getenv("OCR_RENDER_DPI", "300"))
 
 # Settings-dependent values — populated on first access
 MILVUS_HOST: str = ""

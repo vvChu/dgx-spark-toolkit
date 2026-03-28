@@ -13,8 +13,7 @@ def run(doc: ProcessedDocument, ctx) -> ProcessedDocument:
         return doc
 
     if doc.failed_pages:
-        logger.info("  Skipping export — document has failed pages")
-        return doc
+        logger.warning(f"  Exporting with {len(doc.failed_pages)} failed pages (partial content)")
 
     doc_id = get_final_doc_id(doc)
     meta = doc.metadata.to_dict()

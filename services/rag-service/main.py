@@ -10,7 +10,7 @@ from core.config import get_settings
 from core.logging_config import setup_logging
 from api.routers import search, chat, admin, analysis
 from api.routers import stats, graph, preview, evaluation
-from api.routers import chat_stream
+from api.routers import chat_stream, traces
 
 __version__ = "2.0.0"
 
@@ -59,6 +59,7 @@ app.include_router(graph.router)
 app.include_router(preview.router)
 app.include_router(evaluation.router)
 app.include_router(chat_stream.router)
+app.include_router(traces.router)
 
 # Rate Limiting
 from core.rate_limiter import RateLimitMiddleware

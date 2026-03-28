@@ -27,5 +27,6 @@ async def search_endpoint(
         year=request.year,
         doc_number=request.doc_number,
         use_hyde=request.use_hyde,
-        use_cache=request.use_cache
+        use_cache=request.use_cache,
+        session_id=request.session_id,
     )

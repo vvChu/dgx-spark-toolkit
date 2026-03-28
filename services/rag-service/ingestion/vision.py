@@ -475,7 +475,7 @@ def call_vision_fallback(img_bytes, ocr_text, page_num):
                 logger.warning(f"Invalid API response in vision fallback: {data}")
                 return ""
             msg = data['choices'][0].get('message', {})
-            content = msg.get('content', "")
+            content = msg.get('content') or ""
             return clean_llm_text(content)
         except Exception as e:
             if attempt == max_retries - 1:
@@ -488,7 +488,11 @@ def call_vision_fallback(img_bytes, ocr_text, page_num):
 
 
 def call_table_vision_llm(img_data, ocr_text, page_num, is_pil=False):
-    """Specialized call to rag-core to convert a table image into a clean Markdown table."""
+    """Specialized call to convert a table image into a clean Markdown table.
+
+    Uses gemini-3-flash (fast remote) as primary, falls back to rag-core (local GPU)
+    if the remote model fails. This frees GPU for the more critical OCR extraction task.
+    """
     import base64
     from io import BytesIO
 
@@ -516,34 +520,47 @@ def call_table_vision_llm(img_data, ocr_text, page_num, is_pil=False):
     api_key = os.environ.get("LITELLM_MASTER_KEY")
     client = _get_vision_http_client()
 
-    payload = {
-        "model": "rag-core",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]
-            }
-        ],
-        "max_tokens": 8192,
-        "temperature": 0.0
-    }
+    # Model chain: gemini-3-flash (fast remote) → rag-core (local GPU fallback)
+    _TABLE_MODEL = os.environ.get("TABLE_VISION_MODEL", "gemini-3-flash")
+    models_to_try = [_TABLE_MODEL]
+    if _TABLE_MODEL != "rag-core":
+        models_to_try.append("rag-core")
 
-    try:
-        resp = client.post(
-            f"{gateway_url}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = data['choices'][0]['message'].get('content', "")
-        return clean_llm_text(content)
-    except Exception as e:
-        logger.error(f"Table-to-Markdown LLM call failed for page {page_num}: {e}")
-        return ocr_text
+    messages_content = [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+    ]
+
+    for model in models_to_try:
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": messages_content}],
+            "max_tokens": 8192,
+            "temperature": 0.0
+        }
+        if model in ("rag-core", "qwen3.5-35b"):
+            payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+
+        try:
+            import time as _time
+            t0 = _time.time()
+            resp = client.post(
+                f"{gateway_url}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = data['choices'][0]['message'].get('content') or ""
+            elapsed = _time.time() - t0
+            logger.info(f"  Table→Markdown [{model}] page {page_num} OK ({elapsed:.1f}s, {len(content)} chars)")
+            return clean_llm_text(content)
+        except Exception as e:
+            logger.warning(f"Table-to-Markdown {model} failed for page {page_num}: {e}")
+            continue
+
+    logger.error(f"Table-to-Markdown ALL models failed for page {page_num}")
+    return ocr_text
 
 
 def hybrid_extract_page(img_bytes, page_num, total_pages):
@@ -554,12 +571,24 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
     if OCR_PROCESSED_COUNT:
         OCR_PROCESSED_COUNT.inc()
 
-    # Apply image preprocessing (upscale, deskew, denoise, binarize, CLAHE)
+    # Apply image preprocessing — full mode for Surya OCR (with binarize)
+    page_difficulty = {}  # Will hold difficulty features for dynamic thresholding
     try:
-        from ingestion.image_preprocessor import preprocess_page_image
-        enhanced_bytes = preprocess_page_image(img_bytes, dpi=200)
+        from ingestion.image_preprocessor import preprocess_page_image, preprocess_for_llm, compute_page_difficulty
+        enhanced_bytes = preprocess_page_image(img_bytes, dpi=200, mode="full")
+        # Keep a lightly processed copy for LLM Vision fallback (no binarize)
+        llm_enhanced_bytes = preprocess_for_llm(img_bytes, dpi=200)
+        # Compute page difficulty features for dynamic thresholding
+        page_difficulty = compute_page_difficulty(img_bytes)
+        if page_difficulty.get('difficulty_score', 0) > 0:
+            logger.info(
+                f"Page {page_num} difficulty: score={page_difficulty['difficulty_score']:.0f} "
+                f"noise={page_difficulty['noise_level']:.0f} skew={page_difficulty['skew_angle']:.1f}° "
+                f"contrast={page_difficulty['contrast_ratio']:.0f} density={page_difficulty['text_density']:.2f}"
+            )
     except Exception:
         enhanced_bytes = img_bytes
+        llm_enhanced_bytes = img_bytes
 
     # Convert enhanced bytes to PIL for Surya
     img_pil = Image.open(io.BytesIO(enhanced_bytes))
@@ -654,9 +683,19 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
         OCR_AVG_CONF.set(avg_conf)
 
     vision_text = ""
-    # Threshold for full page fallback (lower if we already handled tables well)
-    # [I1] Lowered thresholds: 70 (was 80) for text, 55 (was 65) for table pages
-    threshold = 55 if has_table else 70
+    # Dynamic Thresholding — adjust fallback threshold based on page difficulty
+    # Base thresholds: 55 for table pages, 70 for text pages
+    base_threshold = 55 if has_table else 70
+    diff_score = page_difficulty.get('difficulty_score', 0)
+    if diff_score >= 50:
+        # Very damaged page → raise threshold aggressively to force Vision Fallback
+        threshold = min(90, base_threshold + 20)
+        logger.info(f"Page {page_num}: HIGH difficulty ({diff_score:.0f}) → threshold raised to {threshold}")
+    elif diff_score >= 25:
+        # Moderately damaged → slight boost
+        threshold = base_threshold + 10
+    else:
+        threshold = base_threshold
 
     # Force vision fallback on Annex pages that likely contain tables missed by the layout analyzer
     import re
@@ -678,7 +717,7 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
         logger.info(f"Page {page_num} score {score:.1f} < {threshold} (or seems like annex table). Triggering Full Vision Fallback (rag-core).")
         if VISION_FALLBACK_COUNT:
             VISION_FALLBACK_COUNT.inc()
-        vision_text = call_vision_fallback(img_bytes, ocr_text=full_text, page_num=page_num)
+        vision_text = call_vision_fallback(llm_enhanced_bytes, ocr_text=full_text, page_num=page_num)
 
     if vision_text:
         final_text = vision_text

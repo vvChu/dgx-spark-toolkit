@@ -13,6 +13,7 @@ from retrieval.reranker import get_reranker
 from retrieval.graph_timeline_retriever import AdvancedGraphRAG
 from retrieval.semantic_cache import SemanticCache
 from retrieval.query_rewriter import rewrite_query
+from retrieval.query_tracer import QueryTracer
 from prometheus_client import Summary, Counter, Histogram, Gauge
 
 # Prometheus Metrics
@@ -26,7 +27,7 @@ SPARSE_HIT_RATIO = Gauge('rag_sparse_hit_ratio', 'Ratio of sparse hits in hybrid
 logger = logging.getLogger(__name__)
 
 # Characters that must not appear unescaped inside Milvus filter string literals
-_FILTER_UNSAFE = re.compile(r'["\\\x00-\x1f]')
+_FILTER_UNSAFE = re.compile(r'["\\\\\\x00-\\x1f]')
 
 
 def _sanitize_filter_value(value: str) -> str:
@@ -50,6 +51,7 @@ def _safe_json_loads(value: str) -> list:
 _semantic_cache = LazyInit(lambda: SemanticCache(
     threshold=get_settings().SEMANTIC_CACHE_THRESHOLD,
     ttl_seconds=get_settings().SEMANTIC_CACHE_TTL_SECONDS,
+    redis_url=get_settings().REDIS_URL if get_settings().SEMANTIC_CACHE_REDIS_ENABLED else None,
 ))
 _hyde_gen = LazyInit(lambda: HyDEGenerator())
 
@@ -91,55 +93,34 @@ class RetrievalService:
 
     async def search(self, query: str, limit: int = 10, use_reranker: bool = True,
                      doc_type: str = None, authority: str = None, year: int = None,
-                     doc_number: str = None, use_hyde: bool = False, use_cache: bool = True):
-        """End-to-end search with latency measurement."""
+                     doc_number: str = None, use_hyde: bool = False, use_cache: bool = True,
+                     session_id: str = None, tracer: QueryTracer = None):
+        """End-to-end search with latency measurement and optional tracing."""
+        # Create tracer if not provided
+        if tracer is None:
+            tracer = QueryTracer(query, session_id=session_id)
         with SEARCH_LATENCY.time():
             return await self._search_internal(
                 query=query, limit=limit, use_reranker=use_reranker,
                 doc_type=doc_type, authority=authority, year=year,
-                doc_number=doc_number, use_hyde=use_hyde, use_cache=use_cache
+                doc_number=doc_number, use_hyde=use_hyde, use_cache=use_cache,
+                session_id=session_id, tracer=tracer,
             )
 
     async def _search_internal(self, query: str, limit: int = 10, use_reranker: bool = True,
                                doc_type: str = None, authority: str = None, year: int = None,
-                               doc_number: str = None, use_hyde: bool = False, use_cache: bool = True):
+                               doc_number: str = None, use_hyde: bool = False, use_cache: bool = True,
+                               session_id: str = None, tracer: QueryTracer = None):
 
-        # Step 0: Fast Exact Semantic Cache
-        # embed_query is synchronous CPU/GPU work — run in executor to avoid blocking the event loop
+        # Step 0: Embed query
+        tracer.start_step("embed")
         loop = asyncio.get_running_loop()
         model = get_embedding_model()
         query_embeddings = await loop.run_in_executor(None, model.embed_query, query)
         q_vector_np = np.array(query_embeddings["dense"])
+        tracer.end_step(model="bge-m3")
 
-        if use_cache:
-            cached_results = _semantic_cache.get().get(query, q_vector_np)
-            if cached_results:
-                SEMANTIC_CACHE_HITS.inc()
-                return {"results": cached_results, "cached": True}
-
-        # Step 1: Query Rewriting
-        rewritten_query = await rewrite_query(query)
-        search_query = rewritten_query
-
-        # Step 2: HyDE
-        if use_hyde:
-            hyde_doc = await _hyde_gen.get().generate_hypothetical_answer(rewritten_query)
-            if hyde_doc:
-                search_query = f"{rewritten_query}\n{hyde_doc}"
-
-        # Only re-embed if query was actually modified by rewrite/HyDE
-        if search_query != query:
-            query_embeddings = await loop.run_in_executor(None, model.embed_query, search_query)
-        query_vector_np = np.array(query_embeddings["dense"])
-        query_vector = query_embeddings["dense"]
-        sparse_query = query_embeddings["sparse"]
-
-        if use_cache and search_query != query:
-            cached_results = _semantic_cache.get().get(search_query, query_vector_np)
-            if cached_results:
-                return {"results": cached_results, "cached": True}
-
-        # Build filter expression — sanitize all user-supplied values to prevent injection
+        # Build filter expression early — needed for cache key scoping
         filters = []
         if doc_type:
             filters.append(f'doc_type == "{_sanitize_filter_value(doc_type)}"')
@@ -150,16 +131,59 @@ class RetrievalService:
         if doc_number:
             filters.append(f'doc_number == "{_sanitize_filter_value(doc_number)}"')
         expr = " and ".join(filters) if filters else None
+        cache_filter_key = expr or ""
 
-        # Hybrid Search
+        # Step 0.5: Semantic Cache check
+        if use_cache:
+            tracer.start_step("cache_check")
+            cached_results = _semantic_cache.get().get(query, q_vector_np, filter_key=cache_filter_key)
+            if cached_results:
+                SEMANTIC_CACHE_HITS.inc()
+                tracer.end_step(result="hit")
+                return {"results": cached_results, "cached": True, "trace": tracer.finalize(cache_hit=True, result_count=len(cached_results))}
+            tracer.end_step(result="miss")
+
+        # Step 1: Query Rewriting
+        tracer.start_step("rewrite")
+        rewritten_query = await rewrite_query(query)
+        search_query = rewritten_query
+        tracer.end_step(original=query[:100], rewritten=rewritten_query[:100])
+
+        # Step 2: HyDE
+        if use_hyde:
+            tracer.start_step("hyde")
+            hyde_doc = await _hyde_gen.get().generate_hypothetical_answer(rewritten_query)
+            if hyde_doc:
+                search_query = f"{rewritten_query}\n{hyde_doc}"
+            tracer.end_step(generated=bool(hyde_doc))
+
+        # Only re-embed if query was actually modified by rewrite/HyDE
+        if search_query != query:
+            query_embeddings = await loop.run_in_executor(None, model.embed_query, search_query)
+        query_vector_np = np.array(query_embeddings["dense"])
+        query_vector = query_embeddings["dense"]
+        sparse_query = query_embeddings["sparse"]
+
+        if use_cache and search_query != query:
+            cached_results = _semantic_cache.get().get(search_query, query_vector_np, filter_key=cache_filter_key)
+            if cached_results:
+                return {"results": cached_results, "cached": True, "trace": tracer.finalize(cache_hit=True, result_count=len(cached_results))}
+
+        # Filter expression already built above (moved before cache check)
+
+        # Step 3: Hybrid Search
+        tracer.start_step("retrieve")
         initial_limit = min(limit * 10 if use_reranker else limit, 100)
         results = await self.milvus.hybrid_search(query_vector, sparse_query, limit=initial_limit, expr=expr)
         HYBRID_RECALL_10.inc()
+        raw_count = len(results[0]) if results and results[0] else 0
+        tracer.end_step(source="milvus", hits=raw_count)
 
         top_results = []
         if results:
             raw_hits = results[0]
             if use_reranker:
+                tracer.start_step("rerank")
                 docs = [hit.entity.get("text") for hit in raw_hits]
                 reranker = get_reranker()
                 reranked = await reranker.rerank(query, docs, top_k=limit)
@@ -174,27 +198,30 @@ class RetrievalService:
                 for doc_text, score in reranked:
                     hit = hit_map.get(doc_text)
                     if hit is None:
-                        # Reranker returned a text not in hit_map (shouldn't happen, but guard it)
                         logger.warning(f"Reranker returned unknown doc_text, skipping.")
                         continue
                     ent = hit.entity
                     milvus_score = hit.score
-                    table_boost = 0.2 if ent.get("is_table", False) else 0.0
+                    settings = get_settings()
+                    table_boost = settings.TABLE_BOOST if ent.get("is_table", False) else 0.0
 
-                    # Absolute Quality: Boost ACTIVE documents and penalize OUTDATED ones
                     status = ent.get("validity_status", "ACTIVE")
-                    validity_boost = 0.15 if status == "ACTIVE" else (-0.3 if status == "OUTDATED" else 0.0)
+                    validity_boost = (
+                        settings.VALIDITY_BOOST_ACTIVE if status == "ACTIVE"
+                        else (settings.VALIDITY_PENALTY_OUTDATED if status == "OUTDATED" else 0.0)
+                    )
 
-                    hybrid_score = (float(score) * 0.8) + (float(milvus_score) * 0.2) + table_boost + validity_boost
+                    hybrid_score = (float(score) * settings.RERANK_WEIGHT) + (float(milvus_score) * settings.MILVUS_WEIGHT) + table_boost + validity_boost
                     top_results.append(_build_result_item(ent, doc_text, hybrid_score))
                 top_results.sort(key=lambda x: x["score"], reverse=True)
+                tracer.end_step(input_count=len(docs), output_count=len(top_results))
             else:
                 for hit in raw_hits:
                     ent = hit.entity
                     top_results.append(_build_result_item(ent, ent.get("text"), float(hit.score)))
 
         if top_results:
-            # Inject Graph Status — fetch for all unique sources so every result gets accurate status
+            # Inject Graph Status
             unique_sources = list(set(r["source"] for r in top_results if r.get("source")))
             status_map = await self.neo4j.find_document_status(unique_sources)
             for r in top_results:
@@ -213,8 +240,9 @@ class RetrievalService:
                         r["child_text"] = r["text"]
                         r["text"] = parent_map[r["parent_id"]]
 
-            # Mức độ 3: Advanced Graph RAG - Timeline Traversal
-            # Chỉ lấy timeline cho top 2 kết quả phù hợp nhất để tối ưu latency
+            # Graph RAG - Timeline Traversal (top 2 results)
+            tracer.start_step("graph_timeline")
+            timeline_count = 0
             for r in top_results[:2]:
                 doc_num = r.get("doc_number")
                 if doc_num:
@@ -225,8 +253,14 @@ class RetrievalService:
                         summary = await self.graph_timeline.generate_timeline_summary(timeline, query)
                         r["legal_timeline_summary"] = summary
                         r["text"] = f"[LEGAL TIMELINE]: {summary}\n\n[CONTENT]: {r['text']}"
+                        timeline_count += 1
+            tracer.end_step(timelines_generated=timeline_count)
 
+        # Store in cache
         if use_cache and top_results:
-            _semantic_cache.get().set(search_query, query_vector_np, top_results)
+            _semantic_cache.get().set(search_query, query_vector_np, top_results, filter_key=cache_filter_key)
 
-        return {"results": top_results}
+        # Finalize trace
+        trace_data = tracer.finalize(result_count=len(top_results))
+
+        return {"results": top_results, "trace": trace_data}

@@ -6,10 +6,10 @@ Tài liệu này hướng dẫn cách kết nối từ máy cá nhân tới các
 
 | | |
 |---|---|
-| **IP Nội bộ** | `<LAN_IP>` (configured per host) |
-| **IP VPN/Tailscale** | _(see `.env`)_ |
-| **AI Gateway** | port `8090` |
-| **API Key** | `$LITELLM_MASTER_KEY` (see `.env`) |
+| **Hostname** | `spark-CCBA` |
+| **IP Tailscale** | `100.83.192.30` |
+| **AI Gateway** | port `8090` — 22 models |
+| **API Key** | `$LITELLM_MASTER_KEY` (xem `.env`) |
 
 ---
 
@@ -23,10 +23,11 @@ sudo bash /home/vvc/Codebase/dgx-spark-toolkit/scripts/setup-remote-access.sh
 
 ## 3. Kết Nối Từ Client
 
-### Cách A: Trực tiếp (cùng LAN hoặc Tailscale)
+### Cách A: Tailscale VPN ⭐ (Khuyến nghị)
 
 ```bash
-curl http://<TAILSCALE_IP>:8090/v1/models \
+# Test kết nối
+curl http://100.83.192.30:8090/v1/models \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY"
 ```
 
@@ -34,7 +35,7 @@ curl http://<TAILSCALE_IP>:8090/v1/models \
 
 ```bash
 # Chạy trên máy Client:
-ssh -L 8090:localhost:8090 vvc@<LAN_IP>
+ssh -N -L 8090:localhost:8090 vvc@<LAN_IP>
 
 # Sau đó dùng localhost:
 curl http://localhost:8090/v1/models \
@@ -43,27 +44,12 @@ curl http://localhost:8090/v1/models \
 
 ---
 
-## 4. Sử Dụng Trong Code
+## 4. Setup Client Chi Tiết
 
-**Python (OpenAI SDK):**
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://<TAILSCALE_IP>:8090/v1",
-    api_key=os.environ["LITELLM_MASTER_KEY"]
-)
-
-# Dùng bất kỳ model nào trong 25 models
-response = client.chat.completions.create(
-    model="claude-sonnet-4-6",   # hoặc gemini-3-flash, qwen3.5-35b, gpt-4o...
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-print(response.choices[0].message.content)
-```
-
-**Frontend (.env):**
-```env
-VITE_AI_GATEWAY_URL=http://<TAILSCALE_IP>:8090/v1
-VITE_AI_GATEWAY_KEY=$LITELLM_MASTER_KEY
-```
+> 📖 Xem hướng dẫn đầy đủ + file cấu hình sẵn dùng tại:
+> - **Guide**: [`playbooks/client-setup-guide.md`](./client-setup-guide.md)
+> - **Files**: [`examples/client-setup/`](../examples/client-setup/)
+>   - `.env.ai-gateway` — Template biến môi trường
+>   - `test-connection.sh` — Script test kết nối
+>   - `ai_client.py` — Python module sẵn dùng
+>   - `ai-client.ts` — TypeScript module sẵn dùng

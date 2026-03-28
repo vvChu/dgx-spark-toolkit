@@ -9,23 +9,14 @@ Usage (Docker):
     python -m ingestion.pipeline
 """
 import logging
-import os as _os
 
 # Only configure root logger if it has no handlers yet (avoids clobbering FastAPI/uvicorn logging).
 if not logging.root.handlers:
-    from logging.handlers import RotatingFileHandler as _RotatingHandler
-    _log_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "ingestion.log")
+    # Use stdout only — Docker log driver handles rotation and persistence.
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            _RotatingHandler(
-                _os.path.normpath(_log_path),
-                maxBytes=50 * 1024 * 1024,  # 50 MB per file
-                backupCount=3,
-            ),
-            logging.StreamHandler()
-        ]
+        handlers=[logging.StreamHandler()],
     )
 logger = logging.getLogger(__name__)
 

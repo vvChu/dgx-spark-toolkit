@@ -294,12 +294,35 @@ def process_markdown_file(filepath: str, dry_run: bool = False) -> dict:
     # P1: Fix table GFM
     text = fix_table_gfm_v2(text)
 
-    # P5: Strip boilerplate from Content section
-    # Only apply to the Content section, not metadata
+    # Apply OCR spacing normalization + P5 boilerplate to the Content section only
+    # (preserves Metadata and Summary sections untouched)
     content_match = re.search(r"(## Content\s*\n)(.*)", text, re.DOTALL)
     if content_match:
         pre = text[: content_match.start(2)]
         content = content_match.group(2)
+
+        # OCR spacing normalization (from text_normalizer pipeline)
+        try:
+            from ingestion.text_normalizer import (
+                fix_stuck_vietnamese_words,
+                fix_generic_stuck_words,
+                fix_vietnamese_syllable_boundaries,
+                fix_common_ocr_typos,
+                fix_raw_pipe_tables,
+                strip_noi_nhan_block,
+                normalize_ocr_spacing,
+            )
+            content = normalize_ocr_spacing(content)
+            content = fix_common_ocr_typos(content)
+            content = fix_stuck_vietnamese_words(content)
+            content = fix_generic_stuck_words(content)
+            content = fix_vietnamese_syllable_boundaries(content)
+            content = strip_noi_nhan_block(content)
+            content = fix_raw_pipe_tables(content)
+        except ImportError:
+            logger.warning("text_normalizer not available, skipping OCR normalization")
+
+        # P5: Strip boilerplate from Content section
         content = strip_boilerplate_extended(content)
         text = pre + content
 

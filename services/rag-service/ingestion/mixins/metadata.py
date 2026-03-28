@@ -4,7 +4,7 @@ import re
 import time
 
 from ingestion.json_parser import extract_json_from_response
-from ingestion.pipeline_config import JSON_MODEL
+from ingestion.pipeline_config import JSON_MODEL, TEXT_METADATA_MODEL, SYNTHETIC_QUERY_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -55,17 +55,17 @@ class MetadataMixin:
         """Use LLM to refine metadata from document text."""
         try:
             payload = {
-                "model": JSON_MODEL,
+                "model": TEXT_METADATA_MODEL,
                 "messages": [
                     {"role": "system", "content": "You are a precise JSON extractor. You MUST output ONLY raw JSON. Do NOT include any 'Thinking Process', 'Analysis', 'Observation', or preamble. NO text before or after the JSON block. Start EXACTLY with '{' and end EXACTLY with '}'."},
                     {"role": "user", "content": f"Extract V9 metadata as JSON for this Vietnamese document: {text[:4000]}\n\nRequired format:\n{{\"doc_number\": \"Full official document number (e.g. 123/QD-UBND or 123/2024/TT-BTP). Do NOT extract single digits or page numbers.\", \"doc_date\": \"YYYY-MM-DD\", \"doc_type\": \"...\", \"authority\": \"...\", \"validity_status\": \"ACTIVE\", \"project_code\": \"GENERIC\", \"discipline\": \"UNKNOWN\", \"doc_status\": \"ACTIVE\", \"revision\": 0}}"}
                 ],
                 "max_tokens": 4096,
                 "temperature": 0.0,
-                "extra_body": {
-                    "chat_template_kwargs": {"enable_thinking": False}
-                }
             }
+            # Only add vLLM-specific params for local models
+            if TEXT_METADATA_MODEL in ("rag-core", "qwen3.5-35b", "rag-light"):
+                payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
             headers = {"Authorization": f"Bearer {self.vision.api_key}"}
             max_retries = 3
             retry_delay = 5
@@ -127,17 +127,17 @@ class MetadataMixin:
         """Generate synthetic queries for better vector grounding."""
         try:
             payload = {
-                "model": JSON_MODEL,
+                "model": SYNTHETIC_QUERY_MODEL,
                 "messages": [
                     {"role": "system", "content": "You are an assistant that generates hypothetical user questions. Output ONLY 3-5 questions separated by newlines that the given text can answer."},
                     {"role": "user", "content": f"Generate 3-5 questions for this text:\n\n{chunk_text}\n\nQuestions:"}
                 ],
                 "max_tokens": 512,
                 "temperature": 0.5,
-                "extra_body": {
-                    "chat_template_kwargs": {"enable_thinking": False}
-                }
             }
+            # Only add vLLM-specific params for local models
+            if SYNTHETIC_QUERY_MODEL in ("rag-core", "qwen3.5-35b", "rag-light"):
+                payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
             headers = {"Authorization": f"Bearer {self.vision.api_key}"}
             max_retries = 3
             for attempt in range(max_retries):

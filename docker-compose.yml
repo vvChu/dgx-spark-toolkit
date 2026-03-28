@@ -22,11 +22,14 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - FORCE_CPU_RERANKER=1
       - FORCE_CPU_EMBEDDING=1
+      - OMP_NUM_THREADS=4
+      - OPENBLAS_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
       - REDIS_URL=redis://litellm-redis:6379/1
-      - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-rag-core}
-      - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-gemini-2.5-flash}
+      - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-gemini-3-flash}
+      - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-gemini-3.1-flash-lite}
       - IMAGE_PREPROCESS=${IMAGE_PREPROCESS:-1}
-      - OCR_RENDER_DPI=${OCR_RENDER_DPI:-200}
+      - OCR_RENDER_DPI=${OCR_RENDER_DPI:-300}
       - SURYA_DEVICE=${SURYA_DEVICE:-auto}
       - CHUNK_MAX_CHARS=${CHUNK_MAX_CHARS:-14500}
       - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
@@ -58,18 +61,20 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '4'
+          memory: 12G
+        reservations:
           cpus: '2'
           memory: 4G
-        reservations:
-          cpus: '1'
-          memory: 2G
     networks:
       - rag-network
 
   rag-watcher:
+    profiles: ["ingest"]
     build:
       context: ./services/rag-service
     environment:
+      - SOURCE_DIR=${SOURCE_DIR:-/app/data/legal_test}
       - MILVUS_HOST=milvus-standalone
       - MILVUS_PORT=19530
       - EMBEDDING_MODEL=BAAI/bge-m3
@@ -94,10 +99,10 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - REDIS_URL=redis://litellm-redis:6379/1
-      - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-rag-core}
-      - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-gemini-2.5-flash}
+      - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-gemini-3-flash}
+      - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-gemini-3.1-flash-lite}
       - IMAGE_PREPROCESS=${IMAGE_PREPROCESS:-1}
-      - OCR_RENDER_DPI=${OCR_RENDER_DPI:-200}
+      - OCR_RENDER_DPI=${OCR_RENDER_DPI:-300}
       - SURYA_DEVICE=${SURYA_DEVICE:-auto}
       - CHUNK_MAX_CHARS=${CHUNK_MAX_CHARS:-14500}
       - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
@@ -124,7 +129,7 @@ services:
       ai-gateway:
         condition: service_started
     deploy:
-      replicas: 2
+      replicas: 1
       resources:
         limits:
           cpus: '6'
@@ -151,6 +156,11 @@ services:
       - VIBER_PROXY_KEY=${VIBER_PROXY_KEY}
       - GATEWAY_LOCAL_URL=${GATEWAY_LOCAL_URL:-http://${HOST_IP:-localhost}:8004/v1}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_API_KEY_2=${GEMINI_API_KEY_2}
+      - GEMINI_API_KEY_3=${GEMINI_API_KEY_3}
+      - GEMINI_API_KEY_4=${GEMINI_API_KEY_4}
+      - GEMINI_API_KEY_5=${GEMINI_API_KEY_5}
+      - GEMINI_API_KEY_6=${GEMINI_API_KEY_6}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
       - LITELLM_LOG=INFO
@@ -345,15 +355,16 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
     networks:
       - rag-network
   vllm-4b:
+    profiles: ["vllm-light"]  # On-demand only — avoid OOM conflict with 35B
     image: hellohal2064/vllm-qwen3.5-gb10:blackwell-sm121
-    container_name: qwen3-4b
+    container_name: qwen3-9b
     dns:
       - 8.8.8.8
       - 1.1.1.1
@@ -381,12 +392,13 @@ services:
       - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
     entrypoint: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
     command: >
-      --model Qwen/Qwen3.5-4B
-      --served-model-name qwen3.5-4b
+      --model cyankiwi/Qwen3.5-9B-AWQ-4bit
+      --served-model-name qwen3.5-9b
       --port 8000
-      --gpu-memory-utilization 0.08
+      --gpu-memory-utilization 0.12
       --max-model-len 8192
-      --kv-cache-dtype auto
+      --dtype half
+      --quantization awq
       --trust-remote-code
     networks:
       - rag-network
@@ -405,7 +417,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 50G
+          memory: 96G
         reservations:
           devices:
             - driver: nvidia
@@ -414,8 +426,8 @@ services:
     environment:
       - PORT=8000
       - ATTENTION_BACKEND=flashinfer
-      - GPU_MEMORY_UTIL=0.50
-      - MAX_MODEL_LEN=24576
+      - GPU_MEMORY_UTIL=0.85
+      - MAX_MODEL_LEN=32768
     volumes:
       - ${QWEN35B_MODEL_DIR}:/models/model
       - ./scripts:/app/scripts
@@ -426,12 +438,15 @@ services:
       --served-model-name qwen3.5-35b
       --host 0.0.0.0
       --port 8000
-      --gpu-memory-utilization 0.50
-      --max-model-len 24576
+      --gpu-memory-utilization 0.85
+      --max-model-len 32768
       --kv-cache-dtype fp8
-      --max-num-batched-tokens 4096
+      --max-num-batched-tokens 8192
+      --max-num-seqs 16
       --enable-prefix-caching
       --enable-chunked-prefill
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_coder
       --trust-remote-code
     networks:
       - rag-network

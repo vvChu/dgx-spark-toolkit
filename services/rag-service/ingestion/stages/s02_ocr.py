@@ -58,8 +58,15 @@ def run(doc: ProcessedDocument, ctx) -> ProcessedDocument | None:
 
     if failed_pages:
         logger.warning(f"  {doc.identity.rel_path} HAS FAILED PAGES: {failed_pages}")
-        ctx.state_manager.update_status(doc.identity.rel_path, 'FAILED', error=f"Failed pages: {failed_pages}")
         doc.failed_pages = failed_pages
+        # Only mark as FAILED if we have NO successfully extracted content
+        # (retry escalation in extraction.py has already run by this point)
+        if not raw_chunks:
+            ctx.state_manager.update_status(
+                doc.identity.rel_path, 'FAILED',
+                error=f"Failed pages: {failed_pages} (no content extracted)"
+            )
+            return None
 
     if not raw_chunks:
         if not failed_pages:

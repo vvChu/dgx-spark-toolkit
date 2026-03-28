@@ -48,6 +48,15 @@ class RunnerMixin:
                 if os.path.splitext(file)[1].lower() in _SUPPORTED_EXTENSIONS:
                     doc_files.append(os.path.join(root, file))
 
+        # TEST MODE: filter by whitelist if present
+        whitelist_path = "/app/test_whitelist.txt"
+        if os.path.exists(whitelist_path):
+            with open(whitelist_path) as wf:
+                whitelist = {line.strip() for line in wf if line.strip()}
+            before = len(doc_files)
+            doc_files = [f for f in doc_files if os.path.relpath(f, SOURCE_DIR) in whitelist]
+            logger.info(f"🧪 TEST MODE: whitelist filtered {before} → {len(doc_files)} files")
+
         logger.info(f"Found {len(doc_files)} files. Filtering already-queued...")
 
         to_enqueue = []

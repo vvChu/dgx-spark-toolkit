@@ -27,6 +27,7 @@ import base64
 import time
 import httpx
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,19 @@ _MIN_IMAGE_AREA = 10_000       # 100×100 pixels or larger
 _LABEL_LOOKAHEAD_PTS = 120     # ~4cm below or above the image bbox
 # Maximum chars per figure description (keeps chunks concise)
 _MAX_DESC_CHARS = 300
+
+# Model for figure descriptions — prefer lightweight remote models for speed.
+# gemini-3-flash: ~1.5s (remote)  vs  rag-core: ~7.8s (local 35B GPU)
+# Fallback chain: try all remote vision models before using local GPU.
+_FIGURE_MODEL = os.environ.get("FIGURE_DESC_MODEL", "gemini-3-flash")
+_FIGURE_FALLBACK_CHAIN = [
+    "gemini-3.1-flash-lite",  # Fast remote backup (2.5x faster)
+    "gemma-3-27b",            # High-quota free tier backup
+    "claude-haiku-4",         # Claude vision via proxy
+    "rag-core",               # Local 35B GPU — last resort
+]
+# Max concurrent figure descriptions per page
+_MAX_CONCURRENT_FIGURES = 3
 
 # Pattern to find "Hình X", "Hình A.1", "Hình B1", etc.
 _HINH_LABEL_RE = re.compile(
@@ -65,6 +79,9 @@ def _get_client() -> httpx.Client:
 def _describe_figure(img_bytes: bytes, hint_label: str = "", page_num: int = 0) -> str:
     """Call the vision LLM to describe a figure image.
 
+    Uses gemini-3-flash (fast remote) by default, falls back to rag-core
+    (local 35B) if the remote model fails.
+
     Args:
         img_bytes: PNG or JPEG bytes of the figure.
         hint_label: Optional "Hình X.Y — Title" string to give the model context.
@@ -89,42 +106,55 @@ def _describe_figure(img_bytes: bytes, hint_label: str = "", page_num: int = 0) 
         "KHÔNG giải thích thêm. Tối đa 50 từ."
     )
 
-    payload = {
-        "model": "rag-core",   # 35B multimodal — better vision + separate rate limit from rag-light
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
-                ]
-            }
-        ],
-        "max_tokens": 120,
-        "temperature": 0.1,
-        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}
-    }
+    # Try preferred model first, then fallback chain
+    models_to_try = [_FIGURE_MODEL] + [
+        m for m in _FIGURE_FALLBACK_CHAIN if m != _FIGURE_MODEL
+    ]
 
-    for attempt in range(3):
-        try:
-            resp = _get_client().post(
-                f"{gateway_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-            if resp.status_code == 429:
-                wait = 2 ** attempt
-                logger.debug(f"[FIGURE] 429 rate limit on page {page_num+1}, retry in {wait}s")
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"].strip()
-            return content[:_MAX_DESC_CHARS]
-        except Exception as e:
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-            else:
-                logger.warning(f"[FIGURE] Vision LLM failed on page {page_num+1}: {e}")
+    for model in models_to_try:
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+                    ]
+                }
+            ],
+            "max_tokens": 120,
+            "temperature": 0.1,
+        }
+        # Only add extra_body for local vLLM models (Qwen thinking mode)
+        if model in ("rag-core", "qwen3.5-35b"):
+            payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+
+        for attempt in range(2):
+            try:
+                t0 = time.time()
+                resp = _get_client().post(
+                    f"{gateway_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=payload,
+                )
+                if resp.status_code == 429:
+                    wait = 2 ** attempt
+                    logger.debug(f"[FIGURE] 429 rate limit ({model}) page {page_num+1}, retry in {wait}s")
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                content = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+                elapsed = time.time() - t0
+                logger.info(f"  LLM Vision [ocr_p{page_num+1}] → {model} OK ({elapsed:.1f}s, {len(content)} chars)")
+                return content[:_MAX_DESC_CHARS]
+            except Exception as e:
+                if attempt < 1:
+                    time.sleep(1)
+                else:
+                    logger.warning(f"[FIGURE] {model} failed on page {page_num+1}: {e}")
+                    break  # Try next model
+
     return ""
 
 
@@ -248,23 +278,42 @@ def describe_page_figures(
 
     page = doc[page_num]
     captions = []
-    described = 0
 
     # Sort images by area descending (describe biggest/most important first)
     images.sort(key=lambda x: x["area"], reverse=True)
+    selected = images[:max_figures_per_page]
 
-    for img_info in images[:max_figures_per_page]:
-        label = _find_nearest_hinh_label(page, img_info["rect"])
-        description = _describe_figure(
-            img_bytes=img_info["img_bytes"],
-            hint_label=label,
+    # Pre-compute labels (fast, no I/O)
+    labels = []
+    for img_info in selected:
+        labels.append(_find_nearest_hinh_label(page, img_info["rect"]))
+
+    # Describe figures in PARALLEL using ThreadPoolExecutor
+    # This sends multiple requests to gemini-3-flash concurrently
+    def _do_describe(idx):
+        return idx, _describe_figure(
+            img_bytes=selected[idx]["img_bytes"],
+            hint_label=labels[idx],
             page_num=page_num,
         )
-        if description:
-            tag = label if label else f"Hình trang {page_num+1}"
-            captions.append(f"[{tag}: {description}]")
-            described += 1
-            logger.info(f"  [FIGURE] Page {page_num+1}: described '{label or 'unnamed'}' ({len(description)} chars)")
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(len(selected), _MAX_CONCURRENT_FIGURES)) as executor:
+        futures = [executor.submit(_do_describe, i) for i in range(len(selected))]
+        for future in as_completed(futures):
+            try:
+                idx, desc = future.result()
+                if desc:
+                    results[idx] = desc
+            except Exception as e:
+                logger.warning(f"[FIGURE] Parallel describe failed: {e}")
+
+    # Build captions in order
+    for idx in range(len(selected)):
+        if idx in results:
+            tag = labels[idx] if labels[idx] else f"Hình trang {page_num+1}"
+            captions.append(f"[{tag}: {results[idx]}]")
+            logger.info(f"  [FIGURE] Page {page_num+1}: described '{labels[idx] or 'unnamed'}' ({len(results[idx])} chars)")
 
     if captions:
         page_text = page_text + "\n\n" + "\n".join(captions)

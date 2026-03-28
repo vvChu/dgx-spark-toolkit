@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vietnamese legal document RAG system running on NVIDIA DGX Spark (GB10 Blackwell, 128GB unified memory). Unified AI Gateway routes to local vLLM models and remote cloud proxies (Claude, Gemini, GPT). Stack: FastAPI backend, React 19 frontend, Milvus vector DB, Neo4j knowledge graph, LiteLLM proxy with 19 model configs.
+Vietnamese legal document RAG system running on NVIDIA DGX Spark (GB10 Blackwell, 128GB unified memory). Unified AI Gateway routes to local vLLM models and remote cloud proxies (Claude, Gemini, GPT-OSS). Stack: FastAPI backend, React 19 frontend, Milvus vector DB, Neo4j knowledge graph, LiteLLM proxy with 22 unique models (38 route configs including multi-key load balancing).
 
 ## Common Commands
 
@@ -64,7 +64,7 @@ Layered FastAPI app (Python 3.12):
 
 - `pipeline.py` in `ingestion/` = actual `ProductionIngestor` class
 - Root-level `pipeline.py` = post-processing export fixer (different file!)
-- Workers run as `rag-watcher` (×3 replicas) with sync ingestion, consuming from Redis stream `ingest:queue`
+- Workers run as `rag-watcher` (×1 replica) with sync ingestion, consuming from Redis stream `ingest:queue`
 - Async reranker wrapped via `asyncio.to_thread()` in `retrieval/reranker.py`
 
 ### AI Gateway (`services/ai-gateway/`)
@@ -90,7 +90,7 @@ React 19 + Vite 7 + Tailwind CSS 4. No test runner — validated via lint + buil
 - **Config**: `pydantic-settings` `BaseSettings` with `SecretStr` — never log `.get_secret_value()` output
 - **Tests** go in `services/rag-service/tests/` — not as one-off scripts in the rag-service root
 - **Operational scripts** go in `services/rag-service/scripts/`
-- **Agent skills** in `.agents/skills/`, workflows in `.agents/workflows/`
+- **Agent skills** in `.agents/skills/` (18 skills + shared), workflows in `.agents/workflows/` (14 workflows)
 - **Architecture north star**: `.agents/ARCHITECTURE.md` — canonical identity model, store contracts, and target architecture
 - **Benchmarks** in `services/rag-service/benchmarks/` — one benchmark + one locustfile, no versioned copies
 
@@ -101,6 +101,16 @@ Three jobs on push/PR to `master`:
 2. **frontend-build** — Node 20, `npm ci && npm run lint && npm run build`
 3. **lint** — `flake8` on RAG service with max-line-length=150
 
+## Common Pitfalls
+
+- **Two `pipeline.py` files**: `ingestion/pipeline.py` = actual `ProductionIngestor`; root-level `pipeline.py` = post-processing export fixer — always use full import path
+- **GPU packages in CI**: `surya-ocr`, `torch` excluded from `requirements-ci.txt`. Use `FORCE_CPU_EMBEDDING=1`, `FORCE_CPU_RERANKER=1` for CPU fallback
+- **Redis DB split**: DB 0 = LiteLLM semantic cache, DB 1 = ingestion queue — never mix
+- **Model cache volume**: Mount `model_cache:/app/models` with `HF_HOME=/app/models` or Surya (1.3GB) re-downloads every restart
+- **Frontend build OOM**: Requires `--max-old-space-size=4096` (in `package.json` build script)
+- **Ingestion stale state**: Jobs stuck in `PROCESSING` if worker crashes (1-hour timeout)
+- **Neo4j password alias**: Both `NEO4J_PASSWORD` and `NEO4J_PASS` work via Pydantic `AliasChoices`
+
 ## Docker
 
-`docker-compose.yml` orchestrates 15+ services on the `rag-network` bridge. Key services: `rag-service` (:8005), `rag-watcher` (×3), `ai-gateway` (:8090), `rag-frontend` (:5173), `milvus-standalone` (:19530), `neo4j` (:7474/:7687), plus Prometheus (:9090) and Grafana (:3000). vLLM containers (`vllm-35b`, `vllm-4b`) serve local Qwen 3.5 models with GPU reservations.
+`docker-compose.yml` orchestrates 13 services on the `rag-network` bridge. Key services: `rag-service` (:8005), `rag-watcher` (×1 replica, ingest profile), `ai-gateway` (:8090), `rag-frontend` (:5173), `milvus-standalone` (:19530), `neo4j` (:7474/:7687), plus Prometheus (:9090) and Grafana (:3000). vLLM containers (`vllm-35b` always-on, `vllm-4b` on-demand via `vllm-light` profile) serve local Qwen 3.5 models with GPU reservations.

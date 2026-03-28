@@ -128,7 +128,8 @@ class ExtractionMixin:
     def _extract_ocr_page(self, img_bytes: bytes, i: int, digital_text: str):
         """Vision OCR extraction path for scanned / bad-quality pages.
 
-        Applies image preprocessing before sending to LLM Vision OCR.
+        Uses light preprocessing (no binarization) for LLM Vision models,
+        which perform better with grayscale images.
 
         Args:
             img_bytes: JPEG bytes of the rendered page.
@@ -138,8 +139,9 @@ class ExtractionMixin:
         Returns:
             dict with text/page/layout keys, or an error dict.
         """
-        # Apply image preprocessing (upscale, deskew, denoise, binarize, CLAHE)
-        enhanced_bytes = preprocess_page_image(img_bytes, dpi=OCR_RENDER_DPI)
+        from ingestion.image_preprocessor import preprocess_for_llm
+        # Light preprocessing for LLM Vision (upscale + deskew + denoise + CLAHE, no binarize)
+        enhanced_bytes = preprocess_for_llm(img_bytes, dpi=OCR_RENDER_DPI)
 
         res = _llm_extract_page(enhanced_bytes, page_num=i + 1, digital_text=digital_text)
         if res.get("text", ""):
@@ -153,13 +155,21 @@ class ExtractionMixin:
             }
         return {"page": i + 1, "error": "No text extracted"}
 
-    def _process_single_page(self, file_path: str, i: int, total_pages: int):
+    def _process_single_page(self, file_path: str, i: int, total_pages: int,
+                             override_dpi: int | None = None):
         """Smart per-page routing using PDF classifier.
 
         Each worker opens its own fitz.Document instance — fitz.Document is not
         thread-safe even for reads, so sharing a single instance across threads
         can cause corrupted page data or segfaults.
+
+        Args:
+            file_path: Path to the PDF file.
+            i: Zero-based page index.
+            total_pages: Total number of pages in the document.
+            override_dpi: If set, forces this DPI instead of default (for retry passes).
         """
+        render_dpi = override_dpi or OCR_RENDER_DPI
         try:
             img_bytes = None
             with fitz.open(file_path) as doc:
@@ -174,7 +184,7 @@ class ExtractionMixin:
                 # Per-page classification
                 page_type = classify_page(page, i)
 
-                if page_type == PdfType.NATIVE:
+                if page_type == PdfType.NATIVE and override_dpi is None:
                     # Digital text quality is good — use fast path
                     ROUTE_COUNTER.labels(route="digital").inc()
                     return self._extract_digital_page(file_path, page, i)
@@ -182,21 +192,90 @@ class ExtractionMixin:
                     # SCAN_SIMPLE or SCAN_COMPLEX — render and OCR
                     route_label = "ocr_complex" if page_type == PdfType.SCAN_COMPLEX else "ocr_simple"
                     ROUTE_COUNTER.labels(route=route_label).inc()
-                    pix = page.get_pixmap(dpi=OCR_RENDER_DPI)
+                    pix = page.get_pixmap(dpi=render_dpi)
                     img_bytes = pix.tobytes("jpeg")
 
             # doc is now closed; run the vision call outside the fitz context
             if img_bytes is not None:
                 return self._extract_ocr_page(img_bytes, i, text_raw)
         except Exception as e:
-            logger.error(f"  Error extracting from page {i+1}: {e}")
+            logger.error(f"  Error extracting from page {i+1} (dpi={render_dpi}): {e}")
             return {"page": i + 1, "error": str(e)}
+
+    def _retry_failed_pages(self, file_path: str, failed_pages: list[int],
+                            total_pages: int) -> tuple[list[dict], list[int]]:
+        """Escalation retry strategy for failed pages.
+
+        Pass 2: 400 DPI + light preprocessing
+        Pass 3: 600 DPI + direct LLM Vision (bypass Surya entirely)
+
+        Returns:
+            Tuple of (recovered_chunks, still_failed_pages).
+        """
+        if not failed_pages:
+            return [], []
+
+        # ── Escalation passes ──
+        RETRY_PROFILES = [
+            {"dpi": 400, "label": "Pass2-Enhanced"},
+            {"dpi": 600, "label": "Pass3-Ultra"},
+        ]
+
+        still_failed = list(failed_pages)
+        recovered = []
+
+        for profile in RETRY_PROFILES:
+            if not still_failed:
+                break
+
+            dpi = profile["dpi"]
+            label = profile["label"]
+            retry_batch = list(still_failed)
+            still_failed = []
+
+            logger.info(
+                f"  [RETRY] {label}: Retrying {len(retry_batch)} pages "
+                f"at {dpi} DPI: {retry_batch}"
+            )
+
+            for page_num in retry_batch:
+                page_idx = page_num - 1  # Convert 1-indexed to 0-indexed
+                res = self._process_single_page(
+                    file_path, page_idx, total_pages, override_dpi=dpi
+                )
+
+                if res is None:
+                    # Page was skipped (e.g., blank) — not a failure
+                    logger.info(f"  [RETRY] Page {page_num} skipped on {label}")
+                    continue
+
+                if "error" in res:
+                    still_failed.append(page_num)
+                    logger.warning(
+                        f"  [RETRY] Page {page_num} still failed on {label}"
+                    )
+                else:
+                    recovered.append(res)
+                    logger.info(
+                        f"  [RETRY] Page {page_num} RECOVERED on {label} "
+                        f"({len(res.get('text', ''))} chars)"
+                    )
+
+        if still_failed:
+            logger.warning(
+                f"  [RETRY] Pages still failed after all passes: {still_failed}"
+            )
+
+        return recovered, still_failed
 
     def extract_pdf(self, file_path):
         """Hybrid extraction: digital text first, Vision OCR fallback page-by-page (Parallel).
 
         Uses PDF classifier for document-level routing hints, but ultimately
         each page is classified individually for maximum accuracy.
+
+        Failed pages get automatic escalation retry at higher DPI before
+        being marked as truly failed.
         """
         chunks = []
         failed_pages = []
@@ -222,6 +301,18 @@ class ExtractionMixin:
                         failed_pages.append(res["page"])
                     else:
                         chunks.append(res)
+
+            # ── Escalation retry for failed pages ──
+            if failed_pages:
+                logger.info(
+                    f"  [RETRY] {len(failed_pages)} pages failed on Pass1. "
+                    f"Starting escalation retry..."
+                )
+                recovered, still_failed = self._retry_failed_pages(
+                    file_path, failed_pages, total_pages
+                )
+                chunks.extend(recovered)
+                failed_pages = still_failed
 
             chunks.sort(key=lambda x: x["page"])
         except Exception as e:

@@ -1,11 +1,13 @@
-"""Thread-safe in-memory semantic cache with TTL and LRU eviction.
+"""Two-tier semantic cache: L1 in-memory (numpy) + L2 Redis (persistent).
 
-Uses vectorized numpy operations for O(1) amortized similarity lookup
-instead of O(n) per-entry cosine computation.
+L1 provides sub-millisecond lookup via vectorized cosine similarity.
+L2 provides persistence across container restarts, stored in Redis DB 3.
 """
+import json
 import logging
 import threading
 import time
+from typing import Optional
 
 import numpy as np
 
@@ -13,20 +15,41 @@ logger = logging.getLogger(__name__)
 
 
 class SemanticCache:
-    """In-memory semantic cache with TTL, LRU eviction, and vectorized lookup."""
+    """Two-tier semantic cache with TTL, LRU eviction, and vectorized lookup."""
 
-    def __init__(self, threshold: float = 0.92, max_size: int = 1000, ttl_seconds: float = 3600.0):
+    def __init__(
+        self,
+        threshold: float = 0.92,
+        max_size: int = 1000,
+        ttl_seconds: float = 3600.0,
+        redis_url: str | None = None,
+    ):
         self.threshold = threshold
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
         self._lock = threading.Lock()
 
-        # Parallel arrays — kept in sync by index
+        # L1: In-memory (parallel arrays — kept in sync by index)
         self._keys: list[str] = []
+        self._filter_keys: list[str] = []  # filter expression per entry
         self._embeddings: np.ndarray | None = None  # shape: (n, dim)
         self._norms: np.ndarray | None = None        # shape: (n,) precomputed
         self._results: list = []
         self._timestamps: list[float] = []
+
+        # L2: Redis persistent cache (optional)
+        self._redis = None
+        self._redis_key = "semantic_cache:entries"
+        if redis_url:
+            try:
+                import redis
+                base_url = redis_url.rsplit("/", 1)[0] if "/" in redis_url.rsplit(":", 1)[-1] else redis_url
+                self._redis = redis.Redis.from_url(f"{base_url}/3", decode_responses=False)
+                self._redis.ping()
+                logger.info("SemanticCache L2 (Redis DB 3) connected.")
+            except Exception as e:
+                logger.warning("SemanticCache L2 Redis unavailable: %s", e)
+                self._redis = None
 
     def _evict_expired(self):
         """Remove expired entries (caller holds lock)."""
@@ -35,6 +58,7 @@ class SemanticCache:
         if len(keep) == len(self._keys):
             return
         self._keys = [self._keys[i] for i in keep]
+        self._filter_keys = [self._filter_keys[i] for i in keep]
         self._results = [self._results[i] for i in keep]
         self._timestamps = [self._timestamps[i] for i in keep]
         if self._embeddings is not None and len(keep) > 0:
@@ -44,34 +68,88 @@ class SemanticCache:
             self._embeddings = None
             self._norms = None
 
-    def get(self, query: str, query_embedding: np.ndarray):
+    def get(self, query: str, query_embedding: np.ndarray, filter_key: str = ""):
+        """Check L1 (in-memory), then L2 (Redis) for cached results.
+
+        Parameters
+        ----------
+        filter_key:
+            Metadata filter expression. Only entries with matching filter_key
+            are considered cache hits, preventing cross-filter contamination.
+        """
+        # L1 check
         with self._lock:
             self._evict_expired()
-            if self._embeddings is None or len(self._keys) == 0:
-                return None
+            if self._embeddings is not None and len(self._keys) > 0:
+                norm_q = np.linalg.norm(query_embedding)
+                if norm_q > 0:
+                    scores = self._embeddings @ query_embedding / (self._norms * norm_q)
+                    # Mask out entries with different filter keys
+                    for i, fk in enumerate(self._filter_keys):
+                        if fk != filter_key:
+                            scores[i] = -1.0
+                    best_idx = int(np.argmax(scores))
+                    best_score = float(scores[best_idx])
 
-            norm_q = np.linalg.norm(query_embedding)
-            if norm_q == 0:
-                return None
+                    if best_score >= self.threshold:
+                        # LRU: refresh timestamp on hit
+                        self._timestamps[best_idx] = time.monotonic()
+                        logger.info(f"Semantic cache L1 hit! Similarity: {best_score:.4f}")
+                        return self._results[best_idx]
 
-            # Vectorized cosine similarity: dot(matrix, query) / (norms * norm_q)
-            scores = self._embeddings @ query_embedding / (self._norms * norm_q)
-            best_idx = int(np.argmax(scores))
-            best_score = float(scores[best_idx])
+        # L2 check (Redis) — scan recent entries
+        if self._redis:
+            try:
+                l2_result = self._get_from_redis(query_embedding, filter_key)
+                if l2_result is not None:
+                    # Promote to L1
+                    self.set(query, query_embedding, l2_result, filter_key=filter_key, skip_redis=True)
+                    logger.info("Semantic cache L2 (Redis) hit, promoted to L1.")
+                    return l2_result
+            except Exception as e:
+                logger.debug("L2 cache check failed: %s", e)
 
-            if best_score >= self.threshold:
-                # LRU: refresh timestamp on hit
-                self._timestamps[best_idx] = time.monotonic()
-                logger.info(f"Semantic cache hit! Similarity: {best_score:.4f}")
-                return self._results[best_idx]
         return None
 
-    def set(self, query: str, query_embedding: np.ndarray, results):
+    def _get_from_redis(self, query_embedding: np.ndarray, filter_key: str = "") -> Optional[list]:
+        """Scan recent Redis cache entries for semantic similarity match."""
+        if not self._redis:
+            return None
+
+        entries = self._redis.lrange(self._redis_key, 0, 99)  # Check last 100 entries
+        if not entries:
+            return None
+
+        norm_q = np.linalg.norm(query_embedding)
+        if norm_q == 0:
+            return None
+
+        for raw_entry in entries:
+            try:
+                entry = json.loads(raw_entry)
+                # Skip entries with different filter keys
+                if entry.get("filter_key", "") != filter_key:
+                    continue
+                cached_emb = np.array(entry["embedding"], dtype=np.float32)
+                norm_c = np.linalg.norm(cached_emb)
+                if norm_c == 0:
+                    continue
+                similarity = float(np.dot(query_embedding, cached_emb) / (norm_q * norm_c))
+                if similarity >= self.threshold:
+                    return entry["results"]
+            except (json.JSONDecodeError, KeyError, ValueError):
+                continue
+
+        return None
+
+    def set(self, query: str, query_embedding: np.ndarray, results, filter_key: str = "", skip_redis: bool = False):
+        """Store results in L1 (always) and L2 Redis (if available)."""
+        # L1: in-memory
         with self._lock:
             if len(self._keys) >= self.max_size:
-                # Evict oldest entry
                 oldest_idx = int(np.argmin(self._timestamps))
                 self._keys.pop(oldest_idx)
+                self._filter_keys.pop(oldest_idx)
                 self._results.pop(oldest_idx)
                 self._timestamps.pop(oldest_idx)
                 if self._embeddings is not None:
@@ -79,6 +157,7 @@ class SemanticCache:
                     self._norms = np.delete(self._norms, oldest_idx)
 
             self._keys.append(query)
+            self._filter_keys.append(filter_key)
             self._results.append(results)
             self._timestamps.append(time.monotonic())
 
@@ -90,3 +169,20 @@ class SemanticCache:
             else:
                 self._embeddings = np.vstack([self._embeddings, emb])
                 self._norms = np.append(self._norms, norm)
+
+        # L2: Redis persistent (skip if this is a L2→L1 promotion)
+        if self._redis and not skip_redis:
+            try:
+                entry = {
+                    "query": query[:500],
+                    "embedding": query_embedding.tolist(),
+                    "results": results,
+                    "filter_key": filter_key,
+                    "timestamp": time.time(),
+                }
+                serialized = json.dumps(entry, ensure_ascii=False, default=str)
+                self._redis.lpush(self._redis_key, serialized)
+                self._redis.ltrim(self._redis_key, 0, self.max_size - 1)
+                self._redis.expire(self._redis_key, int(self.ttl_seconds))
+            except Exception as e:
+                logger.debug("L2 cache write failed: %s", e)

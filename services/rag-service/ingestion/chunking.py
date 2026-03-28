@@ -310,8 +310,8 @@ def _split_into_children(text: str, doc_id: str, source: str, page: int,
             prev = children[-1]
             merged = prev["text"] + " " + buffer
             prev["text"] = merged[:MAX_CHUNK_CHARS]
-        elif len(buffer) > 200:
-            # [P4] Increased standalone minimum from 80→150→200 for less noise
+        elif len(buffer) > 100:
+            # [P6-100] Standalone minimum 200→100 for higher ratio
             child_text = f"[{doc_id}] {buffer}"[:MAX_CHUNK_CHARS]
             children.append({
                 "text": child_text,
@@ -392,6 +392,73 @@ def _merge_small_segments(segments: list[dict], min_block_size: int = 300) -> li
     return blocks
 
 
+class FormFieldChunker(ChunkingStrategy):
+    """Tier 2.5: Split form-based documents by numbered fields.
+
+    Designed for Vietnamese government application templates (NOXH, Mẫu đơn)
+    where content is structured as numbered form fields:
+        1. Kính gửi: ...
+        2. Họ và tên: ...
+        10. Thực trạng về nhà ở: ...
+
+    [P6-FIX] Improves child/parent ratio for form-based documents by using
+    each numbered field as a natural child chunk boundary.
+    """
+
+    # Match numbered form fields: "1. ", "2. ", "10. ", "11.2. "
+    _FORM_FIELD_RE = re.compile(
+        r'\n\s*(?=\d+\.(?:\d+\.)*\s)'
+    )
+
+    def chunk(self, text: str, source: str, page: int, doc_id: str, layout: list = None) -> list[dict]:
+        # Only activate if text has numbered form fields
+        fields = self._FORM_FIELD_RE.split(text)
+        if len(fields) < 3:  # Need at least 3 numbered fields to be a form
+            return []
+
+        # Extra check: at least some fields should have form-like patterns
+        form_indicators = sum(
+            1 for f in fields
+            if re.search(r'(?:Kính gửi|Họ và\s*tên|Căn cước|Nghề nghiệp|Nơi ở|Đăng ký|Thuộc đối tượng|cam đoan|xác nhận|□)', f)
+        )
+        if form_indicators < 2:
+            return []
+
+        chunks = []
+        default_bbox = [0, 0, 1000, 1000]
+        parent_id = f"{source}:{page}:form"
+        h_path = f"[{doc_id} > Form > Page {page}]"
+
+        # Create parent chunk from full text
+        parent_text = f"[{doc_id}] {text.strip()}"[:MAX_CHUNK_CHARS]
+        chunks.append({
+            "text": parent_text, "source": source, "page": page,
+            "is_table": False, "chunk_type": "parent",
+            "parent_id": parent_id, "hierarchy_path": h_path,
+            "bbox": default_bbox
+        })
+
+        # Create child chunks from numbered fields
+        for idx, field in enumerate(fields):
+            field = field.strip()
+            if len(field) < 30:
+                continue
+            # Extract field number for hierarchy
+            field_num_match = re.match(r'(\d+\.(?:\d+\.)*)', field)
+            field_label = field_num_match.group(1).rstrip('.') if field_num_match else str(idx)
+
+            child_text = f"[{doc_id}] {field}"[:MAX_CHUNK_CHARS]
+            chunks.append({
+                "text": child_text, "source": source, "page": page,
+                "is_table": False, "chunk_type": "child",
+                "parent_id": parent_id,
+                "hierarchy_path": f"{h_path} -> [Field {field_label}]",
+                "bbox": default_bbox
+            })
+
+        return chunks
+
+
 class GenericFallbackChunker(ChunkingStrategy):
     """Tier 3: Sentence-based chunking (replaced fixed sliding window)."""
 
@@ -410,9 +477,11 @@ class GenericFallbackChunker(ChunkingStrategy):
                 "chunk_type": "parent", "parent_id": parent_id, "hierarchy_path": h_path,
                 "bbox": default_bbox
             })
-            # Sentence-based children instead of sliding window
+            # [P6-100] Use aggressive thresholds for higher ratio
+            child_min = 100 if len(text) < 800 else 200
             children = _split_into_children(
-                text, doc_id, source, page, parent_id, h_path, default_bbox
+                text, doc_id, source, page, parent_id, h_path, default_bbox,
+                min_child_length=child_min
             )
             chunks.extend(children)
             return chunks
@@ -586,12 +655,17 @@ def _is_noise_chunk(text: str) -> bool:
 class DocumentChunker:
     """Uses strategies sequentially until one succeeds."""
 
+    # Minimum table size (chars) to trigger summarization
+    TABLE_SUMMARY_MIN_CHARS = int(os.environ.get("TABLE_SUMMARY_MIN_CHARS", "2000"))
+    TABLE_SUMMARY_ENABLED = os.environ.get("TABLE_SUMMARY_ENABLED", "1") == "1"
+
     def __init__(self):
         self.strategies = [
             LayoutAwareChunker(),
             VietLawArticleChunker(),
             VietLawNumberedSectionChunker(),  # Tier 1.5: QCVN numeric sections
             VietLawSectionChunker(),
+            FormFieldChunker(),               # Tier 2.5: Form-based documents [P6-FIX]
             GenericFallbackChunker()
         ]
 
@@ -601,7 +675,112 @@ class DocumentChunker:
             if chunks:
                 # Filter out noise-only chunks
                 filtered = [c for c in chunks if not _is_noise_chunk(c.get("text", ""))]
+                result = filtered if filtered else chunks  # Safety: never return empty
+                # Generate summaries for large table chunks
+                if self.TABLE_SUMMARY_ENABLED:
+                    result = self._add_table_summaries(result, doc_id, source, page)
                 # Identity fields (doc_id, doc_number, chunk_id) are set
                 # centrally by the pipeline after chunking — not here.
-                return filtered if filtered else chunks  # Safety: never return empty
+                return result
         return []
+
+    def _add_table_summaries(self, chunks: list[dict], doc_id: str, source: str, page: int) -> list[dict]:
+        """Generate concise summary chunks for large tables.
+
+        For each table chunk exceeding TABLE_SUMMARY_MIN_CHARS, creates an
+        additional 'table_summary' chunk that captures the table's purpose,
+        columns, and key data points. This improves RAG recall for general
+        questions about tables without requiring full table retrieval.
+
+        Summary generation is synchronous but uses Gemini Flash (fast, free tier).
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        augmented = list(chunks)
+
+        for chunk in chunks:
+            if not chunk.get("is_table"):
+                continue
+            text = chunk.get("text", "")
+            if len(text) < self.TABLE_SUMMARY_MIN_CHARS:
+                continue
+
+            try:
+                summary = _generate_table_summary(text, doc_id)
+                if summary and len(summary) > 30:
+                    augmented.append({
+                        "text": f"[{doc_id}] [TABLE SUMMARY] {summary}"[:MAX_CHUNK_CHARS],
+                        "source": source,
+                        "page": page,
+                        "is_table": True,
+                        "chunk_type": "table_summary",
+                        "parent_id": chunk.get("parent_id", f"{source}:{page}:table_sum"),
+                        "hierarchy_path": chunk.get("hierarchy_path", "") + " -> [Summary]",
+                        "bbox": chunk.get("bbox", [0, 0, 1000, 1000]),
+                    })
+                    logger.info(
+                        f"[TABLE-SUM] Generated {len(summary)} char summary for "
+                        f"{len(text)} char table on page {page}"
+                    )
+            except Exception as e:
+                logger.debug(f"[TABLE-SUM] Skipped table summary: {e}")
+
+        return augmented
+
+
+def _generate_table_summary(table_text: str, doc_id: str) -> str:
+    """Generate a concise summary of a large table via LLM.
+
+    Uses the AI Gateway (Gemini Flash) for fast, cost-free summarization.
+    Falls back gracefully if the gateway is unavailable.
+
+    Returns:
+        Summary string, or empty string on failure.
+    """
+    import os
+    import logging
+    logger = logging.getLogger(__name__)
+
+    gateway_base = os.environ.get("VLLM_API_BASE", "http://ai-gateway:4000/v1")
+    api_key = os.environ.get("LITELLM_MASTER_KEY", "")
+    # Prefer Gemini Flash for table summaries (fast + free)
+    model = os.environ.get("TABLE_SUMMARY_MODEL", "gemini-flash")
+
+    prompt = (
+        "Tóm tắt bảng dữ liệu sau bằng tiếng Việt. "
+        "Nêu rõ: (1) Mục đích của bảng, (2) Tên các cột chính, "
+        "(3) Số dòng/mục dữ liệu, (4) Các giá trị nổi bật. "
+        "Trả lời ngắn gọn trong 2-3 câu.\n\n"
+        f"Bảng:\n{table_text[:3000]}"  # Cap input to avoid token overflow
+    )
+
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{gateway_base}/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 200,
+                "temperature": 0.1,
+            },
+            timeout=30.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            # Strip thinking tags if present (Qwen3.5 thinking mode)
+            import re
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+            return content
+        else:
+            logger.debug(f"[TABLE-SUM] Gateway returned {resp.status_code}")
+            return ""
+    except Exception as e:
+        logger.debug(f"[TABLE-SUM] LLM call failed: {e}")
+        return ""
+

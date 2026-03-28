@@ -12,7 +12,7 @@ pymupdf>=1.23.0
 pdfplumber>=0.10.0
 # paddleocr>=2.7.0
 # paddlepaddle>=2.6.0
-surya-ocr>=0.4.0
+surya-ocr==0.17.1
 # PyTorch — pinned to CUDA 12.4 build matching the Blackwell driver on DGX Spark.
 # Install via: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 torch==2.5.1+cu124

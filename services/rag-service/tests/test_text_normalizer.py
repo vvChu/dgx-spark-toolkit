@@ -10,6 +10,7 @@ from ingestion.text_normalizer import (
     normalize_chunk_text,
     fix_stuck_vietnamese_words,
     strip_document_boilerplate,
+    normalize_section_headings,
 )
 
 
@@ -153,6 +154,50 @@ class TestStuckVietnameseWords:
         assert fix_stuck_vietnamese_words('') == ''
         assert fix_stuck_vietnamese_words(None) is None
 
+    # ── BGTVT Thông tư corpus (2026-03 audit) ──
+    def test_camay(self):
+        assert fix_stuck_vietnamese_words('hao phí camáy chuyên dùng') == 'hao phí ca máy chuyên dùng'
+
+    def test_sonoi(self):
+        assert fix_stuck_vietnamese_words('sốnội dung') == 'số nội dung'
+
+    def test_nhucau(self):
+        assert fix_stuck_vietnamese_words('nhucầu sử dụng') == 'nhu cầu sử dụng'
+
+    def test_kykiet(self):
+        assert fix_stuck_vietnamese_words('kýkết theo quy định') == 'ký kết theo quy định'
+
+    def test_dautư(self):
+        assert fix_stuck_vietnamese_words('đầutư xây dựng') == 'đầu tư xây dựng'
+
+    def test_thong_tu_nay(self):
+        assert fix_stuck_vietnamese_words('Thông tưnày có hiệu lực') == 'Thông tư này có hiệu lực'
+
+
+class TestNormalizeSectionHeadings:
+    """Inline section number splitting for QCVN structure."""
+
+    def test_inline_split(self):
+        """Two section numbers on one line should be split."""
+        t = '1.1 Phạm vi điều chỉnh Quy chuẩn 1.2 Đối tượng áp dụng Quy chuẩn'
+        r = normalize_section_headings(t)
+        assert '1.2' in r and r.count('\n') >= 1, f"got: {r!r}"
+
+    def test_decimal_no_split(self):
+        """Decimal values like '1.5 triệu' should NOT be split."""
+        t = 'giá trị là 1.5 triệu đồng'
+        assert normalize_section_headings(t) == t
+
+    def test_table_ref_no_split(self):
+        """Table references like 'Bảng 1.2' should NOT be split."""
+        t = 'theo Bảng 1.2 quy định tại'
+        assert normalize_section_headings(t) == t
+
+    def test_separate_lines_preserved(self):
+        """Already-separate section lines should not be modified."""
+        t = '1.1 Phạm vi\n1.2 Đối tượng'
+        assert normalize_section_headings(t) == t
+
 
 class TestDigitalSignature:
     """Fix 5: Combined single-line digital signature block should be stripped."""
@@ -182,6 +227,7 @@ def run_all():
         ("TestDetectGarbledTable", TestDetectGarbledTable),
         ("TestNormalizeChunkText", TestNormalizeChunkText),
         ("TestStuckVietnameseWords", TestStuckVietnameseWords),
+        ("TestNormalizeSectionHeadings", TestNormalizeSectionHeadings),
         ("TestDigitalSignature", TestDigitalSignature),
     ]:
         instance = cls()

@@ -12,6 +12,7 @@ class SearchRequest(BaseModel):
     doc_number: Optional[str] = None
     use_hyde: Optional[bool] = None
     use_cache: Optional[bool] = None
+    session_id: Optional[str] = None  # Context Lake: session-scoped context
 
     @model_validator(mode="before")
     @classmethod
@@ -32,6 +33,8 @@ class ChatRequest(BaseModel):
     context_limit: Optional[int] = 5
     language: Optional[str] = "vi"  # vi or en
     model: Optional[str] = None  # Optional override
+    session_id: Optional[str] = None  # Context Lake: session-scoped memory
+    use_agentic: Optional[bool] = False  # Context Lake: multi-hop retrieval
 
 
 class EvaluationRequest(BaseModel):
@@ -101,6 +104,7 @@ class SearchResponse(BaseModel):
     query: str = ""
     rewritten_query: Optional[str] = None
     cached: bool = False
+    trace: Optional[Dict[str, Any]] = None  # Context Lake: reasoning trace
 
 
 class ChatResponse(BaseModel):
@@ -110,6 +114,8 @@ class ChatResponse(BaseModel):
     usage: Optional[Dict[str, Any]] = None
     cached: bool = False
     thought: Optional[str] = None
+    session_id: Optional[str] = None  # Context Lake: session identifier
+    trace: Optional[Dict[str, Any]] = None  # Context Lake: reasoning trace
 
 
 class HealthCheckResponse(BaseModel):

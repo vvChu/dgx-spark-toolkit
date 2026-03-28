@@ -107,6 +107,36 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize AsyncStateManager: {e}")
         state.async_state_manager = None
 
+    # ── Context Lake Services ──────────────────────────────────────────
+    redis_url = settings.REDIS_URL
+
+    # Session Memory (Redis DB 2)
+    try:
+        from retrieval.session_memory import SessionMemory
+        state.session_memory = SessionMemory(redis_url, ttl_seconds=settings.SESSION_MEMORY_TTL)
+        logger.info("Context Lake: SessionMemory initialized (DB 2, TTL=%ds).", settings.SESSION_MEMORY_TTL)
+    except Exception as e:
+        logger.error(f"Failed to initialize SessionMemory: {e}")
+        state.session_memory = None
+
+    # Query Trace Store (Redis DB 2)
+    try:
+        from retrieval.query_tracer import TraceStore
+        state.trace_store = TraceStore(redis_url)
+        logger.info("Context Lake: TraceStore initialized.")
+    except Exception as e:
+        logger.error(f"Failed to initialize TraceStore: {e}")
+        state.trace_store = None
+
+    # Context Accumulator (Redis DB 2)
+    try:
+        from retrieval.context_accumulator import ContextAccumulator
+        state.context_accumulator = ContextAccumulator(redis_url)
+        logger.info("Context Lake: ContextAccumulator initialized.")
+    except Exception as e:
+        logger.error(f"Failed to initialize ContextAccumulator: {e}")
+        state.context_accumulator = None
+
     # Attach to app state for requests
     app.state.neo4j_driver = state.neo4j_driver
     app.state.milvus_client = state.milvus_client
@@ -114,10 +144,18 @@ async def lifespan(app: FastAPI):
     app.state.http_client = state.http_client
     app.state.redis_queue = state.redis_queue
     app.state.async_state_manager = state.async_state_manager
+    app.state.session_memory = getattr(state, "session_memory", None)
+    app.state.trace_store = getattr(state, "trace_store", None)
+    app.state.context_accumulator = getattr(state, "context_accumulator", None)
 
     yield
 
     # Shutdown
+    for name in ("session_memory", "trace_store", "context_accumulator"):
+        svc = getattr(state, name, None)
+        if svc and hasattr(svc, "close"):
+            await svc.close()
+            logger.info(f"Context Lake: {name} closed.")
     if state.async_state_manager:
         await state.async_state_manager.close()
         logger.info("AsyncStateManager closed.")
@@ -125,7 +163,7 @@ async def lifespan(app: FastAPI):
         await state.neo4j_driver.close()
         logger.info("Neo4j connection closed.")
     if state.milvus_client:
-        await state.milvus_client.close()  # H6: was missing await
+        await state.milvus_client.close()
         logger.info("Milvus connection closed.")
     if state.http_client:
         await state.http_client.aclose()
@@ -196,10 +234,16 @@ async def get_retrieval_service(
 
 
 async def get_chat_service(
+    request: Request,
     milvus_repo: MilvusRepository = Depends(get_milvus_repo),
     neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
     http_client: httpx.AsyncClient = Depends(get_http_client),
 ) -> "ChatService":
-    """Dependency to inject the ChatService."""
+    """Dependency to inject the ChatService with Context Lake services."""
     from services.chat_service import ChatService
-    return ChatService(milvus_repo, neo4j_repo, http_client)
+    return ChatService(
+        milvus_repo, neo4j_repo, http_client,
+        session_memory=getattr(request.app.state, "session_memory", None),
+        trace_store=getattr(request.app.state, "trace_store", None),
+        context_accumulator=getattr(request.app.state, "context_accumulator", None),
+    )

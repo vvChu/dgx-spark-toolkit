@@ -25,8 +25,8 @@ def run(doc: ProcessedDocument, ctx) -> ProcessedDocument:
     doc.metadata.update_from_dict(meta)
     doc.metadata.file_name = os.path.basename(file_path)
 
-    # Step 2: Parallel LLM refinement (Qwen primary → Gemini fallback)
-    _LLM_TIMEOUT = 360
+    # Step 2: Parallel LLM refinement — each call is independent, partial success OK
+    _LLM_TIMEOUT = 60  # Free tier models respond in 2-10s; 60s is generous
 
     with ThreadPoolExecutor(max_workers=3) as executor:
         from ingestion.cloud_vision import llm_generate_summary, llm_extract_metadata
@@ -34,9 +34,22 @@ def run(doc: ProcessedDocument, ctx) -> ProcessedDocument:
         summary_future = executor.submit(llm_generate_summary, full_text_summary)
         rels_future = executor.submit(ctx.parse_relationships_llm, head_tail_rels)
 
-        refined_meta = meta_future.result(timeout=_LLM_TIMEOUT)
-        doc.summary = summary_future.result(timeout=_LLM_TIMEOUT)
-        rels = rels_future.result(timeout=_LLM_TIMEOUT)
+        # Each call handled independently — never let one failure kill the pipeline
+        try:
+            refined_meta = meta_future.result(timeout=_LLM_TIMEOUT)
+        except Exception as e:
+            logger.warning(f"  Metadata LLM failed ({e}), using regex only")
+            refined_meta = None
+        try:
+            doc.summary = summary_future.result(timeout=_LLM_TIMEOUT)
+        except Exception as e:
+            logger.warning(f"  Summary LLM failed ({e}), skipping")
+            doc.summary = ""
+        try:
+            rels = rels_future.result(timeout=_LLM_TIMEOUT)
+        except Exception as e:
+            logger.warning(f"  Relationships LLM failed ({e}), using regex fallback")
+            rels = ctx.parse_relationships(head_tail_rels)
 
     # Step 3: Harden metadata refinement
     if refined_meta:

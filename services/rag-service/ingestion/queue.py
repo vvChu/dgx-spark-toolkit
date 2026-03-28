@@ -103,6 +103,13 @@ class RedisQueue:
                     data["msg_id"] = msg_id
                     messages.append(data)
             return messages
+        except redis.ResponseError as e:
+            if "NOGROUP" in str(e):
+                logger.warning("Consumer group missing — recreating...")
+                self._ensure_group()
+                return []  # Will succeed on next poll cycle
+            logger.error(f"Error claiming from queue: {e}")
+            return []
         except Exception as e:
             logger.error(f"Error claiming from queue: {e}")
             return []

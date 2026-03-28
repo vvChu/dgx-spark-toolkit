@@ -240,6 +240,15 @@ def clean_llm_text(text: str, source_id: str = "unknown", is_summary: bool = Fal
         (r'(sai số|saisof)(tần|tốc)', r'sai số \2'),
         (r'(bao gồm|baogồm)(các|cả|một)', r'bao gồm \2'),
         (r'(?i)(một số|mộtsố)(quy|điều|vấn|hành|trường)', r'một số \2'),
+        # ── BGTVT Thông tư corpus patterns (2026-03 audit) ──
+        (r'\bcamáy\b', 'ca máy'),
+        (r'\bnhucầu\b', 'nhu cầu'),
+        (r'\bkýkết\b', 'ký kết'),
+        (r'\bsốnội\b', 'số nội'),
+        (r'\bđầutư\b', 'đầu tư'),
+        (r'\bcơcấu\b', 'cơ cấu'),
+        (r'\bkỹthuật\b', 'kỹ thuật'),
+        (r'\bđảmbảo\b', 'đảm bảo'),
         # Strip extra spaces from earlier fixes (cleanup)
         (r'  +', r' '),
     ]

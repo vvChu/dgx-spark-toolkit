@@ -1,0 +1,229 @@
+{
+  "surya_version": "0.17.1",
+  "device": "auto",
+  "timestamp": "2026-03-28T16:43:46",
+  "summary": {
+    "total_pages": 7,
+    "total_time_s": 393.52,
+    "avg_time_per_page_s": 56.22,
+    "total_chars": 14759,
+    "total_lines": 271
+  },
+  "documents": [
+    {
+      "file": "20210402_QD347-BXD_Huong dan ap dung BIM_CT dan dung+HTKT.pdf",
+      "total_pages": 1,
+      "pages": [
+        {
+          "page": 1,
+          "errors": [],
+          "detection_time_s": 5.71,
+          "text_regions": 38,
+          "recognition_time_s": 35.57,
+          "text_lines": 38,
+          "total_chars": 1511,
+          "sample_lines": [
+            "Bộ Xây dựng",
+            "02-04-2021",
+            "16:20:14"
+          ],
+          "avg_confidence": 0.982,
+          "layout_time_s": 11.88,
+          "layout_labels": {
+            "PageHeader": 1
+          },
+          "difficulty": {
+            "noise_level": 13.3,
+            "skew_angle": 0.0,
+            "contrast_ratio": 45.3,
+            "text_density": 0.049,
+            "white_ratio": 0.899,
+            "difficulty_score": 25.0
+          },
+          "total_time_s": 53.16
+        }
+      ]
+    },
+    {
+      "file": "Luat_50-2014-QH13_Luat Xay dung_18-6-2014.pdf",
+      "total_pages": 98,
+      "pages": [
+        {
+          "page": 1,
+          "errors": [],
+          "detection_time_s": 2.91,
+          "text_regions": 40,
+          "recognition_time_s": 45.06,
+          "text_lines": 40,
+          "total_chars": 1910,
+          "sample_lines": [
+            "Ký bởi: Cổng Thông tin điện tử Chính phủ<br>Email: thongtinchinhphu@chinhphu.vn<br>Cơ quan: Văn phòng Chính phủ<br>Thời gian ký: 06.08.2014 11:02:09 +07:00",
+            "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM",
+            "QUỐC HỘI"
+          ],
+          "avg_confidence": 0.976,
+          "layout_time_s": 12.27,
+          "layout_labels": {
+            "PageHeader": 1
+          },
+          "difficulty": {
+            "noise_level": 66.8,
+            "skew_angle": 90.0,
+            "contrast_ratio": 53.9,
+            "text_density": 0.057,
+            "white_ratio": 0.92,
+            "difficulty_score": 35.0
+          },
+          "total_time_s": 60.24
+        },
+        {
+          "page": 2,
+          "errors": [],
+          "detection_time_s": 2.95,
+          "text_regions": 38,
+          "recognition_time_s": 41.42,
+          "text_lines": 38,
+          "total_chars": 2313,
+          "sample_lines": [
+            "2",
+            "5. Chỉ giới đường đỏ là đường ranh giới được xác định trên bản đồ quy",
+            "hoạch và thực địa để phân định ranh giới giữa phần đất được xây dựng công"
+          ],
+          "avg_confidence": 0.996,
+          "layout_time_s": 13.02,
+          "layout_labels": {
+            "PageHeader": 1
+          },
+          "difficulty": {
+            "noise_level": 78.4,
+            "skew_angle": 90.0,
+            "contrast_ratio": 58.4,
+            "text_density": 0.068,
+            "white_ratio": 0.903,
+            "difficulty_score": 35.0
+          },
+          "total_time_s": 57.39
+        },
+        {
+          "page": 3,
+          "errors": [],
+          "detection_time_s": 3.09,
+          "text_regions": 38,
+          "recognition_time_s": 36.27,
+          "text_lines": 38,
+          "total_chars": 2407,
+          "sample_lines": [
+            "3",
+            "15. Dự án đầu tư xây dựng là tập hợp các đề xuất có liên quan đến việc sử",
+            "dụng vốn để tiến hành hoạt động xây dựng để xây dựng mới, sửa chữa, cải tạo"
+          ],
+          "avg_confidence": 0.997,
+          "layout_time_s": 12.11,
+          "layout_labels": {
+            "PageHeader": 1,
+            "PageFooter": 1
+          },
+          "difficulty": {
+            "noise_level": 81.4,
+            "skew_angle": 90.0,
+            "contrast_ratio": 59.5,
+            "text_density": 0.071,
+            "white_ratio": 0.9,
+            "difficulty_score": 35.0
+          },
+          "total_time_s": 51.47
+        }
+      ]
+    },
+    {
+      "file": "Luat_31-2024-QH15_Luat Dat dai_thaytheLuat45-2013.pdf",
+      "total_pages": 213,
+      "pages": [
+        {
+          "page": 1,
+          "errors": [],
+          "detection_time_s": 2.92,
+          "text_regions": 34,
+          "recognition_time_s": 36.75,
+          "text_lines": 34,
+          "total_chars": 1504,
+          "sample_lines": [
+            "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM",
+            "QUỐC HỘI",
+            "Độc lập - Tự do - Hạnh phúc"
+          ],
+          "avg_confidence": 0.983,
+          "layout_time_s": 12.12,
+          "layout_labels": {
+            "PageHeader": 1
+          },
+          "difficulty": {
+            "noise_level": 11.6,
+            "skew_angle": 0.99,
+            "contrast_ratio": 44.7,
+            "text_density": 0.05,
+            "white_ratio": 0.899,
+            "difficulty_score": 30.0
+          },
+          "total_time_s": 51.79
+        },
+        {
+          "page": 2,
+          "errors": [],
+          "detection_time_s": 2.83,
+          "text_regions": 41,
+          "recognition_time_s": 37.51,
+          "text_lines": 41,
+          "total_chars": 2545,
+          "sample_lines": [
+            "2",
+            "4. Bảo vệ, cải tạo, phục hồi đất là việc áp dụng các biện pháp quản lý, kỹ",
+            "thuật, cơ giới, sinh học, hữu cơ tác động vào đất để xử lý đất bị ô nhiễm, phục"
+          ],
+          "avg_confidence": 0.989,
+          "layout_time_s": 12.86,
+          "layout_labels": {
+            "PageHeader": 1
+          },
+          "difficulty": {
+            "noise_level": 19.6,
+            "skew_angle": 89.37,
+            "contrast_ratio": 53.8,
+            "text_density": 0.079,
+            "white_ratio": 0.837,
+            "difficulty_score": 15.0
+          },
+          "total_time_s": 53.2
+        },
+        {
+          "page": 3,
+          "errors": [],
+          "detection_time_s": 3.55,
+          "text_regions": 42,
+          "recognition_time_s": 49.34,
+          "text_lines": 42,
+          "total_chars": 2569,
+          "sample_lines": [
+            "7",
+            "3",
+            "4"
+          ],
+          "avg_confidence": 0.98,
+          "layout_time_s": 13.38,
+          "layout_labels": {
+            "PageHeader": 1
+          },
+          "difficulty": {
+            "noise_level": 19.8,
+            "skew_angle": 3.23,
+            "contrast_ratio": 54.2,
+            "text_density": 0.08,
+            "white_ratio": 0.835,
+            "difficulty_score": 15.0
+          },
+          "total_time_s": 66.27
+        }
+      ]
+    }
+  ]
+}

@@ -14,10 +14,13 @@ async def chat_endpoint(
 ):
     """
     Generate a chat response with retrieved legal document context.
+    Supports Context Lake features: session memory, agentic retrieval.
     """
     return await service.generate_response(
         query=request.query,
         history=request.history,
         language=request.language,
-        model=request.model
+        model=request.model,
+        session_id=request.session_id,
+        use_agentic=request.use_agentic,
     )

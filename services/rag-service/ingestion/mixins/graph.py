@@ -5,7 +5,7 @@ import re
 import time
 
 from ingestion.json_parser import extract_json_from_response
-from ingestion.pipeline_config import JSON_MODEL
+from ingestion.pipeline_config import RELATIONSHIP_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +17,17 @@ class GraphMixin:
         """Extract legal relationships using LLM for higher precision with Regex fallback."""
         try:
             payload = {
-                "model": JSON_MODEL,
+                "model": RELATIONSHIP_MODEL,
                 "messages": [
                     {"role": "system", "content": "You are a Vietnamese legal knowledge graph expert. Extract relationships between documents as JSON. Do NOT include any 'Thinking Process', 'Analysis', or preamble. NO text before or after the JSON block. Start exactly with '{' and end exactly with '}'."},
                     {"role": "user", "content": f"Extract relationship JSON from this text (Respond ONLY with JSON):\n\n{text[:6000]}"}
                 ],
                 "max_tokens": 4096,
                 "temperature": 0.0,
-                "extra_body": {
-                    "chat_template_kwargs": {"enable_thinking": False}
-                }
             }
+            # Only add vLLM-specific params for local models
+            if RELATIONSHIP_MODEL in ("rag-core", "qwen3.5-35b", "rag-light"):
+                payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
             headers = {"Authorization": f"Bearer {self.vision.api_key}"}
             max_retries = 3
             for attempt in range(max_retries):

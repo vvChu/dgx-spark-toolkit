@@ -71,8 +71,15 @@ class ImagePreprocessor:
         self.clahe_clip_limit = clahe_clip_limit
         self.clahe_grid_size = clahe_grid_size
 
-    def enhance(self, img_bytes: bytes, dpi: int = 200) -> bytes:
-        """Full enhancement pipeline: Upscale → Deskew → Denoise → Binarize → CLAHE."""
+    def enhance(self, img_bytes: bytes, dpi: int = 300, mode: str = "full") -> bytes:
+        """Image enhancement pipeline.
+
+        Modes:
+            'full'  — Upscale → Deskew → Denoise → Morph Close → Binarize → CLAHE
+                       (optimized for traditional OCR engines like Surya)
+            'light' — Upscale → Deskew → Denoise → CLAHE (NO binarization)
+                       (optimized for LLM Vision models that prefer grayscale)
+        """
         t_start = time.monotonic()
         try:
             # Decode
@@ -94,13 +101,17 @@ class ImagePreprocessor:
             # Step 3: Denoise
             gray = self._denoise(gray)
 
-            # Step 4: Adaptive binarization
-            gray = self._binarize(gray)
+            if mode == "full":
+                # Step 4: Morphological closing (preserves Vietnamese diacritics)
+                gray = self._morphological_close(gray)
 
-            # Step 5: CLAHE contrast enhancement
+                # Step 5: Adaptive binarization
+                gray = self._binarize(gray)
+
+            # Step 6: CLAHE contrast enhancement (both modes)
             gray = self._clahe(gray)
 
-            # Step 6: Watermark/seal removal (opt-in)
+            # Step 7: Watermark/seal removal (opt-in)
             if REMOVE_WATERMARKS:
                 gray = self._remove_seals(img, gray)
 
@@ -195,6 +206,21 @@ class ImagePreprocessor:
             return denoised
         except Exception as e:
             logger.debug(f"[PREPROCESS] Denoise failed: {e}")
+            return gray
+
+    def _morphological_close(self, gray: np.ndarray) -> np.ndarray:
+        """Morphological closing to reconnect broken Vietnamese diacritics.
+
+        Vietnamese tonal marks (ơ/ờ/ở, ư/ừ/ử, ă/ắ/ặ) are small strokes that
+        often break apart during scanning. A gentle morphological close
+        (dilate→erode) reconnects these fragments without bloating text.
+        """
+        try:
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+            closed = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
+            return closed
+        except Exception as e:
+            logger.debug(f"[PREPROCESS] Morphological close failed: {e}")
             return gray
 
     def _binarize(self, gray: np.ndarray) -> np.ndarray:
@@ -307,7 +333,7 @@ def _get_preprocessor() -> ImagePreprocessor:
     return _preprocessor
 
 
-def preprocess_page_image(img_bytes: bytes, dpi: int = 200) -> bytes:
+def preprocess_page_image(img_bytes: bytes, dpi: int = 300, mode: str = "full") -> bytes:
     """Public API: Preprocess a scanned page image for OCR.
 
     If IMAGE_PREPROCESS env var is "0", returns the input unchanged.
@@ -315,6 +341,7 @@ def preprocess_page_image(img_bytes: bytes, dpi: int = 200) -> bytes:
     Args:
         img_bytes: Raw JPEG/PNG bytes of the scanned page.
         dpi: Known or estimated DPI of the scan.
+        mode: 'full' for traditional OCR (Surya), 'light' for LLM Vision.
 
     Returns:
         Enhanced JPEG bytes (or original bytes if disabled/error).
@@ -323,4 +350,140 @@ def preprocess_page_image(img_bytes: bytes, dpi: int = 200) -> bytes:
         PREPROCESS_COUNT.labels(result="skipped").inc()
         return img_bytes
 
-    return _get_preprocessor().enhance(img_bytes, dpi=dpi)
+    return _get_preprocessor().enhance(img_bytes, dpi=dpi, mode=mode)
+
+
+def preprocess_for_llm(img_bytes: bytes, dpi: int = 300) -> bytes:
+    """Public API: Light preprocessing for LLM Vision models.
+
+    Applies only: Upscale → Deskew → Denoise → CLAHE.
+    Skips binarization — LLM Vision models (Gemini, Qwen) work better
+    with grayscale images that retain more visual information.
+    """
+    if not ENABLED:
+        return img_bytes
+    return _get_preprocessor().enhance(img_bytes, dpi=dpi, mode="light")
+
+
+# ---------------------------------------------------------------------------
+# Page Difficulty Scoring — features for Dynamic Thresholding
+# ---------------------------------------------------------------------------
+
+try:
+    from prometheus_client import Gauge as _DiffGauge
+    PAGE_DIFFICULTY_SCORE = _DiffGauge(
+        "page_difficulty_score", "Composite page difficulty score (0-100)"
+    )
+except (ImportError, ValueError):
+    PAGE_DIFFICULTY_SCORE = type("_", (), {"set": lambda self, v: None})()
+
+
+def compute_page_difficulty(img_bytes: bytes) -> dict:
+    """Compute measurable image difficulty features for dynamic thresholding.
+
+    Features extracted:
+      - noise_level: std-dev of Laplacian (higher = noisier, range 0-100)
+      - skew_angle: absolute detected skew in degrees (0-10)
+      - contrast_ratio: std-dev of pixel intensities (lower = washed out)
+      - text_density: fraction of near-black pixels (0.0-1.0)
+      - white_ratio: fraction of near-white pixels (0.0-1.0)
+      - difficulty_score: composite 0-100 (higher = harder page)
+
+    The difficulty_score can replace fixed thresholds (55/70) in
+    evaluate_ocr_quality to route damaged pages directly to Vision Fallback.
+
+    Returns:
+        Dict with feature keys. Returns zeroed dict on error.
+    """
+    default = {
+        "noise_level": 0.0, "skew_angle": 0.0, "contrast_ratio": 50.0,
+        "text_density": 0.5, "white_ratio": 0.5, "difficulty_score": 0.0,
+    }
+    try:
+        arr = np.frombuffer(img_bytes, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+        if img is None or img.size == 0:
+            return default
+
+        h, w = img.shape[:2]
+
+        # 1. Noise level — variance of Laplacian (blur detector)
+        laplacian_var = cv2.Laplacian(img, cv2.CV_64F).var()
+        noise_level = min(100.0, laplacian_var / 50.0)  # Normalize to 0-100
+
+        # 2. Skew angle — from contour analysis
+        skew_angle = 0.0
+        try:
+            thresh = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+            coords = np.column_stack(np.where(thresh > 0))
+            if len(coords) > 100:
+                angle = cv2.minAreaRect(coords)[-1]
+                if angle < -45:
+                    angle = -(90 + angle)
+                else:
+                    angle = -angle
+                skew_angle = abs(angle)
+        except Exception:
+            pass
+
+        # 3. Contrast ratio — std-dev of pixel intensities
+        contrast_ratio = float(np.std(img))
+
+        # 4. Text density — fraction of dark pixels
+        text_density = float((img < 128).mean())
+
+        # 5. White ratio — fraction of near-white pixels
+        white_ratio = float((img > 230).mean())
+
+        # 6. Composite difficulty score (0-100)
+        # High noise → harder, low contrast → harder, high skew → harder
+        # Very low text density → blank/spacer, very high → dense/complex
+        score = 0.0
+        # Noise penalty (noisy scans are harder)
+        if noise_level < 5:
+            score += 30  # Very blurry image — hard for OCR
+        elif noise_level > 60:
+            score += 20  # Very noisy
+
+        # Contrast penalty (low contrast = washed out scan)
+        if contrast_ratio < 30:
+            score += 25
+        elif contrast_ratio < 50:
+            score += 10
+
+        # Skew penalty
+        if skew_angle > 2.0:
+            score += 15
+        elif skew_angle > 0.5:
+            score += 5
+
+        # Text density: too low or too high is problematic
+        if text_density < 0.05:
+            score += 15  # Nearly blank
+        elif text_density > 0.6:
+            score += 10  # Very dense (possible image/scan artifact)
+
+        difficulty_score = min(100.0, max(0.0, score))
+
+        PAGE_DIFFICULTY_SCORE.set(difficulty_score)
+
+        result = {
+            "noise_level": round(noise_level, 1),
+            "skew_angle": round(skew_angle, 2),
+            "contrast_ratio": round(contrast_ratio, 1),
+            "text_density": round(text_density, 3),
+            "white_ratio": round(white_ratio, 3),
+            "difficulty_score": round(difficulty_score, 1),
+        }
+
+        logger.debug(
+            f"[DIFFICULTY] noise={result['noise_level']:.0f} skew={result['skew_angle']:.1f}° "
+            f"contrast={result['contrast_ratio']:.0f} density={result['text_density']:.2f} "
+            f"→ score={result['difficulty_score']:.0f}"
+        )
+        return result
+
+    except Exception as e:
+        logger.debug(f"[DIFFICULTY] Computation failed: {e}")
+        return default
+

@@ -156,8 +156,22 @@ def _validate_markdown_table(md: str) -> bool:
 
     # Check 1: too many empty cells
     if empty_or_tiny / total_cells > 0.50:
-        logger.info(f"  [TABLE] Rejected garbled table: {empty_or_tiny}/{total_cells} cells empty/tiny")
-        return False
+        # Check if this is a checklist table (cells contain mark values like "X")
+        _CHECKLIST_MARKS = {"X", "x", "✓", "✗", "O", "Χ", "Х", "●", "○", "√"}
+        mark_cells = 0
+        for line in data_lines:
+            for cell in [c.strip() for c in line.strip().strip("|").split("|")]:
+                if cell in _CHECKLIST_MARKS:
+                    mark_cells += 1
+        if mark_cells > 0 and mark_cells / max(empty_or_tiny, 1) > 0.15:
+            logger.info(
+                f"  [TABLE] Accepted checklist table: "
+                f"{mark_cells} marks in {empty_or_tiny} tiny cells ({total_cells} total)"
+            )
+            return True  # Skip fragment-token check — checklist tables have many short tokens
+        else:
+            logger.info(f"  [TABLE] Rejected garbled table: {empty_or_tiny}/{total_cells} cells empty/tiny")
+            return False
 
     # Check 2: too many word fragments (1-3 char tokens)
     if all_tokens:

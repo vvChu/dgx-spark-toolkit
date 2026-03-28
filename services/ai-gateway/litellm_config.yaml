@@ -27,6 +27,18 @@ model_list:
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
 
+  - model_name: claude-sonnet-4-5-thinking
+    litellm_params:
+      model: openai/claude-sonnet-4-5-thinking
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+
+  - model_name: claude-sonnet-4-6-thinking
+    litellm_params:
+      model: openai/claude-sonnet-4-6-thinking
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+
   - model_name: claude-opus-4-5
     litellm_params:
       model: openai/claude-opus-4-5-20251101
@@ -52,13 +64,9 @@ model_list:
       api_key: os.environ/GATEWAY_PROXY_KEY
 
   # =====================================================================
-  # GEMINI MODELS — via Gateway Proxy (verified 2026-03-23)
+  # GEMINI PRO MODELS — via Gateway Proxy (verified 2026-03-23)
+  # Note: gemini-3-flash moved to multi-source section below
   # =====================================================================
-  - model_name: gemini-3-flash
-    litellm_params:
-      model: openai/gemini-3-flash
-      api_base: os.environ/GATEWAY_PROXY_URL
-      api_key: os.environ/GATEWAY_PROXY_KEY
 
   - model_name: gemini-3-pro-high
     litellm_params:
@@ -125,7 +133,7 @@ model_list:
 
   - model_name: rag-light
     litellm_params:
-      model: openai/qwen3.5-4b
+      model: openai/qwen3.5-9b
       api_base: http://vllm-4b:8000/v1
       api_key: "unused"
       extra_body:
@@ -135,44 +143,178 @@ model_list:
       mode: chat
 
   # =====================================================================
-  # GEMINI MODELS — Direct Google API (free tier, rate limited)
+  # GEMINI 3 — Direct API (priority) + Gateway Proxy (fallback)
   # =====================================================================
-  - model_name: gemini-2.5-flash
+
+  # Gemini 3 Flash — Direct Google API (key 1, priority)
+  - model_name: gemini-3-flash
     litellm_params:
-      model: gemini/gemini-2.5-flash
+      model: gemini/gemini-3-flash-preview
+      api_key: os.environ/GEMINI_API_KEY
+      weight: 3
+
+  # Gemini 3 Flash — Direct Google API (key 2, priority)
+  - model_name: gemini-3-flash
+    litellm_params:
+      model: gemini/gemini-3-flash-preview
+      api_key: os.environ/GEMINI_API_KEY_2
+      weight: 3
+
+  # Gemini 3 Flash — Direct Google API (key 3, priority)
+  - model_name: gemini-3-flash
+    litellm_params:
+      model: gemini/gemini-3-flash-preview
+      api_key: os.environ/GEMINI_API_KEY_3
+      weight: 3
+
+  # Gemini 3 Flash — Direct Google API (key 4, priority)
+  - model_name: gemini-3-flash
+    litellm_params:
+      model: gemini/gemini-3-flash-preview
+      api_key: os.environ/GEMINI_API_KEY_4
+      weight: 3
+
+  # Gemini 3 Flash — Direct Google API (key 5, priority)
+  - model_name: gemini-3-flash
+    litellm_params:
+      model: gemini/gemini-3-flash-preview
+      api_key: os.environ/GEMINI_API_KEY_5
+      weight: 3
+
+  # Gemini 3 Flash — Direct Google API (key 6, priority)
+  - model_name: gemini-3-flash
+    litellm_params:
+      model: gemini/gemini-3-flash-preview
+      api_key: os.environ/GEMINI_API_KEY_6
+      weight: 3
+
+  # Gemini 3 Flash — via Gateway Proxy (fallback)
+  - model_name: gemini-3-flash
+    litellm_params:
+      model: openai/gemini-3-flash
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      weight: 1
+
+  # =====================================================================
+  # GEMINI 3.1 FLASH LITE — Fastest & cheapest, Direct API only
+  # 2.5x faster than 2.5 Flash, free tier: ~10 RPM, ~250 RPD per key
+  # =====================================================================
+
+  # Gemini 3.1 Flash Lite — Direct Google API (key 1)
+  - model_name: gemini-3.1-flash-lite
+    litellm_params:
+      model: gemini/gemini-3.1-flash-lite-preview
       api_key: os.environ/GEMINI_API_KEY
 
-  - model_name: gemini-2.5-flash-lite
+  # Gemini 3.1 Flash Lite — Direct Google API (key 2)
+  - model_name: gemini-3.1-flash-lite
     litellm_params:
-      model: gemini/gemini-2.5-flash-lite
-      api_key: os.environ/GEMINI_API_KEY
+      model: gemini/gemini-3.1-flash-lite-preview
+      api_key: os.environ/GEMINI_API_KEY_2
+
+  # Gemini 3.1 Flash Lite — Direct Google API (key 3)
+  - model_name: gemini-3.1-flash-lite
+    litellm_params:
+      model: gemini/gemini-3.1-flash-lite-preview
+      api_key: os.environ/GEMINI_API_KEY_3
+
+  # Gemini 3.1 Flash Lite — Direct Google API (key 4)
+  - model_name: gemini-3.1-flash-lite
+    litellm_params:
+      model: gemini/gemini-3.1-flash-lite-preview
+      api_key: os.environ/GEMINI_API_KEY_4
+
+  # Gemini 3.1 Flash Lite — Direct Google API (key 5)
+  - model_name: gemini-3.1-flash-lite
+    litellm_params:
+      model: gemini/gemini-3.1-flash-lite-preview
+      api_key: os.environ/GEMINI_API_KEY_5
+
+  # Gemini 3.1 Flash Lite — Direct Google API (key 6)
+  - model_name: gemini-3.1-flash-lite
+    litellm_params:
+      model: gemini/gemini-3.1-flash-lite-preview
+      api_key: os.environ/GEMINI_API_KEY_6
 
   # =====================================================================
-  # EMBEDDING — Local BGE-M3
+  # GEMMA 3 27B — Free tier (~14K RPD, nearly unlimited)
+  # Good for high-volume metadata/summary fallback
   # =====================================================================
-  - model_name: bge-m3
+
+  # Gemma 3 27B — Direct Google API (key 1)
+  - model_name: gemma-3-27b
     litellm_params:
-      model: openai/bge-m3
-      api_base: http://qwen35b:8000/v1
-      api_key: "unused"
+      model: gemini/gemma-3-27b-it
+      api_key: os.environ/GEMINI_API_KEY
+
+  # Gemma 3 27B — Direct Google API (key 2)
+  - model_name: gemma-3-27b
+    litellm_params:
+      model: gemini/gemma-3-27b-it
+      api_key: os.environ/GEMINI_API_KEY_2
+
+  # Gemma 3 27B — Direct Google API (key 3)
+  - model_name: gemma-3-27b
+    litellm_params:
+      model: gemini/gemma-3-27b-it
+      api_key: os.environ/GEMINI_API_KEY_3
+
+  # Gemma 3 27B — Direct Google API (key 4)
+  - model_name: gemma-3-27b
+    litellm_params:
+      model: gemini/gemma-3-27b-it
+      api_key: os.environ/GEMINI_API_KEY_4
+
+  # Gemma 3 27B — Direct Google API (key 5)
+  - model_name: gemma-3-27b
+    litellm_params:
+      model: gemini/gemma-3-27b-it
+      api_key: os.environ/GEMINI_API_KEY_5
+
+  # Gemma 3 27B — Direct Google API (key 6)
+  - model_name: gemma-3-27b
+    litellm_params:
+      model: gemini/gemma-3-27b-it
+      api_key: os.environ/GEMINI_API_KEY_6
+
 
 router_settings:
   routing_strategy: latency-based-routing
-  allowed_fails: 1
-  cooldown_time: 60
-  num_retries: 3
-  fallbacks_retry_after: 120
+  allowed_fails: 3              # 3 fails trước khi cooldown (tránh false positive)
+  cooldown_time: 600            # cooldown 10 phút — phù hợp quota reset hourly
+  num_retries: 2                # 2 retries (giảm lãng phí khi model chắc chắn 503)
+  retry_after: 15               # chờ 15s giữa các retry
+  timeout: 30                   # request timeout 30s
 
   fallbacks:
-    - {"claude-opus-4-6-thinking": ["gemini-3.1-pro-high", "gpt-oss-120b-medium", "rag-core"]}
+    # Claude tiers — cascade xuống model rẻ hơn → Gemini → Local
+    - {"claude-opus-4-6-thinking": ["claude-opus-4-5-thinking", "claude-sonnet-4-6-thinking", "gemini-3.1-pro-high", "rag-core"]}
+    - {"claude-opus-4-5-thinking": ["claude-sonnet-4-6-thinking", "claude-sonnet-4-5-thinking", "gemini-3.1-pro-high", "rag-core"]}
+    - {"claude-sonnet-4-6-thinking": ["claude-sonnet-4-5-thinking", "gemini-3-flash", "rag-core"]}
+    - {"claude-sonnet-4-5-thinking": ["claude-sonnet-4-6", "gemini-3-flash", "rag-core"]}
     - {"claude-opus-4-6": ["claude-opus-4-5", "gemini-3.1-pro-high", "rag-core"]}
     - {"claude-sonnet-4-6": ["claude-sonnet-4-5", "gemini-3-flash", "rag-core"]}
+    - {"claude-sonnet-4-5": ["claude-haiku-4-5", "gemini-3-flash", "rag-core"]}
     - {"claude-haiku-4-5": ["claude-haiku-4", "gemini-3-flash", "rag-core"]}
-    - {"gemini-3.1-pro-high": ["gemini-3.1-pro-low", "gemini-3-pro-high", "rag-core"]}
-    - {"gemini-3.1-pro-low": ["gemini-3-pro-low", "gemini-2.5-flash", "rag-core"]}
-    - {"gemini-3-flash": ["gemini-2.5-flash", "rag-core"]}
-    - {"gemini-2.5-flash": ["gemini-2.5-flash-lite", "rag-core"]}
-    - {"rag-core": ["gemini-3-flash", "gemini-2.5-flash"]}
+
+    # Gemini tiers — cascade qua các biến thể (bao gồm 3.1 Flash Lite + Gemma fallback)
+    - {"gemini-3.1-pro-high": ["gemini-3.1-pro", "gemini-3.1-pro-low", "rag-core"]}
+    - {"gemini-3.1-pro": ["gemini-3.1-pro-low", "gemini-3-pro-high", "rag-core"]}
+    - {"gemini-3.1-pro-low": ["gemini-3-pro-low", "gemini-3-flash", "rag-core"]}
+    - {"gemini-3-flash": ["gemini-3.1-flash-lite", "gemma-3-27b", "rag-core"]}
+    - {"gemini-3.1-flash-lite": ["gemma-3-27b", "gemini-3-flash", "rag-core"]}
+    - {"gemma-3-27b": ["gemini-3.1-flash-lite", "rag-core"]}
+
+    # GPT-OSS → Gemini → Local
+    - {"gpt-oss-120b-medium": ["gemini-3.1-pro-high", "rag-core"]}
+
+    # Local fallback → best available remote
+    - {"rag-core": ["gemini-3-flash", "gemini-3.1-flash-lite"]}
+    - {"rag-light": ["rag-core"]}
+
+  # Catch-all: bất kỳ model nào fail mà không có fallback cụ thể → rag-core
+  default_fallbacks: ["rag-core"]
 
 litellm_settings:
   success_callback: ["prometheus"]
@@ -187,3 +329,6 @@ litellm_settings:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
+  background_health_checks: true
+  health_check_interval: 120    # 2 phút — phát hiện model recover nhanh hơn
+  health_check_details: false
