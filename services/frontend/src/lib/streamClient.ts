@@ -35,12 +35,24 @@ export interface StreamChatOptions {
   signal?: AbortSignal;
 }
 
+export interface StreamResult {
+  fallbackUsed: boolean;
+  tokensReceived: number;
+  thoughtsReceived: number;
+  contextCount: number;
+}
+
 export class StreamClient {
   /**
    * Execute SSE streaming chat with automatic event parsing and REST fallback.
+   * Returns execution statistics (fallback status, token counts, context items).
    */
-  static async streamChat(options: StreamChatOptions): Promise<void> {
+  static async streamChat(options: StreamChatOptions): Promise<StreamResult> {
     const { query, language, onContext, onToken, onThought, onError, signal } = options;
+    let tokensReceived = 0;
+    let thoughtsReceived = 0;
+    let contextCount = 0;
+    let fallbackUsed = false;
 
     try {
       const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -72,15 +84,21 @@ export class StreamClient {
           if (!eventStr.startsWith('data: ')) continue;
           const dataStr = eventStr.slice(6).trim();
 
-          if (dataStr === '[DONE]') return;
+          if (dataStr === '[DONE]') {
+            return { fallbackUsed, tokensReceived, thoughtsReceived, contextCount };
+          }
 
           try {
             const parsed = JSON.parse(dataStr) as StreamEvent;
             if (parsed.type === 'context' && onContext) {
-              onContext(parsed.data as ContextItem[]);
+              const items = parsed.data as ContextItem[];
+              contextCount = items.length;
+              onContext(items);
             } else if (parsed.type === 'token' && onToken) {
+              tokensReceived++;
               onToken(parsed.data as string);
             } else if (parsed.type === 'thought' && onThought) {
+              thoughtsReceived++;
               onThought(parsed.data as string);
             } else if (parsed.type === 'error' && onError) {
               onError(parsed.data as string);
@@ -90,22 +108,27 @@ export class StreamClient {
           }
         }
       }
+      return { fallbackUsed, tokensReceived, thoughtsReceived, contextCount };
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
         throw err;
       }
-      // Execute fallback REST chat call
-      console.warn('SSE stream connection failed, executing REST fallback:', err);
+      fallbackUsed = true;
+      console.warn('SSE stream connection failed, executing transparent REST fallback:', err);
       const restData: ChatResponse = await sendChat(query, language);
       if (restData.context && onContext) {
+        contextCount = restData.context.length;
         onContext(restData.context);
       }
       if (restData.thought && onThought) {
+        thoughtsReceived++;
         onThought(restData.thought);
       }
       if (restData.answer && onToken) {
+        tokensReceived++;
         onToken(restData.answer);
       }
+      return { fallbackUsed, tokensReceived, thoughtsReceived, contextCount };
     }
   }
 }
