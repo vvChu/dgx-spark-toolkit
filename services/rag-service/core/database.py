@@ -97,6 +97,15 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize RedisQueue: {e}")
         state.redis_queue = None
 
+    # Init IngestionQueue (unified deep queue)
+    try:
+        from ingestion.ingestion_queue import IngestionQueue
+        state.ingestion_queue = IngestionQueue(redis_queue=state.redis_queue, state_manager=state.state_manager)
+        logger.info("Successfully initialized IngestionQueue.")
+    except Exception as e:
+        logger.error(f"Failed to initialize IngestionQueue: {e}")
+        state.ingestion_queue = None
+
     # Init Async State Manager (singleton — avoids per-request pool leak)
     state.async_state_manager = state.state_manager
 
@@ -136,6 +145,7 @@ async def lifespan(app: FastAPI):
     app.state.state_manager = state.state_manager
     app.state.http_client = state.http_client
     app.state.redis_queue = state.redis_queue
+    app.state.ingestion_queue = getattr(state, "ingestion_queue", None)
     app.state.async_state_manager = state.async_state_manager
     app.state.session_memory = getattr(state, "session_memory", None)
     app.state.trace_store = getattr(state, "trace_store", None)
@@ -247,3 +257,9 @@ async def get_chat_service(
         trace_store=getattr(request.app.state, "trace_store", None),
         context_accumulator=getattr(request.app.state, "context_accumulator", None),
     )
+
+
+async def get_ingestion_queue(request: Request):
+    """Dependency to inject deep IngestionQueue."""
+    return getattr(request.app.state, "ingestion_queue", None)
+
