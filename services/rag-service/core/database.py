@@ -201,6 +201,16 @@ async def get_http_client(request: Request) -> httpx.AsyncClient:
     return request.app.state.http_client
 
 
+async def get_rag_evaluator(
+    http_client: httpx.AsyncClient = Depends(get_http_client)
+):
+    """Dependency to inject deep RAGEvaluator."""
+    from evaluation.evaluator import RAGEvaluator
+    from core.ai_gateway_client import AIGatewayClient
+    gateway_client = AIGatewayClient(http_client=http_client)
+    return RAGEvaluator(ai_gateway_client=gateway_client)
+
+
 async def get_legal_analysis_engine(
     milvus_repo: MilvusRepository = Depends(get_milvus_repo),
     neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),

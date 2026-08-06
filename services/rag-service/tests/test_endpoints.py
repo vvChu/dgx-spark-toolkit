@@ -7,6 +7,7 @@ from core.database import (
     get_legal_analysis_service,
     get_milvus_repo,
     get_neo4j_repo,
+    get_rag_evaluator,
     get_state_manager,
 )
 from main import app
@@ -51,11 +52,17 @@ async def _override_compliance_service():
     return service
 
 
+async def _override_rag_evaluator():
+    from evaluation.evaluator import MockRAGEvaluator
+    return MockRAGEvaluator(faithfulness=0.9, relevancy=0.8)
+
+
 def _install_common_overrides():
     app.dependency_overrides[get_milvus_repo] = _override_milvus_repo
     app.dependency_overrides[get_neo4j_repo] = _override_neo4j_repo
     app.dependency_overrides[get_http_client] = _override_http_client
     app.dependency_overrides[get_state_manager] = _override_state_manager
+    app.dependency_overrides[get_rag_evaluator] = _override_rag_evaluator
     app.dependency_overrides[get_legal_analysis_engine] = _override_legal_analysis_service
     app.dependency_overrides[get_legal_analysis_service] = _override_legal_analysis_service
     app.dependency_overrides[get_compliance_service] = _override_compliance_service
