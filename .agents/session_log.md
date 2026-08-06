@@ -43,7 +43,7 @@
 - [x] **Wayfinder Map #13 Created**: Created [[Wayfinder Map #13]](https://github.com/vvChu/dgx-spark-toolkit/issues/13) for Architecture Deepening Round 2 (`LegalAnalysisEngine`, `RAGEvaluator`, `SemanticQueryCache`, `LegalGraphManager`).
 - [x] **Wayfinder Ticket #14 Resolved**: Created `LegalAnalysisEngine` & `InMemoryLegalAnalysisEngine` consolidating conflict analysis and compliance checking, updated `api/routers/analysis.py`, passed 355 unit tests, and closed [[Ticket #14]](https://github.com/vvChu/dgx-spark-toolkit/issues/14).
 - [x] **Wayfinder Ticket #15 Resolved**: Created `RAGEvaluator` & `MockRAGEvaluator` in `evaluation/evaluator.py`, updated `api/routers/evaluation.py`, passed 357 unit tests, and closed [[Ticket #15]](https://github.com/vvChu/dgx-spark-toolkit/issues/15).
-- [ ] **Wayfinder Ticket #16 Frontier**: [[Ticket] Deepen SemanticQueryCache seam encapsulating vector cache hashing and HyDE caching](https://github.com/vvChu/dgx-spark-toolkit/issues/16)
+- [x] **Wayfinder Ticket #16 Resolved**: Deepened `SemanticCache` & `InMemorySemanticCache` in `retrieval/semantic_cache.py` with HyDE caching and hit metrics, passed 361 unit tests, and closed [[Ticket #16]](https://github.com/vvChu/dgx-spark-toolkit/issues/16).
 - [ ] **Wayfinder Ticket #17 Frontier**: [[Ticket] Deepen LegalGraphManager client seam for Graph visualization](https://github.com/vvChu/dgx-spark-toolkit/issues/17)
 
 ### Thực nghiệm / Công việc tiếp theo

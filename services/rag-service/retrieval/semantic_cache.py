@@ -37,6 +37,11 @@ class SemanticCache:
         self._results: list = []
         self._timestamps: list[float] = []
 
+        # Cache metrics & HyDE query expansion cache
+        self._hits = 0
+        self._misses = 0
+        self._hyde_cache: dict[str, str] = {}
+
         # L2: Redis persistent cache (optional)
         self._redis = None
         self._redis_key = "semantic_cache:entries"
@@ -68,6 +73,32 @@ class SemanticCache:
             self._embeddings = None
             self._norms = None
 
+    def get_hyde(self, query: str) -> Optional[str]:
+        """Get cached HyDE query expansion text."""
+        with self._lock:
+            return self._hyde_cache.get(query.strip())
+
+    def set_hyde(self, query: str, hyde_text: str):
+        """Store HyDE query expansion text in cache."""
+        with self._lock:
+            if len(self._hyde_cache) >= self.max_size:
+                self._hyde_cache.clear()
+            self._hyde_cache[query.strip()] = hyde_text
+
+    def get_stats(self) -> dict:
+        """Return cache hit/miss statistics and storage metrics."""
+        with self._lock:
+            total = self._hits + self._misses
+            hit_rate = round((self._hits / total * 100.0), 1) if total > 0 else 0.0
+            return {
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": hit_rate,
+                "l1_size": len(self._keys),
+                "hyde_cache_size": len(self._hyde_cache),
+                "l2_connected": self._redis is not None,
+            }
+
     def get(self, query: str, query_embedding: np.ndarray, filter_key: str = ""):
         """Check L1 (in-memory), then L2 (Redis) for cached results.
 
@@ -94,6 +125,7 @@ class SemanticCache:
                     if best_score >= self.threshold:
                         # LRU: refresh timestamp on hit
                         self._timestamps[best_idx] = time.monotonic()
+                        self._hits += 1
                         logger.info(f"Semantic cache L1 hit! Similarity: {best_score:.4f}")
                         return self._results[best_idx]
 
@@ -104,11 +136,14 @@ class SemanticCache:
                 if l2_result is not None:
                     # Promote to L1
                     self.set(query, query_embedding, l2_result, filter_key=filter_key, skip_redis=True)
+                    self._hits += 1
                     logger.info("Semantic cache L2 (Redis) hit, promoted to L1.")
                     return l2_result
             except Exception as e:
                 logger.debug("L2 cache check failed: %s", e)
 
+        with self._lock:
+            self._misses += 1
         return None
 
     def _get_from_redis(self, query_embedding: np.ndarray, filter_key: str = "") -> Optional[list]:
@@ -161,17 +196,18 @@ class SemanticCache:
             self._results.append(results)
             self._timestamps.append(time.monotonic())
 
-            emb = query_embedding.reshape(1, -1)
-            norm = np.linalg.norm(query_embedding)
-            if self._embeddings is None:
-                self._embeddings = emb
-                self._norms = np.array([norm])
-            else:
-                self._embeddings = np.vstack([self._embeddings, emb])
-                self._norms = np.append(self._norms, norm)
+            if len(query_embedding) > 0:
+                emb = query_embedding.reshape(1, -1)
+                norm = np.linalg.norm(query_embedding)
+                if self._embeddings is None:
+                    self._embeddings = emb
+                    self._norms = np.array([norm])
+                else:
+                    self._embeddings = np.vstack([self._embeddings, emb])
+                    self._norms = np.append(self._norms, norm)
 
         # L2: Redis persistent (skip if this is a L2→L1 promotion)
-        if self._redis and not skip_redis:
+        if self._redis and not skip_redis and len(query_embedding) > 0:
             try:
                 entry = {
                     "query": query[:500],
@@ -186,3 +222,24 @@ class SemanticCache:
                 self._redis.expire(self._redis_key, int(self.ttl_seconds))
             except Exception as e:
                 logger.debug("L2 cache write failed: %s", e)
+
+
+class InMemorySemanticCache(SemanticCache):
+    """In-memory test adapter for SemanticCache."""
+
+    def __init__(self, default_results: Optional[list] = None):
+        super().__init__(redis_url=None)
+        self.default_results = default_results
+        self._store: dict[str, list] = {}
+
+    def get(self, query: str, query_embedding: np.ndarray, filter_key: str = ""):
+        key = f"{query.strip()}:{filter_key}"
+        if key in self._store:
+            self._hits += 1
+            return self._store[key]
+        self._misses += 1
+        return None
+
+    def set(self, query: str, query_embedding: np.ndarray, results, filter_key: str = "", skip_redis: bool = False):
+        key = f"{query.strip()}:{filter_key}"
+        self._store[key] = results
