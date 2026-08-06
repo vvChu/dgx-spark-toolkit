@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional, Type
 import httpx
@@ -80,6 +81,78 @@ class AIGatewayClient:
 
         raise RuntimeError(f"AIGatewayClient failed all model fallbacks in chain {chain}: {last_error}") from last_error
 
+    def _clean_and_parse_json(self, text: str, schema: Optional[Type[BaseModel]] = None) -> Any:
+        """Robust JSON extraction helper using regex fences and fallback JSON parsing."""
+        if not text:
+            raise ValueError("Empty response string received for JSON extraction")
+
+        # 1. Try regex extraction for Markdown json code fence ```json { ... } ``` or ``` { ... } ```
+        fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+        if fence_match:
+            candidate = fence_match.group(1).strip()
+        else:
+            # 2. Fallback: find outer-most braces { ... } or brackets [ ... ]
+            brace_match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", text)
+            if brace_match:
+                candidate = brace_match.group(1).strip()
+            else:
+                candidate = text.strip()
+
+        # Clean control characters except space/tabs/newlines
+        candidate = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', candidate)
+
+        if schema:
+            validated = schema.model_validate_json(candidate)
+            return validated.model_dump()
+        return json.loads(candidate)
+
+    async def extract_json(
+        self,
+        prompt_or_messages: Any,
+        *,
+        schema: Optional[Type[BaseModel]] = None,
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 2048,
+        timeout: Optional[float] = None,
+        retry_on_error: bool = True,
+    ) -> Any:
+        """Extract structured JSON dictionary or Pydantic model directly from LLM completion."""
+        if isinstance(prompt_or_messages, str):
+            messages = [{"role": "user", "content": prompt_or_messages}]
+        elif isinstance(prompt_or_messages, list):
+            messages = prompt_or_messages
+        else:
+            raise TypeError("prompt_or_messages must be a str or list of dicts")
+
+        raw_completion = await self.complete(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+
+        try:
+            return self._clean_and_parse_json(raw_completion, schema=schema)
+        except Exception as first_err:
+            if not retry_on_error:
+                raise first_err
+
+            logger.warning(f"Initial JSON parsing failed ({first_err}), retrying with repair prompt...")
+            repair_messages = messages + [
+                {"role": "assistant", "content": raw_completion},
+                {"role": "user", "content": "The output was not valid JSON. Please fix it and respond with valid JSON inside ```json ... ``` code fence ONLY."}
+            ]
+            repair_raw = await self.complete(
+                repair_messages,
+                model=model,
+                temperature=0.0,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+            return self._clean_and_parse_json(repair_raw, schema=schema)
+
     async def complete_json(
         self,
         messages: List[Dict[str, Any]],
@@ -90,27 +163,15 @@ class AIGatewayClient:
         max_tokens: int = 2048,
         timeout: Optional[float] = None,
     ) -> Any:
-        """Completion in JSON mode, stripping markdown fences and optionally validating Pydantic schema."""
-        resp_fmt = None
-        if schema:
-            resp_fmt = {"type": "json_schema", "json_schema": {"name": "schema", "strict": True, "schema": schema.model_json_schema()}}
-        else:
-            resp_fmt = {"type": "json_object"}
-
-        raw = await self.complete(
+        """Completion in JSON mode using extract_json."""
+        return await self.extract_json(
             messages,
+            schema=schema,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
-            response_format=resp_fmt,
             timeout=timeout,
         )
-
-        cleaned = raw.replace("```json", "").replace("```", "").strip()
-        if schema:
-            validated = schema.model_validate_json(cleaned)
-            return validated.model_dump()
-        return json.loads(cleaned)
 
     async def complete_vision(
         self,
@@ -145,6 +206,9 @@ class AIGatewayClient:
     def complete_json_sync(self, messages: List[Dict[str, Any]], **kwargs) -> Any:
         return asyncio.run(self.complete_json(messages, **kwargs))
 
+    def extract_json_sync(self, prompt_or_messages: Any, **kwargs) -> Any:
+        return asyncio.run(self.extract_json(prompt_or_messages, **kwargs))
+
     def complete_vision_sync(self, image_bytes_or_b64: Any, prompt: str = "Trích xuất văn bản.", **kwargs) -> str:
         return asyncio.run(self.complete_vision(image_bytes_or_b64, prompt, **kwargs))
 
@@ -168,6 +232,10 @@ class MockAIGatewayClient(AIGatewayClient):
             dummy = {k: "test" for k in fields.keys()}
             return dummy
         return {"result": self.default_response}
+
+    async def extract_json(self, prompt_or_messages: Any, schema: Optional[Type[BaseModel]] = None, **kwargs) -> Any:
+        messages = prompt_or_messages if isinstance(prompt_or_messages, list) else [{"role": "user", "content": prompt_or_messages}]
+        return await self.complete_json(messages, schema=schema, **kwargs)
 
     async def complete_vision(self, image_bytes_or_b64: Any, prompt: str = "", **kwargs) -> str:
         self.call_history.append({"prompt": prompt, "kwargs": kwargs})

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from models.schemas import SearchRequest, SearchResponse
-from core.database import get_retrieval_service
+from core.database import get_search_pipeline
 
 import logging
 
@@ -13,12 +13,12 @@ router = APIRouter()
 @router.post("/retrieve", tags=["Retrieval"], include_in_schema=False)
 async def search_endpoint(
     request: SearchRequest,
-    service=Depends(get_retrieval_service),
+    pipeline=Depends(get_search_pipeline),
 ):
     """
     Perform semantic search with optional reranking and graph augmentation.
     """
-    return await service.search(
+    return await pipeline.search(
         query=request.query,
         limit=request.limit,
         use_reranker=request.use_reranker,

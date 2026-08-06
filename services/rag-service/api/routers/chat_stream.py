@@ -15,7 +15,7 @@ from core.config import get_settings
 from core.database import get_milvus_repo, get_neo4j_repo, get_http_client
 from repositories.milvus_repo import MilvusRepository
 from repositories.neo4j_repo import Neo4jRepository
-from services.retrieval_service import RetrievalService
+from retrieval.search_pipeline import SearchPipeline
 from retrieval.query_rewriter import rewrite_query
 from retrieval.query_tracer import QueryTracer
 from core.prompts import get_system_prompt
@@ -54,7 +54,7 @@ async def _stream_chat(
                 logger.warning("Session memory load failed in stream: %s", e)
 
         # 1. Retrieve context (non-streaming part)
-        retrieval = RetrievalService(milvus_repo, neo4j_repo)
+        retrieval = SearchPipeline(milvus_repo, neo4j_repo)
         rewritten = await rewrite_query(query, http_client)
         search_res = await retrieval.search(
             query=rewritten, limit=15, use_reranker=True,

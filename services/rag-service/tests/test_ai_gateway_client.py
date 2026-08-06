@@ -38,11 +38,20 @@ class TestAIGatewayClient:
     def test_complete_json_markdown_stripping(self):
         client = AIGatewayClient()
         raw = "```json\n{\"title\": \"Sample\", \"category\": \"Legal\"}\n```"
+        parsed = client._clean_and_parse_json(raw, schema=SampleMetadata)
+        assert parsed["title"] == "Sample"
+        assert parsed["category"] == "Legal"
 
-        with pytest.MonkeyPatch().context() as m:
-            m.setattr(client, "complete", lambda *args, **kwargs: asyncio.Future())
-            # Directly test parsing logic
-            cleaned = raw.replace("```json", "").replace("```", "").strip()
-            val = SampleMetadata.model_validate_json(cleaned)
-            assert val.title == "Sample"
-            assert val.category == "Legal"
+    def test_extract_json_embedded_fences_and_text(self):
+        client = AIGatewayClient()
+        raw = "Here is the result:\n```json\n{\"title\": \"QCVN 06:2022\", \"category\": \"TCVN\"}\n```\nHope this helps!"
+        parsed = client._clean_and_parse_json(raw)
+        assert parsed["title"] == "QCVN 06:2022"
+        assert parsed["category"] == "TCVN"
+
+    def test_mock_client_extract_json(self):
+        mock_client = MockAIGatewayClient()
+        data = mock_client.extract_json_sync("Extract metadata prompt", schema=SampleMetadata)
+        assert isinstance(data, dict)
+        assert "title" in data
+        assert "category" in data
