@@ -39,6 +39,7 @@
 - [x] **Wayfinder Ticket #10 Resolved**: Created `IngestionQueue` & `InMemoryIngestionQueue` unifying Redis Streams queueing and DB state tracking, added unit tests, passed all 353 unit tests, and closed [[Ticket #10]](https://github.com/vvChu/dgx-spark-toolkit/issues/10).
 - [x] **Wayfinder Ticket #11 Resolved**: Added `extract_json()` and `extract_json_sync()` with regex fence parsing, schema validation, and auto-repair retry to `AIGatewayClient`, passed all 355 unit tests, and closed [[Ticket #11]](https://github.com/vvChu/dgx-spark-toolkit/issues/11).
 - [x] **Wayfinder Map #8 Fully Completed**: All 3 child tickets (#9, #10, #11) resolved and verified. Closed [[Wayfinder Map #8]](https://github.com/vvChu/dgx-spark-toolkit/issues/8). Destination reached!
+- [x] **Frontend StreamClient Deepened**: Refactored [`services/frontend/src/lib/streamClient.ts`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/src/lib/streamClient.ts) to return structured `StreamResult` metrics (`fallbackUsed`, `tokensReceived`, `thoughtsReceived`, `contextCount`) while keeping `ChatPanel.tsx` 100% focused on UI rendering. Passed Vite build in 2.50s (`2da0676`).
 
 ### Thực nghiệm / Công việc tiếp theo
 - [ ] Chạy live tracking RAG ingestion pipeline qua `/track-ingestion`
