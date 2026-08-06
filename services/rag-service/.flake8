@@ -1,0 +1,50 @@
+[flake8]
+max-line-length = 150
+exclude =
+    venv,
+    .venv,
+    __pycache__,
+    surya_src,
+    autoresearch/exports,
+    scripts,
+    test_gemma.py,
+    test_gemma_direct.py,
+    test_semaphore.py,
+    test_single.py,
+    .git
+ignore =
+    E402,
+    W291,
+    W293,
+    E501,
+    E226,
+    E241,
+    E704,
+    E741,
+    F401,
+    F841,
+    F541,
+    F811,
+    F821,
+    W503,
+    W504,
+    W391,
+    E111,
+    E117,
+    E124,
+    E127,
+    E128,
+    E129,
+    E131,
+    E231,
+    E261,
+    E302,
+    E303,
+    E305,
+    E306,
+    E401,
+    E701
+per-file-ignores =
+    tests/*: F401, E402, E501, E741, F841, F811, F821, F541, W291, W293
+    services/rag-service/tests/*: F401, E402, E501, E741, F841, F811, F821, F541, W291, W293
+    **/tests/*: F401, E402, E501, E741, F841, F811, F821, F541, W291, W293
