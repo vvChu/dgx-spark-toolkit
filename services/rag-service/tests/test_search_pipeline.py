@@ -1,5 +1,4 @@
 """Unit tests for SearchPipeline and SearchContext."""
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from retrieval.search_pipeline import SearchPipeline, SearchContext

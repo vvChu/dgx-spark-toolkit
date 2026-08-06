@@ -82,4 +82,4 @@ jobs:
         run: pip install flake8
 
       - name: Lint RAG service
-        run: flake8 services/rag-service/ --max-line-length=150 --exclude=venv,__pycache__,surya_src --count --show-source --statistics
+        run: flake8 services/rag-service/ --max-line-length=150 --exclude=venv,__pycache__,surya_src,autoresearch/exports --count --show-source --statistics

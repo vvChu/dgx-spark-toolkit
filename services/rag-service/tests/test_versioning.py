@@ -2,7 +2,7 @@
 import asyncio
 import os
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 os.environ.setdefault("NEO4J_PASSWORD", "ci_test_placeholder_safe")
 os.environ.setdefault("LITELLM_MASTER_KEY", "sk-ci-test-placeholder-safe")

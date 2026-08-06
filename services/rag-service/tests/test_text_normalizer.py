@@ -3,7 +3,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ingestion.text_normalizer import (
+from ingestion.text_normalizer import (  # noqa: E402
     rejoin_paragraphs,
     format_legal_structure,
     detect_garbled_table,
@@ -31,26 +31,26 @@ class TestRejoinParagraphs:
         result = rejoin_paragraphs(text)
         assert "Điều 2." in result
         # Điều should NOT be merged onto the previous line
-        lines = [l for l in result.split("\n") if l.strip()]
-        assert any(l.strip().startswith("Điều 2.") for l in lines)
+        lines = [line for line in result.split("\n") if line.strip()]
+        assert any(line.strip().startswith("Điều 2.") for line in lines)
 
     def test_preserves_numbered_list(self):
         text = "nội dung như sau:\n1. Sắp xếp các đơn vị"
         result = rejoin_paragraphs(text)
-        lines = [l for l in result.split("\n") if l.strip()]
-        assert any(l.strip().startswith("1.") for l in lines)
+        lines = [line for line in result.split("\n") if line.strip()]
+        assert any(line.strip().startswith("1.") for line in lines)
 
     def test_preserves_lettered_list(self):
         text = "quy định:\na) Thành lập xã Quế Tân"
         result = rejoin_paragraphs(text)
-        lines = [l for l in result.split("\n") if l.strip()]
-        assert any(l.strip().startswith("a)") for l in lines)
+        lines = [line for line in result.split("\n") if line.strip()]
+        assert any(line.strip().startswith("a)") for line in lines)
 
     def test_no_merge_after_period(self):
         text = "Quyết định này có hiệu lực.\nĐiều 3. Các Bộ trưởng"
         result = rejoin_paragraphs(text)
         # After a period, should NOT merge
-        lines = [l for l in result.split("\n") if l.strip()]
+        lines = [line for line in result.split("\n") if line.strip()]
         assert len(lines) >= 2
 
 
@@ -203,13 +203,19 @@ class TestDigitalSignature:
     """Fix 5: Combined single-line digital signature block should be stripped."""
 
     def test_strips_ky_boi_line(self):
-        text = 'Ký bởi: Cổng Thông tin điện tử Chính phủ Email: thongtinchinhphu@chinhphu.vn Cơ quan: Văn phòng Chính phủ Thời gian ký: 16.03.2015 11:02:35 +07:00\nĐiều 1. Nội dung chính'
+        text = (
+            'Ký bởi: Cổng Thông tin điện tử Chính phủ Email: thongtinchinhphu@chinhphu.vn '
+            'Cơ quan: Văn phòng Chính phủ Thời gian ký: 16.03.2015 11:02:35 +07:00\nĐiều 1. Nội dung chính'
+        )
         result = strip_document_boilerplate(text)
         assert 'Ký bởi' not in result
         assert 'Điều 1' in result
 
     def test_strips_nguoi_ky_line(self):
-        text = 'Người ký: Cổng Thông tin điện tử Chính phủ Email: test@gov.vn Cơ quan: Test Thời gian ký: 22.05.2023 16:12:47 +07:00\nĐiều 2. Nội dung'
+        text = (
+            'Người ký: Cổng Thông tin điện tử Chính phủ Email: test@gov.vn '
+            'Cơ quan: Test Thời gian ký: 22.05.2023 16:12:47 +07:00\nĐiều 2. Nội dung'
+        )
         result = strip_document_boilerplate(text)
         assert 'Người ký' not in result
         assert 'Điều 2' in result

@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 from starlette.testclient import TestClient
 
