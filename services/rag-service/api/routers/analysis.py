@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from models.schemas import ConflictAnalysisRequest, ComplianceCheckRequest
-from core.database import get_legal_analysis_service, get_compliance_service
-from services.legal_analysis_service import LegalAnalysisService
+from core.database import get_legal_analysis_engine, get_compliance_service
+from services.legal_analysis_service import LegalAnalysisEngine
 from services.compliance_service import ComplianceService
 
 import logging
@@ -14,12 +14,12 @@ router = APIRouter(prefix="/analysis", tags=["Analysis"])
 @router.post("/conflict")
 async def analyze_conflict(
     request: ConflictAnalysisRequest,
-    analysis_service: LegalAnalysisService = Depends(get_legal_analysis_service)
+    analysis_engine: LegalAnalysisEngine = Depends(get_legal_analysis_engine)
 ):
     """
     Analyze regulatory changes and potential conflicts between a document and its predecessors.
     """
-    return await analysis_service.analyze_conflicts(
+    return await analysis_engine.analyze_conflicts(
         doc_id=request.doc_id,
         query=request.query,
         depth=request.depth

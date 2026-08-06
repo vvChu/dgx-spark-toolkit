@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from core.database import (
     get_compliance_service,
     get_http_client,
+    get_legal_analysis_engine,
     get_legal_analysis_service,
     get_milvus_repo,
     get_neo4j_repo,
@@ -55,6 +56,7 @@ def _install_common_overrides():
     app.dependency_overrides[get_neo4j_repo] = _override_neo4j_repo
     app.dependency_overrides[get_http_client] = _override_http_client
     app.dependency_overrides[get_state_manager] = _override_state_manager
+    app.dependency_overrides[get_legal_analysis_engine] = _override_legal_analysis_service
     app.dependency_overrides[get_legal_analysis_service] = _override_legal_analysis_service
     app.dependency_overrides[get_compliance_service] = _override_compliance_service
 
