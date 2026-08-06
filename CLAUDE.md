@@ -53,7 +53,7 @@ Frontend(:5173) → RAG Service(:8005) → Milvus + Neo4j + AI Gateway(:8090) �
 ### RAG Service (`services/rag-service/`)
 Layered FastAPI app (Python 3.12):
 - `api/routers/` → `services/` → `repositories/` → Milvus/Neo4j
-- Routers: search, chat, admin, analysis, stats, graph, preview, evaluation
+- Routers: `search`, `chat`, `chat_stream` (SSE), `admin`, `analysis` (conflict/compliance), `evaluation`, `graph`, `preview`, `stats`, `traces`
 - `core/config.py` — Pydantic Settings with `SecretStr`, model validator rejects weak passwords
 - `core/database.py` — Lifespan management + FastAPI `Depends()` DI for all DB clients
 - `main.py` — App factory, CORS, Prometheus instrumentation, health endpoints
@@ -70,8 +70,11 @@ Layered FastAPI app (Python 3.12):
 ### AI Gateway (`services/ai-gateway/`)
 LiteLLM proxy with `litellm_config.yaml` — latency-based routing, Redis semantic cache (0.85 threshold), fallback chains. Port mapping: external `:8090` → container `:4000`. Internal services connect via `http://ai-gateway:4000/v1`.
 
+### Retrieval Layer (`services/rag-service/retrieval/`)
+HyDE, query rewriting, agentic retrieval, graph-timeline retrieval, async reranker (via `asyncio.to_thread()`), semantic cache, session memory.
+
 ### Frontend (`services/frontend/`)
-React 19 + Vite 7 + Tailwind CSS 4. No test runner — validated via lint + build in CI.
+React 19 + Vite 7 + Tailwind CSS 4. API client: `src/lib/api.ts` (blocking) + `src/lib/streamApi.ts` (SSE). Graph viz via `react-force-graph`, Markdown via `react-markdown` + `remark-gfm`. No test runner — validated via lint + build in CI.
 
 ### Databases
 | DB | Purpose | Key identifier |
@@ -89,10 +92,13 @@ React 19 + Vite 7 + Tailwind CSS 4. No test runner — validated via lint + buil
 - **Structured LLM output**: `response_format={"type": "json_schema", ...}` with Pydantic schema for metadata extraction
 - **Config**: `pydantic-settings` `BaseSettings` with `SecretStr` — never log `.get_secret_value()` output
 - **Tests** go in `services/rag-service/tests/` — not as one-off scripts in the rag-service root
-- **Operational scripts** go in `services/rag-service/scripts/`
-- **Agent skills** in `.agents/skills/` (18 skills + shared), workflows in `.agents/workflows/` (14 workflows)
+- **Operational scripts** go in `services/rag-service/scripts/` (23+ scripts: audits, migrations, evals, OCR benchmarks, data integrity repairs)
+- **Agent skills** in `.agents/skills/` (18 skills + shared), workflows in `.agents/workflows/` (14 workflows including `start-all-128k`, `vllm-32k`, `health`, `track-ingestion`)
 - **Architecture north star**: `.agents/ARCHITECTURE.md` — canonical identity model, store contracts, and target architecture
 - **Benchmarks** in `services/rag-service/benchmarks/` — one benchmark + one locustfile, no versioned copies
+- **Autoresearch** (`services/rag-service/autoresearch/`): Karpathy-style autonomous RAG optimization playground. Edit only `optimize_rag.py`; `prepare.py` and `program.md` are read-only. Branch naming: `autoresearch/<tag>`
+- **vLLM backports** (`vllm_backport/`): Custom Qwen3 model implementations (MoE, VL, VL-MoE) for DGX Blackwell compatibility
+- **Monitoring**: Prometheus + Grafana dashboards in `monitoring/` — vLLM, RAG, and ingestion dashboards with alert rules
 
 ## CI (GitHub Actions)
 
@@ -111,6 +117,49 @@ Three jobs on push/PR to `master`:
 - **Ingestion stale state**: Jobs stuck in `PROCESSING` if worker crashes (1-hour timeout)
 - **Neo4j password alias**: Both `NEO4J_PASSWORD` and `NEO4J_PASS` work via Pydantic `AliasChoices`
 
+## Key Environment Variables
+
+| Variable | Purpose |
+|---|---|
+| `NEO4J_PASSWORD` / `NEO4J_PASS` | Neo4j auth (AliasChoices) |
+| `LITELLM_MASTER_KEY` | AI Gateway auth |
+| `VITE_API_URL` | Frontend → backend base URL |
+| `QWEN35B_SNAPSHOT`, `QWEN35B_MODEL_DIR` | vLLM model path/version |
+| `PRIMARY_VISION_MODEL`, `FALLBACK_VISION_MODEL` | Vision model routing |
+| `FORCE_CPU_EMBEDDING=1`, `FORCE_CPU_RERANKER=1` | CPU fallback for CI/dev |
+| `HF_HOME=/app/models` | Hugging Face cache mount |
+
 ## Docker
 
-`docker-compose.yml` orchestrates 13 services on the `rag-network` bridge. Key services: `rag-service` (:8005), `rag-watcher` (×1 replica, ingest profile), `ai-gateway` (:8090), `rag-frontend` (:5173), `milvus-standalone` (:19530), `neo4j` (:7474/:7687), plus Prometheus (:9090) and Grafana (:3000). vLLM containers (`vllm-35b` always-on, `vllm-4b` on-demand via `vllm-light` profile) serve local Qwen 3.5 models with GPU reservations.
+`docker-compose.yml` orchestrates 15+ services on the `rag-network` bridge.
+
+### Docker profiles
+| Profile | Services | Purpose |
+|---|---|---|
+| *(default)* | rag-service, ai-gateway, milvus, neo4j, postgres, redis, prometheus, grafana | Core stack |
+| `ingest` | rag-watcher (×1) | Ingestion workers |
+| `vllm-light` | vllm-4b | On-demand small model |
+| `loadtest` | locust (:8089) | Performance testing |
+
+### Deployment targets
+- **Docker Compose** (`docker-compose.yml`) — primary
+- **Helm** (`helm/dgx-spark-toolkit/`) — Kubernetes deployment with HPA, Nginx ingress (`rag.dgxspark.local`)
+
+### vLLM models
+- `vllm-35b` (Qwen3.5-35B, always-on, 96GB, 32k ctx)
+- `vllm-4b` (Qwen3.5-9B AWQ, on-demand via `vllm-light` profile, 12GB, 8k ctx)
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs for this repo live as GitHub issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The label vocabulary maps canonical roles to GitHub issue labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo layout (`CONTEXT.md` + `docs/adr/`). See `docs/agents/domain.md`.
+

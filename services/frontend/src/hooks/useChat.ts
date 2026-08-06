@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { sendChat, sendFeedback, ContextItem } from '../lib/api';
-import { sendStreamChat, StreamEvent } from '../lib/streamApi';
+import { sendFeedback, type ContextItem } from '../lib/api';
+import { StreamClient } from '../lib/streamClient';
 
 export interface Message {
   id: string;
@@ -38,59 +38,42 @@ export default function useChat(
     const aiMsgId = `ai-${Date.now()}`;
     let contextItems: ContextItem[] = [];
     let fullContent = '';
+    let fullThought = '';
 
-    // Try SSE streaming first
     try {
       abortRef.current = new AbortController();
+      setMessages((prev) => [...prev, { id: aiMsgId, role: 'ai', content: '', thought: '' }]);
 
-      // Add empty AI message to start streaming into
-      setMessages((prev) => [...prev, { id: aiMsgId, role: 'ai', content: '' }]);
-
-      await sendStreamChat(
+      await StreamClient.streamChat({
         query,
         language,
-        (event: StreamEvent) => {
-          if (event.type === 'context') {
-            contextItems = event.data as ContextItem[];
-          } else if (event.type === 'token') {
-            fullContent += event.data as string;
-            setMessages((prev) =>
-              prev.map((m) => (m.id === aiMsgId ? { ...m, content: fullContent, context: contextItems } : m)),
-            );
-          } else if (event.type === 'error') {
-            console.error('Stream error:', event.data);
-          }
+        onContext: (items) => {
+          contextItems = items;
         },
-        abortRef.current.signal,
-      );
-
-      // Stream complete — update context
-      setMessages((prev) =>
-        prev.map((m) => (m.id === aiMsgId ? { ...m, context: contextItems } : m)),
-      );
+        onToken: (token) => {
+          fullContent += token;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === aiMsgId ? { ...m, content: fullContent, thought: fullThought, context: contextItems } : m)),
+          );
+        },
+        onThought: (thought) => {
+          fullThought += thought;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === aiMsgId ? { ...m, thought: fullThought } : m)),
+          );
+        },
+        onError: (errStr) => {
+          console.error('Stream error event:', errStr);
+        },
+        signal: abortRef.current.signal,
+      });
 
       const contextStrs = contextItems.map((c) => c.text);
       onEvaluate(query, fullContent, contextStrs);
       onDataRefresh();
-    } catch (streamErr) {
-      // Fallback to blocking /chat if streaming fails
-      if ((streamErr as Error).name === 'AbortError') {
-        return;
-      }
-      console.warn('SSE streaming failed, falling back to /chat:', streamErr);
-      try {
-        // Remove the empty streaming message
-        setMessages((prev) => prev.filter((m) => m.id !== aiMsgId));
-
-        const data = await sendChat(query, language);
-        const aiMsg: Message = { id: aiMsgId, role: 'ai', content: data.answer, thought: data.thought, context: data.context };
-        setMessages((prev) => [...prev, aiMsg]);
-        const contextStrs = data.context ? data.context.map((c) => c.text) : [];
-        onEvaluate(query, data.answer, contextStrs);
-        onDataRefresh();
-      } catch {
-        setMessages((prev) => [...prev, { id: `err-${Date.now()}`, role: 'ai', content: 'Co loi ket noi toi Spark Engine. Anh vui long kiem tra lai dich vu nhe.' }]);
-      }
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return;
+      setMessages((prev) => [...prev, { id: `err-${Date.now()}`, role: 'ai', content: 'Co loi ket noi toi Spark Engine. Anh vui long kiem tra lai dich vu nhe.' }]);
     } finally {
       setIsLoading(false);
       abortRef.current = null;
@@ -125,4 +108,3 @@ export default function useChat(
     handleFeedback,
   };
 }
-

@@ -33,42 +33,7 @@ def _get_client() -> httpx.Client:
     return _http_client
 
 
-def _ocr_page_gemini(img_bytes: bytes, page_num: int) -> str:
-    """Dùng gemini-3-flash qua ai-gateway để OCR 1 trang, trả về raw text."""
-    gateway_url = os.environ.get("VLLM_API_BASE", "http://ai-gateway:4000/v1")
-    api_key = os.environ.get("LITELLM_MASTER_KEY", "")
-    if not api_key:
-        return ""
-
-    img_b64 = base64.b64encode(img_bytes).decode()
-    payload = {
-        "model": "gemini-3-flash",
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
-                {"type": "text", "text": (
-                    "Đây là trang quy chuẩn kỹ thuật / văn bản pháp lý Việt Nam. "
-                    "Hãy đọc và PHIÊN ÂM NGUYÊN VĂN toàn bộ text bao gồm tất cả "
-                    "số điều khoản (X, X.Y, Điều X...). Chỉ trả về text thuần."
-                )}
-            ]
-        }],
-        "max_tokens": 2000,
-    }
-
-    try:
-        client = _get_client()
-        resp = client.post(
-            f"{gateway_url}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=payload,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"].get("content") or ""
-    except Exception as e:
-        logger.warning(f"cross_validator: gemini-3-flash OCR failed for page {page_num}: {e}")
-        return ""
+# _ocr_page_gemini removed because gemini is now the Primary OCR inside vision.py
 
 
 def _extract_sections(text: str) -> set:
@@ -86,48 +51,47 @@ def _unique_words(text: str) -> set:
 
 
 def validate_page_ocr(
-    img_bytes: bytes,
-    qwen_text: str,
+    primary_text: str,
+    surya_text: str,
     page_num: int,
     doc_id: str = "unknown",
 ) -> dict:
     """
-    So sánh Qwen Vision OCR output với Gemini cross-OCR cho 1 trang.
+    So sánh Primary OCR (Gemini) với Base OCR (Surya) để phát hiện hallucination.
 
     Returns dict:
         passed: bool
         section_coverage: float (0-1)
         word_overlap: float (0-1)
         missing_sections: list
-        gemini_chars: int
-        qwen_chars: int
+        primary_chars: int
+        surya_chars: int
         warning: str (if any)
     """
-    gemini_text = _ocr_page_gemini(img_bytes, page_num)
-    if not gemini_text:
+    if not primary_text:
         return {
-            "passed": True,  # Cannot validate — skip silently
-            "skipped": True,
-            "reason": "gemini OCR unavailable",
+            "passed": False,
+            "skipped": False,
+            "reason": "primary text empty"
         }
 
-    gemini_sections = _extract_sections(gemini_text)
-    qwen_sections = _extract_sections(qwen_text)
-    gemini_words = _unique_words(gemini_text)
-    qwen_words = _unique_words(qwen_text)
+    gemini_sections = _extract_sections(primary_text)
+    qwen_sections = _extract_sections(surya_text)
+    gemini_words = _unique_words(primary_text)
+    qwen_words = _unique_words(surya_text)
 
-    # Section coverage: of sections gemini finds, how many does qwen also have?
-    if gemini_sections:
-        matched = gemini_sections & qwen_sections
-        section_coverage = len(matched) / len(gemini_sections)
-        missing = sorted(gemini_sections - qwen_sections)
+    # Section coverage: of sections Surya finds, how many does Gemini also have?
+    if qwen_sections:
+        matched = qwen_sections & gemini_sections
+        section_coverage = len(matched) / len(qwen_sections)
+        missing = sorted(qwen_sections - gemini_sections)
     else:
         section_coverage = 1.0
         missing = []
 
     # Word overlap
-    if gemini_words:
-        word_overlap = len(gemini_words & qwen_words) / len(gemini_words)
+    if qwen_words:
+        word_overlap = len(qwen_words & gemini_words) / len(qwen_words)
     else:
         word_overlap = 1.0
 
@@ -144,8 +108,8 @@ def validate_page_ocr(
         "section_coverage": round(section_coverage, 3),
         "word_overlap": round(word_overlap, 3),
         "missing_sections": missing[:10],
-        "gemini_chars": len(gemini_text),
-        "qwen_chars": len(qwen_text),
+        "primary_chars": len(primary_text),
+        "surya_chars": len(surya_text),
     }
 
     if not passed:
@@ -229,3 +193,33 @@ def validate_document_sample(
         f"| failed_pages={failed_pages}"
     )
     return report
+
+def retry_with_best(img_bytes: bytes, page_num: int, primary_text: str, surya_text: str) -> str:
+    """
+    Gọi model fallback thứ 2 (rag-core) khi primary (gemini) fail cross-validation.
+    So sánh section coverage và chọn output tốt hơn.
+    """
+    logger.info(f"  [CrossValidate] Retrying page {page_num} with rag-core...")
+    from ingestion.vision import call_vision_fallback
+    
+    fallback_text = call_vision_fallback(img_bytes, surya_text, page_num, model="rag-core")
+    if not fallback_text:
+        return primary_text
+        
+    p_sections = _extract_sections(primary_text)
+    f_sections = _extract_sections(fallback_text)
+    s_sections = _extract_sections(surya_text)
+    
+    # Calculate coverage against surya
+    p_coverage = len(s_sections & p_sections) / len(s_sections) if s_sections else 1.0
+    f_coverage = len(s_sections & f_sections) / len(s_sections) if s_sections else 1.0
+    
+    logger.info(f"  [CrossValidate] Retry result p{page_num}: Gemini_sections={len(p_sections)} (cov={p_coverage:.1%}), Qwen_sections={len(f_sections)} (cov={f_coverage:.1%})")
+    
+    # Merge strategy: Simply pick the one with better section coverage, or more sections overall
+    if f_coverage > p_coverage or (f_coverage == p_coverage and len(f_sections) > len(p_sections)):
+        logger.info(f"  [CrossValidate] -> Chose rag-core output")
+        return fallback_text
+    
+    logger.info(f"  [CrossValidate] -> Chose gemini-3-flash output")
+    return primary_text

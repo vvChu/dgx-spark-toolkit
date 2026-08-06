@@ -2,9 +2,12 @@ import asyncio
 import logging
 import os
 import threading
+import contextlib
 from functools import lru_cache
 
 from sentence_transformers import CrossEncoder
+
+from core.vram_accelerator import vram_accelerate
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +17,8 @@ class Reranker:
         self.model_name = model_name
         self.model = None
         self._load_lock = threading.Lock()
-        self.device = "cuda" if os.getenv("GPU_ENABLED") == "1" and os.getenv("FORCE_CPU_RERANKER") != "1" else "cpu"
+        self.force_cpu = os.getenv("FORCE_CPU_RERANKER") == "1"
+        self.device = "cpu"
 
     def load_model(self):
         if self.model is None:
@@ -35,7 +39,9 @@ class Reranker:
             return []
 
         pairs = [[query, doc] for doc in docs]
-        scores = self.model.predict(pairs, batch_size=32)
+        force_cpu = getattr(self, "force_cpu", True)
+        with vram_accelerate(self.model, min_vram_gb=2.0) if not force_cpu else contextlib.nullcontext():
+            scores = self.model.predict(pairs, batch_size=32)
 
         doc_scores = list(zip(docs, scores))
         doc_scores.sort(key=lambda x: x[1], reverse=True)

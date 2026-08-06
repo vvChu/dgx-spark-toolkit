@@ -7,26 +7,25 @@ from sqlalchemy import create_engine, text
 logger = logging.getLogger(__name__)
 
 
-class PostgresStateManager:
-    def __init__(self):
-        db_url = os.environ.get("DATABASE_URL")
+class StateManager:
+    """Unified state manager supporting both PostgreSQL and in-memory execution."""
+    def __init__(self, db_url: str | None = None):
+        db_url = db_url or os.environ.get("DATABASE_URL")
         if not db_url:
-            raise RuntimeError(
-                "DATABASE_URL environment variable is required for PostgresStateManager. "
-                "Example: postgresql+psycopg2://user:password@host:5432/dbname"
-            )
+            logger.warning("DATABASE_URL environment variable is not set for StateManager. Running without DB connection.")
+            self.engine = None
+            return
         try:
             self.engine = create_engine(
                 db_url,
                 pool_pre_ping=True,
                 pool_size=5,
                 max_overflow=10,
-                # [Fix 2] Reduce connection checkout timeout for faster failure detection
                 pool_timeout=10,
             )
             self._init_db()
         except Exception as e:
-            logger.error(f"Failed to initialize PostgresStateManager: {e}")
+            logger.error(f"Failed to initialize StateManager: {e}")
             self.engine = None
 
     def _init_db(self):
@@ -74,7 +73,7 @@ class PostgresStateManager:
 
     # ─── Core Operations ────────────────────────────────────────────
 
-    def claim_file(self, file_path: str, worker_id: str, content_hash: str = None, stale_minutes: int = 30) -> bool:
+    def claim_file(self, file_path: str, worker_id: str, content_hash: str = None, stale_minutes: int = 120) -> bool:
         """Atomic claim with row lock. Returns True if successfully claimed.
 
         [Fix 2] Uses engine.begin() instead of Session() for lighter overhead.
@@ -321,3 +320,66 @@ class PostgresStateManager:
             }
         except Exception as e:
             return {"status": "unhealthy", "error": str(e)}
+
+
+PostgresStateManager = StateManager
+
+
+class InMemoryStateManager:
+    """In-memory state manager adapter for unit testing without PostgreSQL."""
+    def __init__(self):
+        self._states: dict[str, dict] = {}
+        self._checkpoints: dict[str, dict] = {}
+
+    def claim_file(self, file_path: str, worker_id: str, content_hash: str = None, stale_minutes: int = 120) -> bool:
+        current = self._states.get(file_path)
+        if current and current.get("status") in ("CLAIMED", "PROCESSING", "COMPLETED"):
+            return False
+        self._states[file_path] = {
+            "status": "CLAIMED",
+            "worker_id": worker_id,
+            "content_hash": content_hash,
+            "doc_id": None,
+            "metadata": None,
+            "error_message": None,
+        }
+        return True
+
+    async def claim_file_async(self, file_path: str, worker_id: str, content_hash: str = None, stale_minutes: int = 120) -> bool:
+        return self.claim_file(file_path, worker_id, content_hash, stale_minutes)
+
+    def update_status(self, file_path: str, status: str, doc_id: str = None, metadata: dict = None, error: str = None):
+        if file_path not in self._states:
+            self._states[file_path] = {}
+        self._states[file_path].update({
+            "status": status,
+            "doc_id": doc_id or self._states[file_path].get("doc_id"),
+            "metadata": metadata or self._states[file_path].get("metadata"),
+            "error_message": error,
+        })
+
+    async def update_status_async(self, file_path: str, status: str, doc_id: str = None, metadata: dict = None, error: str = None):
+        self.update_status(file_path, status, doc_id, metadata, error)
+
+    def get_status(self, file_path: str):
+        record = self._states.get(file_path)
+        return record["status"] if record else None
+
+    def get_all_state(self):
+        return {k: {"status": v.get("status"), "doc_id": v.get("doc_id") or "unknown"} for k, v in self._states.items()}
+
+    def get_status_summary(self) -> dict[str, int]:
+        summary: dict[str, int] = {}
+        for record in self._states.values():
+            st = record.get("status")
+            if st:
+                summary[st] = summary.get(st, 0) + 1
+        return summary
+
+    def reset_all(self):
+        self._states.clear()
+        self._checkpoints.clear()
+
+    def health_check(self) -> dict:
+        return {"status": "healthy", "mode": "in_memory"}
+

@@ -111,3 +111,72 @@ class Neo4jRepository:
         except Exception as e:
             logger.error(f"Neo4j run_query failed: {e}")
             return []
+
+    async def create_supersedes_relation(self, new_doc_id: str, old_doc_id: str) -> None:
+        """Create a SUPERSEDES relationship from new_doc → old_doc.
+
+        Uses MERGE to prevent duplicate relationships.
+        Also ensures both Document nodes exist (MERGE on node too).
+
+        Cypher:
+            (new_doc)-[:SUPERSEDES]->(old_doc)
+        """
+        query = """
+        MERGE (new_doc:Document {id: $new_doc_id})
+        MERGE (old_doc:Document {id: $old_doc_id})
+        MERGE (new_doc)-[:SUPERSEDES]->(old_doc)
+        SET old_doc.status = 'SUPERSEDED',
+            new_doc.supersedes = coalesce(new_doc.supersedes, []) + $old_doc_id
+        """
+        try:
+            async with self._driver.session() as session:
+                await session.run(query, new_doc_id=new_doc_id, old_doc_id=old_doc_id)
+            logger.info(f"Neo4j: Created SUPERSEDES {new_doc_id} → {old_doc_id}")
+        except Exception as e:
+            logger.error(f"Failed to create SUPERSEDES relation {new_doc_id}→{old_doc_id}: {e}")
+            raise
+
+    async def create_amends_relation(self, new_doc_id: str, amended_doc_id: str) -> None:
+        """Create an AMENDS relationship from new_doc → amended_doc.
+
+        Uses MERGE to prevent duplicate relationships.
+        Unlike SUPERSEDES, the amended document stays partially valid (OUTDATED).
+
+        Cypher:
+            (new_doc)-[:AMENDS]->(amended_doc)
+        """
+        query = """
+        MERGE (new_doc:Document {id: $new_doc_id})
+        MERGE (amended_doc:Document {id: $amended_doc_id})
+        MERGE (new_doc)-[:AMENDS]->(amended_doc)
+        SET amended_doc.status = 'OUTDATED'
+        """
+        try:
+            async with self._driver.session() as session:
+                await session.run(query, new_doc_id=new_doc_id, amended_doc_id=amended_doc_id)
+            logger.info(f"Neo4j: Created AMENDS {new_doc_id} → {amended_doc_id}")
+        except Exception as e:
+            logger.error(f"Failed to create AMENDS relation {new_doc_id}→{amended_doc_id}: {e}")
+            raise
+
+    async def get_superseded_by(self, doc_id: str) -> list[dict]:
+        """Find which document(s) supersede the given doc_id.
+
+        Useful for UI: 'This document has been replaced by X'.
+        Returns list of {id, title, effective_date} for replacement docs.
+        """
+        query = """
+        MATCH (newer:Document)-[:SUPERSEDES]->(old:Document {id: $doc_id})
+        RETURN newer.id AS id,
+               coalesce(newer.title, '') AS title,
+               coalesce(newer.effective_date, '') AS effective_date
+        ORDER BY newer.effective_date DESC
+        LIMIT 5
+        """
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(query, doc_id=doc_id)
+                return [record.data() async for record in result]
+        except Exception as e:
+            logger.error(f"Neo4j get_superseded_by failed for {doc_id}: {e}")
+            return []

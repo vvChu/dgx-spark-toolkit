@@ -11,9 +11,11 @@ Frontend(:5173) → RAG Service(:8005) → Milvus + Neo4j + AI Gateway(:8090) �
 ```
 
 - **RAG Service** (`services/rag-service/`): Layered FastAPI app — `api/routers/` → `services/` → `repositories/` → Milvus/Neo4j
-- **Ingestion Workers** (`rag-watcher` ×3): 9-stage pipeline in `ingestion/stages/` orchestrated by `ingestion/orchestrator.py`
+- **Ingestion Workers** (`rag-watcher` ×1 replica): 9-stage pipeline in `ingestion/stages/` orchestrated by `ingestion/orchestrator.py` (Docker profile: `ingest`)
 - **AI Gateway** (`services/ai-gateway/`): LiteLLM proxy routing to local Qwen 3.5 models + cloud fallbacks. External `:8090` → container `:4000`; internal: `http://ai-gateway:4000/v1`
 - **Frontend** (`services/frontend/`): React 19 + Vite 7 + Tailwind CSS 4 (TypeScript)
+- **Retrieval layer** (`services/rag-service/retrieval/`): HyDE, query rewriting, agentic retrieval, graph-timeline retrieval, async reranker, semantic cache, session memory
+- **vLLM models**: `vllm-35b` (Qwen3.5-35B, always-on, 96GB, 32k ctx) + `vllm-4b` (Qwen3.5-9B AWQ, on-demand via `vllm-light` profile, 12GB, 8k ctx)
 
 ### Key databases
 | DB | Purpose | Collection/Label |
@@ -22,6 +24,21 @@ Frontend(:5173) → RAG Service(:8005) → Milvus + Neo4j + AI Gateway(:8090) �
 | Neo4j | Knowledge graph (REPLACES, AMENDS, REFERENCES) | Document nodes |
 | PostgreSQL | Ingestion state + LiteLLM state | `ingestion_state` table |
 | Redis | DB 0: LiteLLM cache, DB 1: ingestion queue | `ingest:queue` stream |
+
+### API Routers (`api/routers/`)
+`search`, `chat`, `chat_stream` (SSE), `admin`, `analysis` (conflict/compliance), `evaluation`, `graph`, `preview`, `stats`, `traces`
+
+### Docker profiles
+| Profile | Services | Purpose |
+|---|---|---|
+| *(default)* | rag-service, ai-gateway, milvus, neo4j, postgres, redis, prometheus, grafana | Core stack |
+| `ingest` | rag-watcher (×1) | Ingestion workers |
+| `vllm-light` | vllm-4b | On-demand small model |
+| `loadtest` | locust (:8089) | Performance testing |
+
+### Deployment targets
+- **Docker Compose** (`docker-compose.yml`) — primary, 15+ services
+- **Helm** (`helm/dgx-spark-toolkit/`) — Kubernetes deployment with HPA, Nginx ingress (`rag.dgxspark.local`)
 
 ## Code Style
 
@@ -38,7 +55,8 @@ Frontend(:5173) → RAG Service(:8005) → Milvus + Neo4j + AI Gateway(:8090) �
 - **Streaming first**: SSE for chat responses, HTTP POST fallback
 - Components in `src/components/`, reusable atoms in `src/components/ui/`
 - **Tailwind CSS 4** (utility-first, no component library)
-- API client via `axios` in `src/lib/`
+- API client via `axios` in `src/lib/` — `api.ts` (blocking) + `streamApi.ts` (SSE). Base URL from `VITE_API_URL`
+- Graph visualization via `react-force-graph`, Markdown rendering via `react-markdown` + `remark-gfm`
 - **No test runner** — validated via lint + build in CI
 
 ## Build and Test
@@ -84,10 +102,25 @@ Three parallel jobs on push/PR to `master`:
 - **Identity model**: `doc_id` = `namespace/doc_number`, `chunk_id` = `doc_id::p{page}::type_idx` — all stores use these consistently
 - **Two `pipeline.py` files**: root-level `export_postprocessor.py`/`pipeline.py` = post-processing export fixer; `ingestion/pipeline.py` = actual ingestion pipeline (`ProductionIngestor` class)
 - **Structured LLM output**: Use `response_format={"type": "json_schema", ...}` with Pydantic schema for metadata extraction
-- **Operational scripts** live in `services/rag-service/scripts/` — audits, migrations, evals
+- **Operational scripts** live in `services/rag-service/scripts/` (23+ scripts: audits, migrations, evals, OCR benchmarks, data integrity repairs)
 - **Proper tests** live in `services/rag-service/tests/` — do NOT add one-off test scripts to rag-service root
-- **Agent skills** live in `.agents/skills/`, workflows in `.agents/workflows/`
+- **Agent skills** live in `.agents/skills/` (18 skills), workflows in `.agents/workflows/` (14 operational workflows including `start-all-128k`, `vllm-32k`, `health`, `track-ingestion`)
 - **Benchmarks** in `services/rag-service/benchmarks/` — one benchmark + one locustfile, no versioned copies
+- **Autoresearch** (`services/rag-service/autoresearch/`): Karpathy-style autonomous RAG optimization playground. Edit only `optimize_rag.py`; `prepare.py` and `program.md` are read-only. Branch naming: `autoresearch/<tag>`
+- **vLLM backports** (`vllm_backport/`): Custom Qwen3 model implementations (MoE, VL, VL-MoE) for DGX Blackwell compatibility
+- **Monitoring**: Prometheus + Grafana dashboards in `monitoring/` — vLLM, RAG, and ingestion dashboards with alert rules
+
+## Key Environment Variables
+
+| Variable | Purpose |
+|---|---|
+| `NEO4J_PASSWORD` / `NEO4J_PASS` | Neo4j auth (AliasChoices) |
+| `LITELLM_MASTER_KEY` | AI Gateway auth |
+| `VITE_API_URL` | Frontend → backend base URL |
+| `QWEN35B_SNAPSHOT`, `QWEN35B_MODEL_DIR` | vLLM model path/version |
+| `PRIMARY_VISION_MODEL`, `FALLBACK_VISION_MODEL` | Vision model routing |
+| `FORCE_CPU_EMBEDDING=1`, `FORCE_CPU_RERANKER=1` | CPU fallback for CI/dev |
+| `HF_HOME=/app/models` | Hugging Face cache mount |
 
 ## Common Pitfalls
 

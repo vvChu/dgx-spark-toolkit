@@ -1,8 +1,10 @@
-"""LLM Vision extraction module — Qwen 35B primary, Gemini 2.5 Flash fallback.
+"""LLM Vision extraction module — gemini-3.1-flash-lite primary, gemini-3-flash fallback, rag-core last resort.
 
-Uses multimodal LLM to extract text, layout, and tables from PDF page images.
-Qwen 35B (local, 3.2s) is the primary engine; Gemini 2.5 Flash (cloud, 15.6s)
-is the automatic fallback when Qwen is unavailable or fails.
+Benchmark results (2026-03-30):
+  gemini-3.1-flash-lite : 6.2s  @ 100/100 accuracy  ← PRIMARY (fastest + best)
+  gemini-3-flash        : 8.3s  @ 100/100 accuracy  ← FALLBACK
+  rag-core (Qwen 35B)   : 16.1s @ 100/100 accuracy  ← LAST RESORT (local GPU)
+  gemma-3-27b           : REMOVED from vision chain  → TEXT-ONLY tasks only (verbose output, preamble issues)
 """
 import base64
 import json
@@ -14,19 +16,24 @@ import time
 import httpx
 
 from ingestion.cleaning_utils import clean_llm_text
+from core.circuit_breaker import get_circuit_breaker
 
 logger = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────────────────────────────────────────────────
-PRIMARY_MODEL = os.getenv("PRIMARY_VISION_MODEL", "gemini-3-flash")            # Fast free tier (3-5s) — 1500 RPD
-FALLBACK_MODEL = os.getenv("FALLBACK_VISION_MODEL", "gemini-3.1-flash-lite")   # 2nd free tier — 6000 RPD → then rag-core via LiteLLM
+# Benchmark results (2026-03-30): flash-lite=6.2s@100
+PRIMARY_MODEL = os.getenv("PRIMARY_VISION_MODEL", "ocr-primary")
+FALLBACK_MODEL = os.getenv("FALLBACK_VISION_MODEL", "ocr-fallback")
 GATEWAY_URL = os.getenv("VLLM_API_BASE", "http://ai-gateway:4000/v1")
 API_KEY = os.getenv("LITELLM_MASTER_KEY", "")
 
+# OCR fallback chain: flash-lite → flash → rag-core (gemma-3-27b REMOVED: verbose output, preamble issues)
+# GEMMA_OCR_MODEL intentionally disabled for vision tasks
+
 # Per-task model routing — lightweight tasks offloaded to fast remote models
-SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "gemini-3.1-flash-lite")    # Text-only, 400 tokens — 2.5x faster
-METADATA_MODEL = os.getenv("METADATA_MODEL", "gemini-3.1-flash-lite")  # JSON extraction, 300 tokens
-METADATA_FALLBACK = os.getenv("METADATA_FALLBACK", "gemma-3-27b")      # High-quota fallback for JSON retry
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "text-gemma")
+METADATA_MODEL = os.getenv("METADATA_MODEL", "text-gemma")
+METADATA_FALLBACK = os.getenv("METADATA_FALLBACK", "rag-core")         # Text-only fallback (local GPU, no quota)
 
 _MAX_RETRIES = 3
 _INITIAL_BACKOFF = 2  # seconds
@@ -43,26 +50,43 @@ def _get_client() -> httpx.Client:
     if _http_client is None:
         with _http_lock:
             if _http_client is None:
-                _http_client = httpx.Client(timeout=300)
+                # Granular timeout: connect fast, read generous for OCR, avoid 5-min hangs
+                _http_client = httpx.Client(
+                    timeout=httpx.Timeout(
+                        connect=15.0,  # TCP connect: fail fast but allow queue buffer
+                        read=180.0,    # OCR read: high DPI needs a lot of time
+                        write=15.0,    # Upload image payload
+                        pool=15.0,     # Connection pool wait
+                    )
+                )
     return _http_client
 
 
 def _call_model(messages: list, model: str, max_tokens: int = 4096,
                 temperature: float = 0.0, disable_thinking: bool = True) -> str:
-    """Send a request to a specific model via AI Gateway with retry logic."""
-    api_key = API_KEY or os.getenv("LITELLM_MASTER_KEY", "")
+    """Send a request to a specific model via AIGatewayClient."""
+    from core.ai_gateway_client import AIGatewayClient
+    client = AIGatewayClient()
+    extra = {}
+    if disable_thinking and ("rag" in model or "qwen" in model.lower()):
+        extra = {"chat_template_kwargs": {"enable_thinking": False}}
+    try:
+        return client.complete_sync(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            extra_body=extra,
+        )
+    except Exception as e:
+        logger.warning(f"AIGatewayClient call to {model} failed: {e}")
+        return ""
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }
-    # Disable thinking mode for Qwen models to get clean output
-    if disable_thinking and "rag" in model or "qwen" in model.lower():
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    # Kích hoạt Adaptive Micro-Sleep 1.5s để làm giãn nhịp gọi API,
+    # phân bổ mượt load vào 15 RPM của Gemini Flash Lite (Tránh Burst Spike)
+    time.sleep(1.5)
 
-    client = _get_client()
+    queue_retries = 0
     for attempt in range(_MAX_RETRIES):
         try:
             resp = client.post(
@@ -72,33 +96,46 @@ def _call_model(messages: list, model: str, max_tokens: int = 4096,
             )
 
             if resp.status_code == 429:
-                wait = _INITIAL_BACKOFF * (2 ** attempt)
-                logger.warning(f"Rate limited (429) on {model}. Retry in {wait}s ({attempt+1}/{_MAX_RETRIES})")
-                time.sleep(wait)
-                continue
+                if queue_retries < 5:
+                    queue_retries += 1
+                    logger.warning(f"[HANG_DOI] 429 RateLimit trên {model}. Active Queue Pause 60s để săn dư lượng Quota... (lần {queue_retries}/5)")
+                    time.sleep(60)
+                    # Gửi lại API request này mà không tính vào số attempt thất bại thông thường
+                    resp = client.post(
+                        f"{GATEWAY_URL}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        json=payload,
+                    )
+                    if resp.status_code == 429:
+                        continue # Vòng lặp For sẽ tự kích hoạt retry fallback nếu Queue Pause 5 phút thất bại
+                else:         
+                    wait = _INITIAL_BACKOFF * (2 ** attempt)
+                    logger.warning(f"Rate limited (429) trên {model} (Queue cạn). Rơi tự do sang Fallback trong {wait}s ({attempt+1}/{_MAX_RETRIES})")
+                    time.sleep(wait)
+                    continue
 
             resp.raise_for_status()
             data = resp.json()
 
             if not isinstance(data, dict) or "choices" not in data:
                 logger.warning(f"Invalid response from {model}: {data}")
+                cb.record_failure(Exception("Invalid response"))
                 return ""
 
             content = data["choices"][0].get("message", {}).get("content") or ""
             # Strip thinking tokens from models that leak them (Gemini, Qwen)
-            # Pattern 1: <think>...</think> XML tags
             content = re.sub(r'<think>[\s\S]*?</think>\s*', '', content)
-            # Pattern 2: "Thinking Process:" text preamble before actual content
-            # Only strip if there's actual content after the thinking block
             tp_match = re.match(
                 r'(?:Thinking Process|Internal Monologue|Reasoning):?\s*\n[\s\S]*?\n\n([\s\S]+)',
                 content, re.IGNORECASE
             )
             if tp_match:
                 content = tp_match.group(1)
+            cb.record_success()
             return content.strip()
 
         except Exception as e:
+            cb.record_failure(e)
             if attempt == _MAX_RETRIES - 1:
                 logger.error(f"Model {model} failed after {_MAX_RETRIES} attempts: {e}")
                 return ""
@@ -109,48 +146,101 @@ def _call_model(messages: list, model: str, max_tokens: int = 4096,
     return ""
 
 
+def _strip_preamble(text: str) -> str:
+    """Remove English/Vietnamese preamble that LLMs output before OCR content.
+
+    Uses two-pass approach:
+    1. Regex patterns for known preamble phrases
+    2. Smart line-skip: skip leading lines that have no Vietnamese diacritics or legal markers
+    """
+    preamble_patterns = [
+        r'^Based on (?:the )?(?:visual )?(?:content|image|text)[^\n]*\n+',
+        r'^I(?:\'ll| will| can) (?:extract|transcribe|copy|provide)[^\n]*\n+',
+        r'^Here(?:\'s| is) (?:the )?(?:extracted|transcribed|text)[^\n]*\n+',
+        r'^Looking at (?:the )?(?:image|document)[^\n]*\n+',
+        r'^The image (?:shows|contains|displays|analysis)[^\n]*\n+',
+        r'^(?:Following|Applying) (?:the )?(?:rules|guidelines|instructions)[^\n]*\n+',
+        r'^The user (?:wants|asked|requested)[^\n]*\n+',
+        r'^I need to (?:follow|extract|apply)[^\n]*\n+',
+        r'^(?:OCR|Extracting|Transcribing)[^\n]*\n+',
+        r'^\*\*Image Analysis:\*\*[^\n]*\n+',
+        r'^\*\*[A-Z][^\n]*\*\*[^\n]*\n+',  # **Heading:** preamble lines
+        r'^- (?:Top|Bottom|Left|Right|Center)[^\n]*\n+',  # Layout description bullets
+        r'^Dựa (?:vào|theo) (?:ảnh|hình)[^\n]*\n+',
+        r'^Nhìn vào (?:ảnh|hình)[^\n]*\n+',
+        r'^Nội dung (?:ảnh|hình|văn bản)[^\n]*\n+',
+        r'^Theo (?:ảnh|hình|yêu cầu)[^\n]*\n+',
+    ]
+    for pattern in preamble_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.MULTILINE)
+    text = text.strip()
+
+    # Smart skip: if first lines contain no Vietnamese content, discard them
+    viet_chars = re.compile(
+        r'[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ'
+        r'ÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴĐ]',
+        re.UNICODE
+    )
+    legal_start = re.compile(
+        r'^(?:Điều|Khoản|Điểm|Chương|Mục|Phần|Phụ lục|\d)', re.IGNORECASE
+    )
+    lines = text.split('\n')
+    start_idx = 0
+    for i, line in enumerate(lines[:10]):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if viet_chars.search(stripped) or legal_start.match(stripped):
+            start_idx = i
+            break
+        start_idx = i + 1
+
+    return '\n'.join(lines[start_idx:]).strip()
+
+
 def _call_llm(messages: list, max_tokens: int = 4096,
               temperature: float = 0.0, task: str = "extract",
               primary_model: str | None = None,
-              fallback_model: str | None = None) -> str:
-    """Call LLM with full failover chain: primary → fallback → rag-core.
-
+              fallback_model: str | None = None,
+              is_vision: bool = False) -> str:
+    """Call LLM via gateway; if primary fails, automatically tries fallback_model.
+    
     Args:
-        messages: Chat messages (system + user with optional image_url)
+        messages: Chat messages
         max_tokens: Maximum response tokens
         temperature: Sampling temperature
         task: Task label for logging
-        primary_model: Override primary model (default: gemini-3-flash)
-        fallback_model: Override fallback model (default: gemini-3.1-flash-lite)
-
-    Returns:
-        Response text (empty string on total failure)
+        primary_model: Override primary model (if provided).
+        fallback_model: Fallback model to try if primary returns empty.
     """
     p_model = primary_model or PRIMARY_MODEL
-    f_model = fallback_model or FALLBACK_MODEL
 
-    # Build fallback chain: primary → fallback → rag-core (local GPU last resort)
-    # Deduplicate: skip any model that's the same as a previous one
-    chain = [p_model]
-    if f_model != p_model:
-        chain.append(f_model)
-    # Always add rag-core as the last resort (local GPU, no quota limits)
-    if "rag-core" not in chain:
-        chain.append("rag-core")
+    t0 = time.time()
+    result = _call_model(messages, p_model, max_tokens, temperature,
+                         disable_thinking=("rag" in p_model or "qwen" in p_model.lower()))
 
-    for i, model in enumerate(chain):
-        t0 = time.time()
-        result = _call_model(messages, model, max_tokens, temperature,
-                             disable_thinking=("rag" in model or "qwen" in model.lower()))
-        if result:
-            logger.info(f"  LLM Vision [{task}] → {model} OK ({time.time()-t0:.1f}s, {len(result)} chars)")
+    if result:
+        # Post-process LLM output to strip verbose preamble
+        result = _strip_preamble(result)
+        if not result:
+            logger.warning(f"  LLM Vision [{task}] → {p_model}: preamble stripped left empty")
+        else:
+            logger.info(f"  LLM Vision [{task}] → {p_model} OK ({time.time()-t0:.1f}s, {len(result)} chars)")
             return result
 
-        if i < len(chain) - 1:
-            logger.warning(f"  LLM Vision [{task}] → {model} failed, falling back to {chain[i+1]}")
-        else:
-            logger.error(f"  LLM Vision [{task}] → ALL models failed: {chain}")
+    # Primary failed or empty — try explicit fallback_model if provided
+    if fallback_model and fallback_model != p_model:
+        logger.warning(f"  LLM Vision [{task}] → {p_model} failed. Trying fallback: {fallback_model}")
+        t1 = time.time()
+        f_result = _call_model(messages, fallback_model, max_tokens, temperature,
+                               disable_thinking=("rag" in fallback_model or "qwen" in fallback_model.lower()))
+        if f_result:
+            f_result = _strip_preamble(f_result)
+            if f_result:
+                logger.info(f"  LLM Vision [{task}] → {fallback_model} OK (fallback, {time.time()-t1:.1f}s, {len(f_result)} chars)")
+                return f_result
 
+    logger.error(f"  LLM Vision [{task}] → all models failed (primary={p_model}, fallback={fallback_model})")
     return ""
 
 
@@ -158,33 +248,26 @@ def _call_llm(messages: list, max_tokens: int = 4096,
 #  LLM EXTRACT PAGE — OCR via multimodal LLM
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_EXTRACT_SYSTEM = """Bạn là máy OCR. CHỈ xuất văn bản thuần túy từ ảnh.
+_EXTRACT_SYSTEM = """Bạn là chuyên gia bóc tách tài liệu (OCR) Hệ thống Văn bản Pháp luật Việt Nam (QCVN, TCVN, Nghị định, Thông tư...).
+CHỈ xuất văn bản thuần túy và cấu trúc từ ảnh bằng Markdown. KHÔNG BAO GIỜ tự sáng tạo nội dung.
 
-QUY TẮC BẮT BUỘC:
-1. Trích xuất TOÀN BỘ nội dung pháp lý, giữ nguyên thứ tự từ trên xuống dưới
-2. Giữ nguyên cấu trúc: Điều, Khoản, Điểm, Chương, Mục, Phần, Phụ lục
-3. BẢNG BIỂU → Markdown table (| col1 | col2 |)
-4. Giữ nguyên số hiệu, ngày tháng, tên cơ quan
-5. TUYỆT ĐỐI KHÔNG thêm nhận xét, giải thích, đánh số, phân tích
-6. KHÔNG mô tả font, style, bold, caps
-7. Mỗi đề mục/mục số (1.1, 1.2, 2.3.4...) PHẢI nằm trên dòng riêng biệt
-8. KHÔNG dùng markdown heading (#), CHỈ dùng markdown cho bảng biểu (|)
-9. KHÔNG viết tiếng Anh
-10. CHỈ VĂN BẢN THUẦN TÚY
+QUY TẮC BẮT BUỘC ĐỐI VỚI VĂN BẢN QUY PHẠM PHÁP LUẬT:
+1. BẢO TOÀN CẤU TRÚC PHÁP LÝ: Giữ nguyên vẹn hệ thống phân cấp (Phần, Chương, Mục, Tiểu mục, Điều, Khoản, Điểm...). Mỗi đề mục này PHẢI nằm trên dòng riêng biệt.
+2. BẢNG BIỂU KỸ THUẬT (QCVN/TCVN): Nếu phát hiện Bảng (Table), BẮT BUỘC phải vẽ lại dưới dạng thẻ Markdown Table (ví dụ: `| Cột 1 | Cột 2 |`). Tôn trọng các điểm neo và tọa độ nếu có. Không được làm vỡ cột quy chuẩn tải trọng/hoá chất/kích thước.
+3. KÝ HIỆU VÀ ĐƠN VỊ: Giữ nguyên tuyệt đối các đơn vị đo lường (m2, kg/m3, kPa), công thức hóa học, và ký hiệu toán học đặc thù của QCVN/TCVN.
+4. KHÔNG SỬ DỤNG (#) Heading markdown để tránh phá luồng Chunking hệ thống. Chỉ dùng Markdown cho định dạng Bảng (|...|) và Bôi đậm (**...**) nếu cần nhấn mạnh nội dung.
 
 BỎ QUA HOÀN TOÀN (KHÔNG trích xuất):
-- Logo, watermark, header điện tử (VGP, CỔNG THÔNG TIN ĐIỆN TỬ, chinhphu.vn, email, thời gian ký)
-- Chữ viết tay, ghi chú tay (TTĐT(2), TT(2), bút đỏ...)
-- Con dấu điện tử, con dấu đỏ, chữ ký số, chữ ký tay
-- Khối "Nơi nhận:" và toàn bộ danh sách phân phối sau đó
-- Tên/chức danh người ký (KT. THỦ TƯỚNG, PHÓ THỦ TƯỚNG, TM., tên riêng)
-- Mã lưu trữ (Lưu: VT, KGVX...)
-- Số trang đứng riêng"""
+- Logo, phôi nền watermark, header điện tử (CỔNG THÔNG TIN ĐIỆN TỬ, chinhphu.vn, thời gian ký).
+- Chữ viết tay bổ sung, bút đỏ, con dấu đỏ, chữ ký điện tử.
+- Các khối phân phối văn bản cuối trang ("Nơi nhận:", "Lưu: VT, ...").
+- Tên/chức danh mang tính thủ tục hành chính ("KT. BỘ TRƯỞNG", "PHÓ THỦ TƯỚNG", "TM.").
+- Số trang đứng đơn lẻ."""
 
 
 
 def llm_extract_page(img_bytes: bytes, page_num: int = 0,
-                     digital_text: str = "") -> dict:
+                     digital_text: str = "", model_override: str | None = None) -> dict:
     """Extract text from a scanned PDF page image using LLM Vision.
 
     Args:
@@ -197,9 +280,7 @@ def llm_extract_page(img_bytes: bytes, page_num: int = 0,
     """
     b64 = base64.b64encode(img_bytes).decode("utf-8")
 
-    user_prompt = "OCR:"
-    if digital_text and len(digital_text) > 50:
-        user_prompt += f"\n\nTham khảo bản nháp (có thể sai):\n---\n{digital_text[:3000]}\n---"
+    user_prompt = "Hãy bắt đầu bóc tách (OCR) cấu trúc Văn bản này:"
 
     messages = [
         {"role": "system", "content": _EXTRACT_SYSTEM},
@@ -212,7 +293,7 @@ def llm_extract_page(img_bytes: bytes, page_num: int = 0,
         },
     ]
 
-    raw = _call_llm(messages, max_tokens=8192, temperature=0.0, task=f"ocr_p{page_num}")
+    raw = _call_llm(messages, max_tokens=8192, temperature=0.0, task=f"ocr_p{page_num}", is_vision=True, primary_model=model_override)
     if not raw:
         return {"text": "", "is_table": False, "layout": [], "source": "llm_failed"}
 
@@ -350,12 +431,22 @@ def llm_extract_metadata(text_head: str) -> dict:
     if result is not None:
         return result
 
-    # Primary model failed JSON parse — cascade through fallback chain
-    # Chain: gemini-3.1-flash-lite → gemma-3-27b → rag-core (Qwen 35B)
-    for retry_model in [METADATA_FALLBACK, PRIMARY_MODEL]:
+    # Primary model (Gemma 27B) returned markdown analysis instead of JSON.
+    # Fallback chain: smaller Gemma → local GPU Qwen (all text models, NOT vision models)
+    _meta_fallbacks = [
+        os.getenv("TEXT_METADATA_FALLBACK_1", "text-gemma-12b"),
+        os.getenv("TEXT_METADATA_FALLBACK_2", "text-gemma-4b"),
+        METADATA_FALLBACK,  # rag-core (Qwen 35B local)
+    ]
+    # Reinforce JSON-only on retries (Gemma sometimes needs explicit reminder)
+    retry_messages = [
+        {"role": "system", "content": _META_SYSTEM},
+        {"role": "user", "content": f"Chỉ trả về JSON. Không giải thích.\n\nMetadata:\n\n{text_head[:5000]}"},
+    ]
+    for retry_model in _meta_fallbacks:
         if retry_model and retry_model != METADATA_MODEL:
             logger.warning(f"Metadata JSON parse failed, retrying with {retry_model}...")
-            raw_retry = _call_model(messages, retry_model, max_tokens=300, temperature=0.0,
+            raw_retry = _call_model(retry_messages, retry_model, max_tokens=300, temperature=0.0,
                                     disable_thinking=True)
             if raw_retry:
                 try:

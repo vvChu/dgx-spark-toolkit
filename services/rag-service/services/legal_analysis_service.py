@@ -11,6 +11,21 @@ from core.llm_client import call_llm
 logger = logging.getLogger(__name__)
 
 
+async def _get_full_embeddings(query: str) -> dict:
+    """Return both dense and sparse embeddings for a query.
+
+    This shared helper ensures hybrid search uses the full BGE-M3
+    sparse path (BM25-like) rather than an empty sparse vector.
+    """
+    import asyncio
+    from services.retrieval_service import get_embedding_model
+    loop = asyncio.get_running_loop()
+    model = get_embedding_model()
+    # Run in executor to avoid blocking the event loop
+    embeddings = await loop.run_in_executor(None, model.embed_query, query)
+    return embeddings  # {"dense": [...], "sparse": {...}}
+
+
 class LegalAnalysisService:
     def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None):
         self.milvus_repo = milvus_repo
@@ -49,9 +64,12 @@ class LegalAnalysisService:
 
         # 2. Retrieve relevant chunks from the NEW document
         # We use a standard dense search for the specific topic within the document
+        # [FIX] Use full hybrid embeddings (dense + sparse) — empty sparse
+        # bypasses BM25 completely, causing poor exact-term lookup within docs.
+        _emb_new = await _get_full_embeddings(query)
         new_results = await self.milvus_repo.hybrid_search(
-            query_vector=await self._get_query_embedding(query),
-            sparse_vector={},  # empty sparse vector for intra-doc search
+            query_vector=_emb_new.get("dense", []),
+            sparse_vector=_emb_new.get("sparse", {}),
             limit=5,
             expr=f"doc_number == '{doc_id.split('/')[-1]}'"
         )
@@ -67,9 +85,10 @@ class LegalAnalysisService:
             # Extract number from ID (Namespace/Number)
             pred_num = pred_id.split('/')[-1] if '/' in pred_id else pred_id
 
+            _emb_pred = await _get_full_embeddings(query)
             pred_results = await self.milvus_repo.hybrid_search(
-                query_vector=await self._get_query_embedding(query),
-                sparse_vector={},
+                query_vector=_emb_pred.get("dense", []),
+                sparse_vector=_emb_pred.get("sparse", {}),
                 limit=5,
                 expr=f"doc_number == '{pred_num}'"
             )
@@ -91,11 +110,11 @@ class LegalAnalysisService:
         }
 
     async def _get_query_embedding(self, query: str) -> List[float]:
-        from services.retrieval_service import get_embedding_model
-        model = get_embedding_model()
-        # In a real async environment, we should run this in an executor, but for this utility
-        # we'll assume the cache or small model makes it fast enough.
-        return model.embed_query(query)["dense"]
+        """Return only dense embedding (kept for backward compat with callers needing just dense)."""
+        embeddings = await _get_full_embeddings(query)
+        if isinstance(embeddings, dict):
+            return embeddings.get("dense", [])
+        return embeddings
 
     async def _generate_delta_analysis(self, doc_new: str, doc_old: str, query: str, context_new: str, context_old: str) -> str:
         prompt = f"""Bạn là một chuyên gia pháp lý cao cấp. Hãy so sánh sự thay đổi giữa văn bản MỚI và văn bản CŨ dựa trên nội dung được trích xuất dưới đây cho chủ đề: "{query}".

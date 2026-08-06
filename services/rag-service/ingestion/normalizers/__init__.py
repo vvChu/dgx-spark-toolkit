@@ -29,6 +29,7 @@ from ingestion.normalizers.structure import (
     rejoin_broken_headings,
     rejoin_paragraphs,
     rejoin_cross_page_paragraphs,
+    validate_article_sequence,
     normalize_section_headings,
     format_legal_structure,
 )
@@ -57,6 +58,7 @@ __all__ = [
     'rejoin_broken_headings',
     'rejoin_paragraphs',
     'rejoin_cross_page_paragraphs',
+    'validate_article_sequence',
     'normalize_section_headings',
     'format_legal_structure',
     # Tables

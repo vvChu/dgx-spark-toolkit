@@ -18,6 +18,7 @@ class TestRerankerUnit:
             r.model = mock_model
             r._load_lock = __import__("threading").Lock()
             r.device = "cpu"
+            r.force_cpu = True
             return r, mock_model
 
     def test_empty_docs_returns_empty(self):

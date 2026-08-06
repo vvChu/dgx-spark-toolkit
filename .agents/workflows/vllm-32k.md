@@ -14,7 +14,7 @@ version: v4.0
 
 1. Start model containers via compose:
 ```bash
-cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose up -d vllm-35b vllm-4b
+cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose up -d vllm-36b vllm-4b
 ```
 
 2. Confirm status:

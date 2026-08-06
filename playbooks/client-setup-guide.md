@@ -25,8 +25,8 @@
 │  :8090 ─► AI Gateway (LiteLLM)                               │
 │              │                                               │
 │              ├── Claude, Gemini, GPT  (cloud proxy)          │
-│              ├── Qwen 3.5 35B (:8004) (local GPU)            │
-│              ├── Qwen 3.5 4B  (:8003) (local GPU, fallback)  │
+│              ├── Qwen 3.6 35B (:8004) (local GPU)            │
+│              ├── Qwen 3.5 9B  (:8003) (local GPU, fallback)  │
 │              └── Auto-fallback + Redis cache                 │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -200,6 +200,7 @@ import 'dotenv/config';
 const client = new OpenAI({
   baseURL: process.env.AI_GATEWAY_URL,
   apiKey: process.env.AI_GATEWAY_KEY,
+  timeout: 120000, // Best practice: 120s timeout cho proxy
 });
 
 // Chat

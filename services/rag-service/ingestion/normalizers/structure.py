@@ -236,22 +236,79 @@ def format_legal_structure(text: str) -> str:
     lines = text.split("\n")
     result: list[str] = []
 
-    for line in lines:
-        stripped = line.strip()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
         if stripped.startswith("#"):
-            result.append(line)
+            result.append(lines[i])
+            i += 1
             continue
-        if re.match(r'^(?:Chương|CHƯƠNG)\s+[IVX\d]+', stripped):
-            result.append(f"\n## {stripped}")
-            continue
-        if re.match(r'^(?:Mục|MỤC)\s+[IVX\d]+', stripped):
-            result.append(f"\n## {stripped}")
-            continue
-        if re.match(r'^(?:Phần|PHẦN)\s+[IVX\d]+', stripped):
-            result.append(f"\n## {stripped}")
+
+        # --- Section headers: Chương / Mục / Phần ---
+        # Vietnamese legal docs often have the section number on one line
+        # and the UPPERCASE title on the next line:
+        #   Mục 4
+        #   QUY HOẠCH XÂY DỰNG NÔNG THÔN
+        # We merge them into: ## Mục 4 QUY HOẠCH XÂY DỰNG NÔNG THÔN
+        section_match = re.match(
+            r'^(?:Chương|CHƯƠNG|Mục|MỤC|Phần|PHẦN)\s+[IVX\d]+',
+            stripped
+        )
+        if section_match:
+            heading = stripped
+            # Look ahead: merge next non-empty line if it's uppercase title
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines):
+                next_line = lines[j].strip()
+                # Check if next line is all-uppercase title (or mostly uppercase)
+                alpha_chars = [c for c in next_line if c.isalpha()]
+                if (alpha_chars
+                    and len(next_line) >= 3
+                    and sum(1 for c in alpha_chars if c.isupper()) / len(alpha_chars) > 0.7
+                    and not re.match(r'^[ĐÐ]iều\s', next_line)):
+                    heading = f"{heading} {next_line}"
+                    i = j + 1  # Skip the merged title line
+                else:
+                    i += 1
+            else:
+                i += 1
+            result.append(f"\n## {heading}")
             continue
         if re.match(r'^[ĐÐ]iều\s+\d+[\.\\s:]', stripped):
-            result.append(f"\n### {stripped}")
+            # Try to split heading from inline body text
+            # Pattern: "Điều X. Short Title Body sentence..." → split into heading + body
+            # Vietnamese legal titles are typically short noun phrases (< 60 chars)
+            # Body text starts with common sentence-starting words
+            #
+            # SAFETY: Skip split for amendment/reference article titles
+            # These are naturally long and contain law references that include
+            # sentence-starter words (e.g., "Luật Quy hoạch", "Quy định...")
+            _AMENDMENT_KEYWORDS = ('sửa đổi', 'bổ sung', 'ban hành', 'thay thế',
+                                   'hướng dẫn', 'quy định chi tiết')
+            _is_amendment = any(kw in stripped.lower() for kw in _AMENDMENT_KEYWORDS)
+
+            split_match = None
+            if not _is_amendment:
+                _SENTENCE_STARTERS = (
+                    r'(?:Trong|Nhà|Theo|Căn|Các|Cơ|Việc|Đất|Mọi|Không|Tổ|Chính|'
+                    r'Quốc|Người|Hội|Ủy|Chủ|Bao|Trên|Khi|Nếu|Sau|Trước|Tại|Nơi|Để|'
+                    r'Nội|Hoạt|Nguyên|Đối|Thẩm|Trình|Thủ|'
+                    r'Tổng|Đơn|Thời|Trách|Diện|Đền|'
+                    r'Một|Hai|Ba|Bốn|Năm|Sáu)'
+                )
+                split_match = re.match(
+                    rf'^([ĐÐ]iều\s+\d+\.?\s*.{{5,80}}?)\s+({_SENTENCE_STARTERS}\s.+)$',
+                    stripped
+                )
+
+            if split_match and len(stripped) >= 60:
+                result.append(f"\n### {split_match.group(1)}")
+                result.append(split_match.group(2))
+            else:
+                result.append(f"\n### {stripped}")
+            i += 1
             continue
 
         num_match = re.match(
@@ -270,6 +327,7 @@ def format_legal_structure(text: str) -> str:
                 else:
                     hashes = '#####'
                 result.append(f"\n{hashes} {sec_num}. {sec_rest}")
+                i += 1
                 continue
 
         caps_chapter = re.match(
@@ -281,6 +339,7 @@ def format_legal_structure(text: str) -> str:
             sec_num = caps_chapter.group(1)
             sec_title = caps_chapter.group(2).strip()
             result.append(f"\n## {sec_num}. {sec_title}")
+            i += 1
             continue
 
         if re.match(r'^[IVX]+\.\s+[A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆ]', stripped):
@@ -289,9 +348,11 @@ def format_legal_structure(text: str) -> str:
                 upper_ratio = sum(1 for c in alpha_chars if c.isupper()) / len(alpha_chars)
                 if upper_ratio > 0.6:
                     result.append(f"\n**{stripped}**")
+                    i += 1
                     continue
 
-        result.append(line)
+        result.append(lines[i])
+        i += 1
 
     return "\n".join(result)
 
@@ -406,5 +467,140 @@ def rejoin_cross_page_paragraphs(page_texts: list[str]) -> list[str]:
             f"[CROSS-PAGE] Joined p{i+1}→p{i+2}: "
             f"...{last_line[-30:]} + {first_line[:30]}..."
         )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Article Sequence Validator (Fix duplicate Điều numbers from OCR)
+# ---------------------------------------------------------------------------
+
+# Matches both raw "Điều N." and markdown "### Điều N." headings
+_DIEU_LINE_RE = re.compile(
+    r'^(#{0,4}\s*)[ĐÐ]iều\s+(\d+)\.?\s*(.*)',
+    re.MULTILINE,
+)
+
+
+def validate_article_sequence(page_texts: list[str]) -> list[str]:
+    """Fix duplicate Điều numbers caused by OCR hallucination.
+
+    Vietnamese legal articles have strictly monotonically increasing numbers.
+    When OCR processes pages independently, it may hallucinate article numbers,
+    causing duplicate Điều N markers.
+
+    Algorithm:
+      1. Scan all page texts for Điều N markers.
+      2. Build the article sequence across the entire document.
+      3. Detect duplicates (same Điều number appears 2+ times).
+      4. For each duplicate: keep the occurrence that fits the sequential
+         position (appears between Điều N-1 and Điều N+1).
+      5. Downgrade the misplaced occurrence: remove the Điều heading but
+         KEEP the content (it's still part of the document).
+
+    Args:
+        page_texts: List of page text strings (index = page number).
+
+    Returns:
+        List of page texts with duplicate article headings fixed.
+    """
+    if not page_texts or len(page_texts) < 2:
+        return page_texts
+
+    # 1. Collect ALL Điều markers with their document-level position
+    all_articles = []  # (article_num, page_idx, char_offset, full_match, title)
+    for page_idx, ptext in enumerate(page_texts):
+        for m in _DIEU_LINE_RE.finditer(ptext):
+            num = int(m.group(2))
+            title = m.group(3).strip()[:60]
+            all_articles.append((num, page_idx, m.start(), m.group(0), title))
+
+    if len(all_articles) < 3:
+        return page_texts
+
+    # 2. Detect duplicates
+    from collections import defaultdict
+    num_to_occurrences = defaultdict(list)
+    for art in all_articles:
+        num_to_occurrences[art[0]].append(art)
+
+    duplicates = {n: occs for n, occs in num_to_occurrences.items()
+                  if len(occs) > 1}
+
+    if not duplicates:
+        return page_texts
+
+    logger.info(f"[ARTICLE-SEQ] Found {len(duplicates)} duplicate Điều numbers: "
+                f"{sorted(duplicates.keys())}")
+
+    # 3. Build document-order position map for sequence analysis
+    ordered = sorted(all_articles, key=lambda a: (a[1], a[2]))  # by page, offset
+    art_positions = {}  # article_num -> list of positions in ordered
+    for pos, art in enumerate(ordered):
+        art_positions.setdefault(art[0], []).append(pos)
+
+    result = list(page_texts)  # Copy
+
+    # 4. For each duplicate, determine which to keep
+    for dup_num, occurrences in sorted(duplicates.items()):
+        # Find positions of neighbors in the ordered sequence
+        positions = art_positions.get(dup_num, [])
+        if len(positions) < 2:
+            continue
+
+        # Score each occurrence: how well does it fit the sequence?
+        best_score = -1
+        best_idx = -1
+        for i, occ in enumerate(occurrences):
+            pos = positions[i]
+            score = 0
+
+            # Check predecessor: Điều before this should be dup_num - 1
+            # (skip other duplicates of the same number)
+            if pos > 0:
+                prev_num = ordered[pos - 1][0]
+                if prev_num == dup_num - 1:
+                    score += 2  # Strong signal
+                elif prev_num < dup_num and prev_num != dup_num:
+                    score += 1
+
+            # Check successor: Điều after this should be dup_num + 1
+            # This is the STRONGEST signal — the correct Điều N flows into N+1
+            if pos < len(ordered) - 1:
+                next_num = ordered[pos + 1][0]
+                if next_num == dup_num + 1:
+                    score += 3  # Strongest signal
+                elif next_num > dup_num and next_num != dup_num:
+                    score += 1
+
+            # Tiebreaker: prefer later occurrence (last before N+1)
+            if score > best_score or (score == best_score and i > best_idx):
+                best_score = score
+                best_idx = i
+
+        # Downgrade all except the best one
+        for i, occ in enumerate(occurrences):
+            if i == best_idx:
+                continue
+
+            num, page_idx, char_off, full_match, title = occ
+            old_text = result[page_idx]
+
+            # Replace "Điều N. Title" or "### Điều N. Title" with plain text
+            # Keep the content but remove the article heading marker
+            # This prevents it from being treated as a structural heading
+            downgraded = full_match.lstrip('#').strip()
+            # Prefix with a note for transparency
+            replacement = f"**[↓ OCR gán nhầm]** {downgraded}"
+
+            result[page_idx] = old_text.replace(full_match, replacement, 1)
+
+            # Only warn when we're confident it's a real OCR error (high score neighbor)
+            # Low score = Mục lục / table-of-contents false positive — just debug log
+            log_fn = logger.warning if best_score > 3 else logger.debug
+            log_fn(
+                f"[ARTICLE-SEQ] Duplicate Điều {num} downgraded on page "
+                f"{page_idx + 1}: '{title}' (score={best_score} vs this)"
+            )
 
     return result

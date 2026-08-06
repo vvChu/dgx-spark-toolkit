@@ -4,6 +4,7 @@ services:
       context: ./services/rag-service
     container_name: rag-service
     environment:
+      - CORS_ALLOWED_ORIGINS=*
       - MILVUS_HOST=milvus-standalone
       - MILVUS_PORT=19530
       - VLLM_API_BASE=${VLLM_API_BASE:-http://ai-gateway:4000/v1}
@@ -22,18 +23,21 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - FORCE_CPU_RERANKER=1
       - FORCE_CPU_EMBEDDING=1
+      # Limit PyTorch to only take what it strictly needs + bounded cache to avoid stealing too much VRAM from vLLM
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.8
       - OMP_NUM_THREADS=4
       - OPENBLAS_NUM_THREADS=4
       - MKL_NUM_THREADS=4
       - REDIS_URL=redis://litellm-redis:6379/1
-      - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-gemini-3-flash}
-      - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-gemini-3.1-flash-lite}
+      - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-ocr-primary}
+      - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-ocr-fallback}
       - IMAGE_PREPROCESS=${IMAGE_PREPROCESS:-1}
       - OCR_RENDER_DPI=${OCR_RENDER_DPI:-300}
       - SURYA_DEVICE=${SURYA_DEVICE:-auto}
       - CHUNK_MAX_CHARS=${CHUNK_MAX_CHARS:-14500}
       - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
       - REMOVE_WATERMARKS=${REMOVE_WATERMARKS:-0}
+      - HF_HOME=/home/appuser/.cache/huggingface
     working_dir: /app
     command: ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
@@ -61,11 +65,15 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
+          cpus: '6'
           memory: 12G
         reservations:
           cpus: '2'
           memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     networks:
       - rag-network
 
@@ -99,8 +107,8 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - REDIS_URL=redis://litellm-redis:6379/1
-      - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-gemini-3-flash}
-      - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-gemini-3.1-flash-lite}
+      - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-ocr-primary}
+      - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-ocr-fallback}
       - IMAGE_PREPROCESS=${IMAGE_PREPROCESS:-1}
       - OCR_RENDER_DPI=${OCR_RENDER_DPI:-300}
       - SURYA_DEVICE=${SURYA_DEVICE:-auto}
@@ -142,9 +150,9 @@ services:
     networks:
       - rag-network
 
-    # LiteLLM AI Gateway Proxy
+  # LiteLLM AI Gateway Proxy
   ai-gateway:
-    image: ghcr.io/berriai/litellm:main-latest
+    image: ghcr.io/berriai/litellm:v1.83.3-stable
     container_name: ai-gateway
     ports:
       - "8090:4000"
@@ -155,24 +163,38 @@ services:
       - VIBER_PROXY_URL=${VIBER_PROXY_URL:-https://viber.claudegateway.site/v1}
       - VIBER_PROXY_KEY=${VIBER_PROXY_KEY}
       - GATEWAY_LOCAL_URL=${GATEWAY_LOCAL_URL:-http://${HOST_IP:-localhost}:8004/v1}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_API_KEY_2=${GEMINI_API_KEY_2}
       - GEMINI_API_KEY_3=${GEMINI_API_KEY_3}
       - GEMINI_API_KEY_4=${GEMINI_API_KEY_4}
       - GEMINI_API_KEY_5=${GEMINI_API_KEY_5}
       - GEMINI_API_KEY_6=${GEMINI_API_KEY_6}
+      - GEMINI_API_KEY_7=${GEMINI_API_KEY_7}
+      - GEMINI_API_KEY_8=${GEMINI_API_KEY_8}
+      - GEMINI_API_KEY_9=${GEMINI_API_KEY_9}
+      - GEMINI_API_KEY_10=${GEMINI_API_KEY_10}
+      - GEMINI_API_KEY_11=${GEMINI_API_KEY_11}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
       - LITELLM_LOG=INFO
+      - PROXY_BASE_URL=http://100.83.192.30:8090
       - DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm
       - REDIS_URL=redis://litellm-redis:6379/0
       - STORE_MODEL_IN_DB=True
+      - PYTHONPATH=/app
     volumes:
       - ./services/ai-gateway/litellm_config.yaml:/app/litellm_config.yaml
+      - ./services/ai-gateway/custom_callbacks.py:/app/custom_callbacks.py
     command: [ "--config", "/app/litellm_config.yaml", "--port", "4000" ]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     depends_on:
       litellm-db:
         condition: service_healthy
@@ -240,7 +262,7 @@ services:
       - rag-network
 
   milvus-minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
     container_name: milvus-minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-${MINIO_ACCESS_KEY:-minioadmin}}
@@ -258,7 +280,7 @@ services:
       - rag-network
 
   milvus-standalone:
-    image: milvusdb/milvus:v2.5.27
+    image: milvusdb/milvus:v2.6.14
 
     container_name: milvus-standalone
     environment:
@@ -286,7 +308,7 @@ services:
 
   # Knowledge Graph
   neo4j:
-    image: neo4j:5.23.0
+    image: neo4j:5.26.25
     container_name: neo4j-graph
     ports:
       - "7474:7474" # HTTP
@@ -336,6 +358,7 @@ services:
       - ./monitoring/grafana-vllm-dashboard.json:/var/lib/grafana/dashboards/vllm.json
       - ./monitoring/grafana-rag-dashboard.json:/var/lib/grafana/dashboards/rag.json
       - ./monitoring/grafana-ingestion-dashboard.json:/var/lib/grafana/dashboards/ingestion.json
+      - ./monitoring/grafana-litellm-dashboard.json:/var/lib/grafana/dashboards/litellm.json
     restart: unless-stopped
     networks:
       - rag-network
@@ -403,9 +426,9 @@ services:
     networks:
       - rag-network
 
-  vllm-35b:
-    image: hellohal2064/vllm-qwen3.5-gb10:blackwell-sm121
-    container_name: qwen35b
+  vllm-36b:
+    image: vllm/vllm-openai:latest
+    container_name: qwen36b
     ports:
       - "8004:8000"
     healthcheck:
@@ -426,23 +449,25 @@ services:
     environment:
       - PORT=8000
       - ATTENTION_BACKEND=flashinfer
-      - GPU_MEMORY_UTIL=0.85
-      - MAX_MODEL_LEN=32768
+      - GPU_MEMORY_UTIL=0.75
+      - MAX_MODEL_LEN=65536
+      - VLLM_USE_FLASHINFER_MOE_FP4=0
+      - VLLM_TEST_FORCE_FP8_MARLIN=1
     volumes:
-      - ${QWEN35B_MODEL_DIR}:/models/model
+      - ${LOCAL_PRIMARY_LLM_DIR}:/models/model
       - ./scripts:/app/scripts
       - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
     entrypoint: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
     command: >
-      --model /models/model/snapshots/${QWEN35B_SNAPSHOT:-0b2752837483aa34b3db6e83e151b150c0e00e49}
-      --served-model-name qwen3.5-35b
+      --model /models/model
+      --served-model-name qwen-local-primary
       --host 0.0.0.0
       --port 8000
-      --gpu-memory-utilization 0.85
-      --max-model-len 32768
-      --kv-cache-dtype fp8
-      --max-num-batched-tokens 8192
-      --max-num-seqs 16
+      --limit-mm-per-prompt '{"image": 1}'
+      --gpu-memory-utilization 0.75
+      --max-model-len 65536
+      --max-num-batched-tokens 16384
+      --max-num-seqs 64
       --enable-prefix-caching
       --enable-chunked-prefill
       --enable-auto-tool-choice
@@ -465,6 +490,85 @@ services:
       - rag-network
     restart: "no"
 
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    volumes:
+      - open-webui_data:/app/backend/data
+    environment:
+      - OPENAI_API_BASE_URL=http://ai-gateway:4000/v1
+      - OPENAI_API_KEY=${LITELLM_MASTER_KEY}
+      - WEBUI_AUTH=False
+      - ENABLE_SIGNUP=False
+      - WEBUI_SECRET_KEY=spark_dgx_secure_key_2026
+      - DEFAULT_MODELS=Qwen-3.6-35B-NVFP4
+      - TASK_MODEL=Qwen-3.6-35B-NVFP4
+      - WEBUI_NAME=Spark AI Assistant
+      - ENABLE_RAG_WEB_SEARCH=True
+      - RAG_WEB_SEARCH_ENGINE=duckduckgo
+    ports:
+      - "3001:8080"
+    restart: unless-stopped
+    networks:
+      - rag-network
+
+  smart-watchdog:
+    image: python:3.11-alpine
+    container_name: smart-watchdog
+    volumes:
+      - ./scripts/smart_watchdog.py:/app/smart_watchdog.py
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+    command: >
+      sh -c "pip install requests docker && python /app/smart_watchdog.py"
+    restart: unless-stopped
+    networks:
+      - rag-network
+
+  whisper-local:
+    # -------------------------------------------------------------------------
+    # ARM64 (Blackwell GB10) — ctranslate2[cuda] wheel NOT available on PyPI
+    # for aarch64. Official latest-cuda image falls back to CPU-only ctranslate2.
+    #
+    # MODE A (current): CPU inference — stable, no build needed.
+    #   WHISPER__INFERENCE_DEVICE=cpu / COMPUTE_TYPE=int8
+    #
+    # MODE B (GPU): Build custom image from services/whisper-local/Dockerfile
+    #   Compiles ctranslate2 CUDA from source natively (sm_120 Blackwell).
+    #   Run: docker compose build whisper-local && docker compose up -d whisper-local
+    #   Then change WHISPER__INFERENCE_DEVICE=cpu / COMPUTE_TYPE=float16 below.
+    # -------------------------------------------------------------------------
+    build:
+      context: ./services/whisper-local
+    image: dgx-spark-toolkit-whisper-local:latest
+    container_name: whisper-local
+    environment:
+      - HF_ENDPOINT=https://hf-mirror.com
+      - WHISPER__MODEL=Systran/faster-whisper-large-v3
+      - WHISPER__INFERENCE_DEVICE=cuda
+      - WHISPER__COMPUTE_TYPE=float16
+      - WHISPER__USE_BATCHED_MODE=true
+      # CPU Optimizations (System has 20 cores)
+      - WHISPER__NUM_WORKERS=2
+      - WHISPER__CPU_THREADS=4
+    ports:
+      - "8008:8000"
+    volumes:
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/home/ubuntu/.cache/huggingface
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - rag-network
+
 networks:
   rag-network:
     external: true
@@ -477,3 +581,4 @@ volumes:
   litellm_data:
   litellm_redis_data:
   model_cache:  # Persistent model cache — survives container rebuilds
+  open-webui_data:

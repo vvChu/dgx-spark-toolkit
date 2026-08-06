@@ -98,14 +98,7 @@ async def lifespan(app: FastAPI):
         state.redis_queue = None
 
     # Init Async State Manager (singleton — avoids per-request pool leak)
-    try:
-        from ingestion.async_state_manager import AsyncStateManager
-        state.async_state_manager = AsyncStateManager()
-        await state.async_state_manager.init()
-        logger.info("Successfully initialized AsyncStateManager.")
-    except Exception as e:
-        logger.error(f"Failed to initialize AsyncStateManager: {e}")
-        state.async_state_manager = None
+    state.async_state_manager = state.state_manager
 
     # ── Context Lake Services ──────────────────────────────────────────
     redis_url = settings.REDIS_URL

@@ -14,5 +14,5 @@ version: v4.0
 
 1. Stop model containers:
 ```bash
-cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose stop vllm-35b vllm-4b && echo "✅ Model containers stopped (qwen35b, qwen3-9b)"
+cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose stop vllm-36b vllm-4b && echo "✅ Model containers stopped (qwen36b, qwen3-9b)"
 ```

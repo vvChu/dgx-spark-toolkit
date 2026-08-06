@@ -29,6 +29,7 @@ load_dotenv()
 ai = OpenAI(
     base_url=os.environ.get("AI_GATEWAY_URL", "http://100.83.192.30:8090/v1"),
     api_key=os.environ.get("AI_GATEWAY_KEY", os.environ.get("OPENAI_API_KEY", "")),
+    timeout=120.0,
 )
 
 DEFAULT_MODEL = os.environ.get("AI_MODEL", "qwen3.5-35b")

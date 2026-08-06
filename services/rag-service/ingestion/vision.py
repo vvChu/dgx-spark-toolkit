@@ -286,7 +286,17 @@ def _get_vision_http_client() -> httpx.Client:
     if _vision_http_client is None:
         with _vision_http_client_lock:
             if _vision_http_client is None:
-                _vision_http_client = httpx.Client(timeout=600)
+                # Granular timeout — prevents permanent hang on large PDF pages
+                # rag-core (local GPU) ~45-75s/page, cloud ~10-50s/page
+                # read=150s gives 2× buffer even for slowest local GPU call
+                _vision_http_client = httpx.Client(
+                    timeout=httpx.Timeout(
+                        connect=10.0,   # TCP handshake: fail fast
+                        read=150.0,     # OCR response: rag-core max ~75s → 2× buffer
+                        write=20.0,     # Image upload (base64)
+                        pool=10.0,      # Connection pool wait
+                    )
+                )
     return _vision_http_client
 
 
@@ -414,8 +424,8 @@ def is_toc_page(text: str) -> bool:
     return is_toc
 
 
-def call_vision_fallback(img_bytes, ocr_text, page_num):
-    """Call rag-core (Qwen3.5 35B Multimodal) for fallback extraction via LiteLLM"""
+def call_vision_fallback(img_bytes, ocr_text, page_num, model="gemini-3-flash"):
+    """Call Vision LLM for fallback extraction via LiteLLM"""
     import base64
     base64_image = base64.b64encode(img_bytes).decode('utf-8')
     prompt = (
@@ -442,7 +452,7 @@ def call_vision_fallback(img_bytes, ocr_text, page_num):
         return ""
 
     payload = {
-        "model": "rag-core",
+        "model": model,
         "messages": [
             {
                 "role": "user",
@@ -455,6 +465,9 @@ def call_vision_fallback(img_bytes, ocr_text, page_num):
         "max_tokens": 8192,
         "temperature": 0.1
     }
+    
+    if model in ("rag-core", "qwen3.5-35b"):
+        payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
     max_retries = 5
     retry_delay = 2
     client = _get_vision_http_client()
@@ -717,10 +730,10 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
         return {"text": "", "bbox": bbox_list, "layout": layout_segments, "score": score}
 
     if score < threshold or looks_like_annex_table:
-        logger.info(f"Page {page_num} score {score:.1f} < {threshold} (or seems like annex table). Triggering Full Vision Fallback (rag-core).")
+        logger.info(f"Page {page_num} score {score:.1f} < {threshold} (or seems like annex table). Triggering Primary Vision Fallback (gemini-3-flash).")
         if VISION_FALLBACK_COUNT:
             VISION_FALLBACK_COUNT.inc()
-        vision_text = call_vision_fallback(llm_enhanced_bytes, ocr_text=full_text, page_num=page_num)
+        vision_text = call_vision_fallback(llm_enhanced_bytes, ocr_text=full_text, page_num=page_num, model="gemini-3-flash")
 
     if vision_text:
         final_text = vision_text
@@ -729,14 +742,19 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
         # 4. Cross-OCR Validation (optional — enable via CROSS_VALIDATE_OCR=1)
         if _CROSS_VALIDATE_ENABLED and _cross_validate is not None:
             try:
-                cv_result = _cross_validate(img_bytes, vision_text, page_num)
-                if not cv_result.get("skipped") and not cv_result.get("passed"):
-                    logger.warning(
-                        f"[CrossValidate] p{page_num}: LOW FIDELITY "
-                        f"sections={cv_result.get('section_coverage',0):.0%} "
-                        f"words={cv_result.get('word_overlap',0):.0%} "
-                        f"missing={cv_result.get('missing_sections',[])[:5]}"
-                    )
+                cv_result = _cross_validate(vision_text, full_text, page_num)
+                if not cv_result.get("skipped"):
+                    if not cv_result.get("passed"):
+                        logger.warning(
+                            f"[CrossValidate] p{page_num}: LOW FIDELITY "
+                            f"sections={cv_result.get('section_coverage',0):.0%} "
+                            f"words={cv_result.get('word_overlap',0):.0%} "
+                            f"missing={cv_result.get('missing_sections',[])[:5]}"
+                        )
+                        from ingestion.cross_validator import retry_with_best
+                        vision_text = retry_with_best(llm_enhanced_bytes, page_num, vision_text, full_text)
+                    else:
+                        logger.info(f"[CrossValidate] p{page_num}: OK sections={cv_result.get('section_coverage',0):.0%} words={cv_result.get('word_overlap',0):.0%}")
             except Exception as e:
                 logger.debug(f"[CrossValidate] p{page_num}: skipped ({e})")
     else:

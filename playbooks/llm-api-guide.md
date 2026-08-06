@@ -18,7 +18,7 @@ Authorization: Bearer $LITELLM_MASTER_KEY
 curl http://localhost:8090/v1/chat/completions \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"model": "claude-sonnet-4-6-thinking", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
 ---
@@ -28,9 +28,9 @@ curl http://localhost:8090/v1/chat/completions \
 ### 🖥️ Local GPU — Private / Offline
 | Model | Description |
 |-------|-------------|
-| `qwen3.5-35b` | Qwen 3.5 35B — main local model |
-| `rag-core` | Alias of qwen3.5-35b (RAG pipeline) |
-| `rag-light` | Qwen 3.5 4B — lightweight fallback |
+| `qwen-local-primary` | Qwen 3.6 35B — main local model |
+| `rag-core` | Alias of qwen-local-primary (RAG pipeline) |
+| `rag-light` | Qwen 3.5 9B — lightweight fallback |
 
 ### 🏎️ Speed Tier (< 1.5s)
 | Model | Best For |
@@ -40,6 +40,15 @@ curl http://localhost:8090/v1/chat/completions \
 | `gemma-3-27b` | Free tier, high-volume tasks |
 | `claude-haiku-4` | Fast Claude |
 | `claude-haiku-4-5` | Faster Claude, better quality |
+
+### 🛠️ RAG Virtual Aliases (Free Tier Farm)
+Mô hình "ảo" (Alias) được Gateway tự động định tuyến để tận dụng Quota Free của Google. Hãy dùng các alias này cho các logic lập trình thay vì gọi trực tiếp model thật để không sập Rate Limit.
+| Alias / Bí Danh | Model Thật (Backend) | Công Dụng (Best For) | Quota System (10 Keys) |
+|-------|----------|----------|----------|
+| `text-gemma` | Gemma 3 27B | High-volume NLP (Sinh câu hỏi, Summarize) | **144,000 req/ngày** |
+| `text-light-gemma` | Gemma 3 12B | Bóc tách siêu dữ liệu (Metadata, Tagging) | **144,000 req/ngày** |
+| `reasoning-gemma` | Gemma 4 31B | Logical Graph (Neo4j), Structured JSON | **15,000 req/ngày** |
+| `ocr-primary` | Gemini 3.1 Flash Lite| Cloud OCR Vision (Trích xuất văn bản từ Ảnh) | **5,000 req/ngày** |
 
 ### 🧠 Balanced Tier (1–3s)
 | Model | Best For |
@@ -91,10 +100,10 @@ print(response.choices[0].message.content)
 Use only when you need raw vLLM access without gateway routing:
 
 ```bash
-# Qwen 3.5 35B (port 8004)
+# Qwen 3.6 35B (port 8004)
 curl http://localhost:8004/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "qwen3.5-35b", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"model": "rag-core", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
 > ⚠️ Direct vLLM access has no fallbacks and no cloud models. Prefer the gateway.

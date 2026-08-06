@@ -44,7 +44,7 @@ grep -n "EMBEDDING_MODEL" /home/vvc/Codebase/dgx-spark-toolkit/.env | head -n 3 
 ```bash
 echo "🤖 Running Self-Optimization..."
 if [ -f "/home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/vllm-manager/scripts/workflow_optimizer.py" ]; then
-    python3 /home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/vllm-manager/scripts/workflow_optimizer.py
+    cd /home/vvc && timeout 15 /usr/bin/python3 -u /home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/vllm-manager/scripts/workflow_optimizer.py
 else
     echo "  ⚠️ workflow_optimizer.py missing."
 fi

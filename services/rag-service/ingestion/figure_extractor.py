@@ -44,11 +44,11 @@ _MAX_DESC_CHARS = 300
 # Model for figure descriptions — prefer lightweight remote models for speed.
 # gemini-3-flash: ~1.5s (remote)  vs  rag-core: ~7.8s (local 35B GPU)
 # Fallback chain: try all remote vision models before using local GPU.
-_FIGURE_MODEL = os.environ.get("FIGURE_DESC_MODEL", "gemini-3-flash")
+_FIGURE_MODEL = os.environ.get("FIGURE_DESC_MODEL", "ocr-primary")
 _FIGURE_FALLBACK_CHAIN = [
-    "gemini-3.1-flash-lite",  # Fast remote backup (2.5x faster)
-    "gemma-3-27b",            # High-quota free tier backup
-    "claude-haiku-4",         # Claude vision via proxy
+    "ocr-fallback",  # Fast remote backup
+    "ocr-tier3",            # backup
+    "ocr-tier4",         # backup
     "rag-core",               # Local 35B GPU — last resort
 ]
 # Max concurrent figure descriptions per page

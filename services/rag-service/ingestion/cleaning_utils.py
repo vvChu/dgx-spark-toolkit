@@ -269,13 +269,33 @@ def clean_llm_text(text: str, source_id: str = "unknown", is_summary: bool = Fal
         ratio = removed_len / original_len
 
         if ratio > ratio_threshold:
-            audit_logger.warning(
-                f"HIGH_CLEANING_RATIO detected for {source_id}: {ratio:.2%} stripped ({removed_len}/{original_len} chars). "
-                f"Safety Guard triggered: returning ORIGINAL text to prevent legal data loss."
+            # ── Anchor-Based Rollback Guard ──
+            # Before rolling back, check if cleaned text contains Vietnamese legal content.
+            # If legal anchors are found, the stripping removed AI preamble, not real content.
+            # Only rollback if NO legal content is detectable after cleaning.
+            _LEGAL_ANCHORS = re.compile(
+                r'(?:(?:Điều|Khoản|Chương|Mục|Phần|Tiếu mục)\s+\d+'
+                r'|\d+\.\d+[\s.]'   # numbered sections like 3.1, 4.2.
+                r'|QCVN|TCVN|Nghị định|Thông tư|Quyết định'
+                r'|(?:ban hành|quy định|hướng dẫn))',
+                re.IGNORECASE | re.UNICODE,
             )
-            # Only return original if NOT a summary. Summaries are safer to clean aggressively.
-            if not is_summary:
-                return text.strip()
+            has_legal_content = bool(_LEGAL_ANCHORS.search(cleaned))
+
+            if has_legal_content:
+                # Stripping removed AI preamble, not legal content — keep cleaned version
+                logger.info(
+                    f"HIGH_CLEANING_RATIO for {source_id}: {ratio:.1%} stripped "
+                    f"but legal anchors found — keeping cleaned text."
+                )
+            else:
+                # No legal content detected → rolling back to prevent data loss
+                audit_logger.warning(
+                    f"HIGH_CLEANING_RATIO detected for {source_id}: {ratio:.2%} stripped ({removed_len}/{original_len} chars). "
+                    f"No legal anchors in cleaned text — Safety Guard rollback to original."
+                )
+                if not is_summary:
+                    return text.strip()
 
     if len(cleaned) < original_len:
         logger.info(f"Cleaned LLM text for {source_id}: stripped {original_len - len(cleaned)} characters of AI monologue.")

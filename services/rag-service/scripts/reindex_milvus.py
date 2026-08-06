@@ -27,7 +27,7 @@ from pymilvus import connections, Collection, utility, FieldSchema, CollectionSc
 def main():
     milvus_host = os.environ.get("MILVUS_HOST", "localhost")
     milvus_port = os.environ.get("MILVUS_PORT", "19530")
-    collection_name = os.environ.get("MILVUS_COLLECTION", "legal_docs_v9")
+    collection_name = os.environ.get("MILVUS_COLLECTION", "legal_docs_v10")
     export_dir = os.environ.get("EXPORT_DIR", "/home/vvc/Public/exports")
     json_dir = os.path.join(export_dir, "json")
     dim = 1024  # bge-m3 embedding dimension

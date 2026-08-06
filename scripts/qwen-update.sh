@@ -4,13 +4,13 @@
 
 LOG_FILE="/var/log/qwen-update.log"
 
-echo "[$(date)] Checking for updates for hellohal2064/vllm-qwen3.5-gb10:latest..." | tee -a "$LOG_FILE"
+echo "[$(date)] Checking for updates for vllm/vllm-openai:latest..." | tee -a "$LOG_FILE"
 
 # Pull latest image
-docker pull hellohal2064/vllm-qwen3.5-gb10:latest | tee -a "$LOG_FILE"
+docker pull vllm/vllm-openai:latest | tee -a "$LOG_FILE"
 
 # Restart container
-echo "[$(date)] Restarting qwen35b container..." | tee -a "$LOG_FILE"
-docker restart qwen35b | tee -a "$LOG_FILE"
+echo "[$(date)] Restarting qwen36b container..." | tee -a "$LOG_FILE"
+docker restart qwen36b | tee -a "$LOG_FILE"
 
 echo "[$(date)] Update process completed." | tee -a "$LOG_FILE"

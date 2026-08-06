@@ -2,6 +2,12 @@ from FlagEmbedding import BGEM3FlagModel
 import numpy as np
 import torch
 import logging
+import warnings
+import contextlib
+from core.vram_accelerator import vram_accelerate
+
+# Suppress verbose XLMRobertaTokenizerFast HuggingFace warnings
+warnings.filterwarnings('ignore', category=UserWarning, message='.*XLMRobertaTokenizerFast.*')
 
 logger = logging.getLogger(__name__)
 
@@ -9,11 +15,12 @@ logger = logging.getLogger(__name__)
 class BGE_M3_HybridEmbedding:
     def __init__(self):
         import os
-        self.device = 'cuda' if torch.cuda.is_available() and os.getenv("FORCE_CPU_EMBEDDING") != "1" else 'cpu'
-        logger.info(f"Initializing BAAI/bge-m3 Hybrid (Dense + Native Sparse) on {self.device}...")
+        self.force_cpu = os.getenv("FORCE_CPU_EMBEDDING") == "1"
+        self.device = 'cpu'
+        logger.info(f"Initializing BAAI/bge-m3 Hybrid (Dense + Native Sparse) on {self.device} (Hybrid VRAM mode)...")
         self.model = BGEM3FlagModel(
             'BAAI/bge-m3',
-            use_fp16=(self.device == 'cuda'),
+            use_fp16=False,
             device=self.device
         )
         self.dim = 1024
@@ -23,14 +30,15 @@ class BGE_M3_HybridEmbedding:
         if isinstance(texts, str):
             texts = [texts]
 
-        embeddings = self.model.encode(
-            texts,
-            batch_size=batch_size,
-            max_length=8192,
-            return_dense=True,
-            return_sparse=True,
-            return_colbert_vecs=False
-        )
+        with vram_accelerate(self.model, min_vram_gb=4.0) if not self.force_cpu else contextlib.nullcontext():
+            embeddings = self.model.encode(
+                texts,
+                batch_size=batch_size,
+                max_length=8192,
+                return_dense=True,
+                return_sparse=True,
+                return_colbert_vecs=False
+            )
 
         results = []
         dense_vecs = embeddings['dense_vecs'].tolist()
@@ -56,14 +64,15 @@ class BGE_M3_HybridEmbedding:
         # [P1-4] Add instruction prefix for better domain-specific embeddings
         prefixed = [self._DOC_PREFIX + t for t in texts]
 
-        embeddings = self.model.encode(
-            prefixed,
-            batch_size=batch_size,
-            max_length=8192,
-            return_dense=True,
-            return_sparse=True,
-            return_colbert_vecs=False
-        )
+        with vram_accelerate(self.model, min_vram_gb=4.0) if not self.force_cpu else contextlib.nullcontext():
+            embeddings = self.model.encode(
+                prefixed,
+                batch_size=batch_size,
+                max_length=8192,
+                return_dense=True,
+                return_sparse=True,
+                return_colbert_vecs=False
+            )
 
         return {
             "dense": embeddings['dense_vecs'].tolist(),
@@ -75,14 +84,15 @@ class BGE_M3_HybridEmbedding:
         # [P1-4] Add instruction prefix for query
         prefixed = self._QUERY_PREFIX + query
 
-        embeddings = self.model.encode(
-            [prefixed],
-            batch_size=1,
-            max_length=8192,
-            return_dense=True,
-            return_sparse=True,
-            return_colbert_vecs=False
-        )
+        with vram_accelerate(self.model, min_vram_gb=4.0) if not self.force_cpu else contextlib.nullcontext():
+            embeddings = self.model.encode(
+                [prefixed],
+                batch_size=1,
+                max_length=8192,
+                return_dense=True,
+                return_sparse=True,
+                return_colbert_vecs=False
+            )
 
         return {
             "dense": np.array(embeddings['dense_vecs'])[0].tolist(),

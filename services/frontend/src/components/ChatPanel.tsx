@@ -38,9 +38,14 @@ export default function ChatPanel({
           <div key={m.id || i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[85%] p-5 rounded-3xl shadow-2xl transition-all ${m.role === 'user' ? 'bg-blue-600 text-white' : 'glass border-blue-500/20'}`}>
               {m.thought && (
-                <div className="flex items-center space-x-2 mb-3 opacity-60">
-                  <Activity size={12} className="text-blue-500" />
-                  <span className="text-[10px] uppercase font-bold tracking-tighter">AI Reasoning Path</span>
+                <div className="mb-4 p-3 rounded-xl bg-blue-950/40 border border-blue-500/20 text-xs text-blue-200/80 space-y-1">
+                  <div className="flex items-center space-x-2 opacity-80">
+                    <Activity size={12} className="text-blue-400 animate-pulse" />
+                    <span className="text-[10px] uppercase font-bold tracking-wider">AI Reasoning Path</span>
+                  </div>
+                  <div className="text-[11px] leading-relaxed font-mono opacity-90 whitespace-pre-wrap max-h-32 overflow-y-auto custom-scrollbar">
+                    {m.thought}
+                  </div>
                 </div>
               )}
               <div className="text-[15px] leading-relaxed prose prose-invert max-w-none prose-table:border-collapse prose-th:border prose-th:border-white/20 prose-th:p-2 prose-td:border prose-td:border-white/20 prose-td:p-2">

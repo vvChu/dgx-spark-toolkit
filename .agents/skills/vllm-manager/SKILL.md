@@ -23,7 +23,7 @@ All skills and services should use the gateway instead of direct vLLM ports:
 curl -X POST http://localhost:8090/v1/chat/completions \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"rag-core","messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
+  -d '{"model": "rag-core","messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
 ```
 
 ## Health Check
@@ -80,7 +80,7 @@ nvidia-smi               # Verify free memory
 curl -X POST http://localhost:8090/v1/chat/completions \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"rag-core","messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
+  -d '{"model": "rag-core","messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
 ```
 
 ## Benchmarking
@@ -104,7 +104,7 @@ docker run -d --name qwen35b --gpus all -p 8004:8000 \
   -e PORT=8000 \
   hellohal2064/vllm-qwen3.5-gb10:blackwell-sm121 \
   --model /models/model --served-model-name qwen3.5-35b \
-  --gpu-memory-utilization 0.50 --max-model-len 24576 \
+  --gpu-memory-utilization 0.70 --max-model-len 24576 \
   --kv-cache-dtype fp8 --enable-prefix-caching --enable-chunked-prefill \
   --trust-remote-code
 ```
