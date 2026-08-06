@@ -10,7 +10,7 @@ os.environ.setdefault("LITELLM_MASTER_KEY", "sk-ci-test-placeholder-safe")
 
 def _run(coro):
     """Helper to run async code without pytest-asyncio."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 class TestHyDEGeneratorUnit:

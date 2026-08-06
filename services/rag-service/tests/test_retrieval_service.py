@@ -13,8 +13,12 @@ os.environ.setdefault("LITELLM_MASTER_KEY", "sk-ci-test-placeholder-safe")
 
 # Stub heavy embedding module (same as conftest.py)
 _fake_mod = types.ModuleType("retrieval.embeddings.bge_m3_hybrid")
+
+
 class _FakeEmb:
     def __init__(self, *a, **kw): pass
+
+
 _fake_mod.BGE_M3_HybridEmbedding = _FakeEmb
 sys.modules.setdefault("retrieval.embeddings.bge_m3_hybrid", _fake_mod)
 
@@ -49,7 +53,7 @@ class TestSemanticCache:
             vec = np.zeros(3)
             vec[i % 3] = 1.0
             cache.set(f"q{i}", vec, [{"text": f"r{i}"}])
-        assert len(cache.cache) == 2
+        assert len(cache._keys) == 2
 
     def test_expired_entries_cleaned(self):
         cache = SemanticCache(threshold=0.9, ttl_seconds=0)
@@ -68,7 +72,7 @@ class TestRewriteQuery:
         with patch("retrieval.query_rewriter.call_llm", new_callable=AsyncMock) as mock_call:
             mock_call.side_effect = Exception("timeout")
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 rewrite_query("test query")
             )
             assert result == "test query"
@@ -80,7 +84,7 @@ class TestRewriteQuery:
         with patch("retrieval.query_rewriter.call_llm", new_callable=AsyncMock) as mock_call:
             mock_call.return_value = '"improved query"'
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 rewrite_query("original")
             )
             assert result == "improved query"

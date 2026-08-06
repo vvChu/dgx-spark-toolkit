@@ -18,6 +18,7 @@ class TestRerankerUnit:
             r.model = mock_model
             r._load_lock = __import__("threading").Lock()
             r.device = "cpu"
+            r.force_cpu = True
             return r, mock_model
 
     def test_empty_docs_returns_empty(self):
@@ -43,6 +44,7 @@ class TestRerankerUnit:
         """If GPU loading fails, Reranker should retry on CPU."""
         with patch("retrieval.reranker.CrossEncoder") as MockCE:
             call_count = 0
+
             def side_effect(name, device="cpu"):
                 nonlocal call_count
                 call_count += 1
@@ -67,7 +69,7 @@ class TestRerankerUnit:
         r, mock_model = self._make_reranker()
         mock_model.predict.return_value = [0.5]
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             r.rerank("q", ["doc"], top_k=1)
         )
         assert len(result) == 1

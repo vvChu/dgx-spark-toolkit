@@ -1,18 +1,23 @@
 ---
 name: stop-rag
 command: /stop-rag
-description: Stop the RAG backend stack
+description: Stop the RAG backend stack (keeps vLLM models running)
 type: workflow
 category: custom
 enabled: true
-version: v3.0
+version: v4.0
 ---
 
 // turbo-all
 
 ## Steps
 
-1. Stop Docker Compose services:
+1. Stop RAG stack services (keeps vLLM models running):
 ```bash
-cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose stop ai-gateway milvus-standalone neo4j-graph rag-service 2>/dev/null || true && echo "✅ RAG stack stopped"
+cd /home/vvc/Codebase/dgx-spark-toolkit && docker compose stop \
+  rag-service rag-watcher ai-gateway rag-frontend \
+  milvus-standalone milvus-etcd milvus-minio \
+  neo4j litellm-db litellm-redis \
+  prometheus grafana \
+  && echo "✅ RAG stack stopped (vLLM models still running)"
 ```

@@ -19,7 +19,7 @@ echo "   ✅ Network ready"
 # --- 1. Docker Compose Stack ---
 echo ""
 echo "📦 [1/2] Docker Compose Stack (RAG + vLLM + Gateway + Milvus + Monitoring)..."
-# Note: vLLM services (qwen35b, qwen3-4b) are now managed by docker-compose.yml
+# Note: vLLM services (qwen35b, qwen3-9b) are now managed by docker-compose.yml
 cd "$PROJECT_DIR"
 docker compose up -d
 echo "   ✅ Stack started"

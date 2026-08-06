@@ -331,11 +331,16 @@ def audit_chunking(json_files: list[str]) -> int:
 
     # Score
     penalties = 0
-    if pc_ratio < 1.5: penalties += 15
-    if art_rate < 0.3: penalties += 10
-    if noise / total_p > 0.05: penalties += 10
-    if dup_excess > total_p * 0.02: penalties += 15
-    if synth_rate < 0.4: penalties += 10
+    if pc_ratio < 1.5:
+        penalties += 15
+    if art_rate < 0.3:
+        penalties += 10
+    if noise / total_p > 0.05:
+        penalties += 10
+    if dup_excess > total_p * 0.02:
+        penalties += 15
+    if synth_rate < 0.4:
+        penalties += 10
 
     score = max(0, 100 - penalties)
     print(f"\n  📊 CHUNKING SCORE: {score}/100")
@@ -394,10 +399,14 @@ def audit_export_consistency(json_files: list[str]) -> int:
 
     # Score
     penalties = 0
-    if noise / n > 0.05: penalties += 10
-    if leaked > 0: penalties += 10
-    if dup_excess > 5: penalties += 10
-    if missing_dn / n > 0.05: penalties += 5
+    if noise / n > 0.05:
+        penalties += 10
+    if leaked > 0:
+        penalties += 10
+    if dup_excess > 5:
+        penalties += 10
+    if missing_dn / n > 0.05:
+        penalties += 5
 
     score = max(0, 100 - penalties)
     print(f"\n  📊 EXPORT CONSISTENCY SCORE: {score}/100")
@@ -454,8 +463,10 @@ def audit_fidelity(json_files: list[str]) -> int:
 
     # Score
     penalties = 0
-    if coverage < 0.9: penalties += 20
-    if docs_no_content > 0: penalties += 5
+    if coverage < 0.9:
+        penalties += 20
+    if docs_no_content > 0:
+        penalties += 5
     if text_lengths and sum(1 for l in text_lengths if l < 500) / max(exported, 1) > 0.05:
         penalties += 10
 

@@ -87,7 +87,7 @@ def get_gateway_health() -> str:
         response = chat_completion(
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=5,
-            model="smart-brain"
+            model="claude-sonnet-4-6"
         )
         return f"✅ OK (Response: {response.strip()[:15]}...)"
     except Exception as e:

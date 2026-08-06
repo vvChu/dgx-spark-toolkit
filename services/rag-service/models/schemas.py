@@ -12,6 +12,7 @@ class SearchRequest(BaseModel):
     doc_number: Optional[str] = None
     use_hyde: Optional[bool] = None
     use_cache: Optional[bool] = None
+    session_id: Optional[str] = None  # Context Lake: session-scoped context
 
     @model_validator(mode="before")
     @classmethod
@@ -25,17 +26,22 @@ class SearchRequest(BaseModel):
             values["use_cache"] = settings.ENABLE_SEMANTIC_CACHE
         return values
 
+
 class ChatRequest(BaseModel):
     query: str
     history: Optional[List[Dict[str, str]]] = []
     context_limit: Optional[int] = 5
-    language: Optional[str] = "vi" # vi or en
-    model: Optional[str] = None # Optional override
+    language: Optional[str] = "vi"  # vi or en
+    model: Optional[str] = None  # Optional override
+    session_id: Optional[str] = None  # Context Lake: session-scoped memory
+    use_agentic: Optional[bool] = False  # Context Lake: multi-hop retrieval
+
 
 class EvaluationRequest(BaseModel):
     query: str
     answer: str
     context: List[str]
+
 
 class EvaluationResponse(BaseModel):
     faithfulness: float
@@ -44,26 +50,31 @@ class EvaluationResponse(BaseModel):
     relevancy_reason: str
     suggestions: Optional[List[str]] = None
 
+
 class FeedbackRequest(BaseModel):
     query: str
     answer: str
-    is_positive: bool 
+    is_positive: bool
     comment: Optional[str] = None
+
 
 class ConflictAnalysisRequest(BaseModel):
     doc_id: str
-    query: str # The topic to analyze (e.g., "regulations on fire safety")
+    query: str  # The topic to analyze (e.g., "regulations on fire safety")
     depth: int = 1
+
 
 class ComplianceCheckRequest(BaseModel):
     project_profile: str
     focus_area: Optional[str] = "BIM"
 
+
 class UpdateRelationRequest(BaseModel):
     source_id: str
     target_id: str
     rel_type: str
-    action: str # "ADD" or "DELETE"
+    action: str  # "ADD" or "DELETE"
+
 
 class SyncStatusRequest(BaseModel):
     doc_id: str
@@ -93,6 +104,7 @@ class SearchResponse(BaseModel):
     query: str = ""
     rewritten_query: Optional[str] = None
     cached: bool = False
+    trace: Optional[Dict[str, Any]] = None  # Context Lake: reasoning trace
 
 
 class ChatResponse(BaseModel):
@@ -102,6 +114,8 @@ class ChatResponse(BaseModel):
     usage: Optional[Dict[str, Any]] = None
     cached: bool = False
     thought: Optional[str] = None
+    session_id: Optional[str] = None  # Context Lake: session identifier
+    trace: Optional[Dict[str, Any]] = None  # Context Lake: reasoning trace
 
 
 class HealthCheckResponse(BaseModel):

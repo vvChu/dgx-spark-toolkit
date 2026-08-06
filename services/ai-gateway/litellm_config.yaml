@@ -1,103 +1,528 @@
+x-templates:
+  ocr-tier4-base: &ocr-tier4-base
+    model: gemini/gemini-2.5-flash
+    rpm: 5
+    tpm: 250000
+    timeout: 120
+
+  ocr-fallback-base: &ocr-fallback-base
+    model: gemini/gemini-2.5-flash
+    rpm: 5
+    tpm: 250000
+    timeout: 120
+
+  ocr-primary-base: &ocr-primary-base
+    model: gemini/gemini-3.1-flash-lite
+    rpm: 15
+    tpm: 250000
+    timeout: 120
+    safety_settings:
+      - category: HARM_CATEGORY_HARASSMENT
+        threshold: BLOCK_NONE
+      - category: HARM_CATEGORY_HATE_SPEECH
+        threshold: BLOCK_NONE
+      - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
+        threshold: BLOCK_NONE
+      - category: HARM_CATEGORY_DANGEROUS_CONTENT
+        threshold: BLOCK_NONE
+
+  text-gemma-base: &text-gemma-base
+    model: openai/gemma-4-31b-it
+    api_base: https://generativelanguage.googleapis.com/v1beta/openai/
+    rpm: 30
+    tpm: 15000
+
+  text-gemma-12b-base: &text-gemma-12b-base
+    model: openai/gemma-4-26b-a4b-it
+    api_base: https://generativelanguage.googleapis.com/v1beta/openai/
+    rpm: 30
+    tpm: 15000
+
+  reasoning-gemma-base: &reasoning-gemma-base
+    model: openai/gemma-4-31b-it
+    api_base: https://generativelanguage.googleapis.com/v1beta/openai/
+    rpm: 15
+    tpm: 250000
+
+  reasoning-fallback-base: &reasoning-fallback-base
+    model: openai/gemma-4-26b-a4b-it
+    api_base: https://generativelanguage.googleapis.com/v1beta/openai/
+    rpm: 15
+    tpm: 250000
+
+  gemini-embed-base: &gemini-embed-base
+    model: gemini/gemini-embedding-2
+    rpm: 100
+    tpm: 30000
+    timeout: 60
+
+  gemini25-flash-lite-base: &gemini25-flash-lite-base
+    model: gemini/gemini-2.5-flash-lite
+    rpm: 10
+    tpm: 250000
+    timeout: 120
+    drop_params: true
+
+  gemini-embedding-2-base: &gemini-embedding-2-base
+    model: gemini/gemini-embedding-2
+    rpm: 100
+    tpm: 30000
+    timeout: 60
+
+  gemini35-flash-low-base: &gemini35-flash-low-base
+    model: gemini/gemini-3.5-flash
+    rpm: 5
+    tpm: 250000
+    timeout: 120
+    extra_body:
+      generationConfig:
+        thinking_config:
+          thinking_level: "low"
+
+  gemini35-flash-medium-base: &gemini35-flash-medium-base
+    model: gemini/gemini-3.5-flash
+    rpm: 5
+    tpm: 250000
+    timeout: 120
+    extra_body:
+      generationConfig:
+        thinking_config:
+          thinking_level: "medium"
+
+  gemini35-flash-high-base: &gemini35-flash-high-base
+    model: gemini/gemini-3.5-flash
+    rpm: 5
+    tpm: 250000
+    timeout: 120
+    extra_body:
+      generationConfig:
+        thinking_config:
+          thinking_level: "high"
+
 model_list:
 
   # =====================================================================
-  # GEMINI MODELS — via upstream proxy (verified working)
+  # CLAUDE MODELS — via Gateway Proxy (all verified 2026-03-23)
   # =====================================================================
-
-  - model_name: gemini-3.1-pro-low
+  - model_name: claude-haiku-4
     litellm_params:
-      model: openai/gemini-3.1-pro-low
+      model: openai/claude-haiku-4
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: openai/claude-haiku-4-5-20251001
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+
+  - model_name: claude-sonnet-4-5
+    litellm_params:
+      model: openai/claude-sonnet-4-5
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: openai/claude-sonnet-4-6
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+
+  - model_name: claude-sonnet-4-5-thinking
+    litellm_params:
+      model: openai/claude-sonnet-4-5-thinking
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+
+  - model_name: claude-sonnet-4-6-thinking
+    litellm_params:
+      model: openai/claude-sonnet-4-6
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+
+  - model_name: claude-opus-4-5
+    litellm_params:
+      model: anthropic/claude-opus-4-5-20251101
+      api_base: http://100.79.241.120:8045
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+
+  - model_name: claude-opus-4-5-thinking
+    litellm_params:
+      model: anthropic/claude-opus-4-5-thinking
+      api_base: http://100.79.241.120:8045
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+
+  - model_name: claude-opus-4-6
+    litellm_params:
+      model: anthropic/claude-opus-4-6
+      api_base: http://100.79.241.120:8045
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+
+  - model_name: claude-opus-4-6-thinking
+    litellm_params:
+      model: anthropic/claude-opus-4-6-thinking
+      api_base: http://100.79.241.120:8045
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+
+  # =====================================================================
+  # GEMINI & CLAUDE MODELS — via Gateway Proxy
+  # STATUS AUDIT (2026-05-19):
+  # - ACTIVE: claude-sonnet-4-6, gpt-oss-120b-medium, gemini-3.1-flash-lite, gemini-2.5-pro, gemini-pro-agent, gemini-3-flash, gemini-3.1-flash-image
+  # - ACTIVE (Slower/Timeout > 25s): claude-opus-4-6-thinking, gemini-2.5-flash-thinking, gemini-2.5-flash
+  # - ACTIVE (Quota 429): gemini-3-pro-image
+  # - UNMAPPED/DEPRECATED: gemini-2.5-flash-lite
+  #
+  # Note: To avoid Google AI Studio safety_settings (400 Bad Request) bugs,
+  # proxy-bound Gemini models MUST use the 'openai/vertex_ai/' prefix.
+  # =====================================================================
+
+  - model_name: gemini-3-pro-high
+    litellm_params:
+      model: gemini/gemini-3.1-pro-preview
+      api_key: os.environ/GEMINI_API_KEY_5
+      drop_params: true
+      timeout: 120
+
+  - model_name: gemini-3-pro-low
+    litellm_params:
+      model: gemini/gemini-3.1-pro-preview
+      api_key: os.environ/GEMINI_API_KEY_5
+      drop_params: true
+      timeout: 120
 
   - model_name: gemini-3.1-pro-high
     litellm_params:
       model: openai/gemini-3.1-pro-high
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+  - model_name: gemini-3.1-pro-low
+    litellm_params:
+      model: openai/gemini-3.1-pro-low
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      model: gemini/gemini-2.5-pro
+      api_key: os.environ/GEMINI_API_KEY_5
+      drop_params: true
+      timeout: 120
+
+  - model_name: gemini-2.5-flash
+    litellm_params:
+      model: openai/gemini-3-flash
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+
+  - model_name: gemini-2.5-flash-thinking
+    litellm_params:
+      model: openai/gemini-3-flash
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+  - model_name: gemini-pro-agent
+    litellm_params:
+      model: openai/gemini-pro-agent
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+  - model_name: gemini-3-flash
+    litellm_params:
+      model: openai/gemini-3-flash
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
 
   - model_name: gemini-3.1-flash-image
     litellm_params:
       model: openai/gemini-3.1-flash-image
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
 
-  # =====================================================================
-  # CLAUDE MODELS — via upstream proxy (verified working)
-  # =====================================================================
-  - model_name: claude-sonnet-4-6
+  - model_name: gemini-3-pro-image
     litellm_params:
-      model: openai/claude-sonnet-4-6
+      model: openai/gemini-3-pro-image
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
 
-  - model_name: claude-opus-4-6-thinking
+  - model_name: gemini-3.1-flash-lite
     litellm_params:
-      model: openai/claude-opus-4-6-thinking
+      model: gemini/gemini-3.1-flash-lite
+      api_key: os.environ/GEMINI_API_KEY_3
+      drop_params: true
+      timeout: 120
+  # ── gemini-2.5-flash-lite ──
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      <<: *gemini25-flash-lite-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      <<: *gemini25-flash-lite-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      <<: *gemini25-flash-lite-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      <<: *gemini25-flash-lite-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      <<: *gemini25-flash-lite-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      <<: *gemini25-flash-lite-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      <<: *gemini25-flash-lite-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      <<: *gemini25-flash-lite-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      <<: *gemini25-flash-lite-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: gemini-2.5-flash-lite
+    litellm_params:
+      <<: *gemini25-flash-lite-base
+      api_key: os.environ/GEMINI_API_KEY_11
+
+  # ── gemini-embedding-2 ──
+  - model_name: gemini-embedding-2
+    litellm_params:
+      <<: *gemini-embedding-2-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: gemini-embedding-2
+    litellm_params:
+      <<: *gemini-embedding-2-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: gemini-embedding-2
+    litellm_params:
+      <<: *gemini-embedding-2-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: gemini-embedding-2
+    litellm_params:
+      <<: *gemini-embedding-2-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: gemini-embedding-2
+    litellm_params:
+      <<: *gemini-embedding-2-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: gemini-embedding-2
+    litellm_params:
+      <<: *gemini-embedding-2-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: gemini-embedding-2
+    litellm_params:
+      <<: *gemini-embedding-2-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: gemini-embedding-2
+    litellm_params:
+      <<: *gemini-embedding-2-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: gemini-embedding-2
+    litellm_params:
+      <<: *gemini-embedding-2-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: gemini-embedding-2
+    litellm_params:
+      <<: *gemini-embedding-2-base
+      api_key: os.environ/GEMINI_API_KEY_11
+
+  # ── gemini-3.5-flash-low ──
+  - model_name: gemini-3.5-flash-low
+    litellm_params:
+      model: openai/gemini-3.5-flash-low
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
 
-  # =====================================================================
-  # GPT/OSS MODELS — via upstream proxy (verified working)
+  # ── gemini-3.5-flash-medium ──
+  - model_name: gemini-3.5-flash-medium
+    litellm_params:
+      <<: *gemini35-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: gemini-3.5-flash-medium
+    litellm_params:
+      <<: *gemini35-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: gemini-3.5-flash-medium
+    litellm_params:
+      <<: *gemini35-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: gemini-3.5-flash-medium
+    litellm_params:
+      <<: *gemini35-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: gemini-3.5-flash-medium
+    litellm_params:
+      <<: *gemini35-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: gemini-3.5-flash-medium
+    litellm_params:
+      <<: *gemini35-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: gemini-3.5-flash-medium
+    litellm_params:
+      <<: *gemini35-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: gemini-3.5-flash-medium
+    litellm_params:
+      <<: *gemini35-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: gemini-3.5-flash-medium
+    litellm_params:
+      <<: *gemini35-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: gemini-3.5-flash-medium
+    litellm_params:
+      <<: *gemini35-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_11
+
+  # ── gemini-3.5-flash-high ──
+  - model_name: gemini-3.5-flash-high
+    litellm_params:
+      <<: *gemini35-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: gemini-3.5-flash-high
+    litellm_params:
+      <<: *gemini35-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: gemini-3.5-flash-high
+    litellm_params:
+      <<: *gemini35-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: gemini-3.5-flash-high
+    litellm_params:
+      <<: *gemini35-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: gemini-3.5-flash-high
+    litellm_params:
+      <<: *gemini35-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: gemini-3.5-flash-high
+    litellm_params:
+      <<: *gemini35-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: gemini-3.5-flash-high
+    litellm_params:
+      <<: *gemini35-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: gemini-3.5-flash-high
+    litellm_params:
+      <<: *gemini35-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: gemini-3.5-flash-high
+    litellm_params:
+      <<: *gemini35-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: gemini-3.5-flash-high
+    litellm_params:
+      <<: *gemini35-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_11
+
+
+  - model_name: gemini-3-flash-agent
+    litellm_params:
+      model: openai/gemini-3-flash-agent
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+  # =====================================================================================================
+  # GPT/OSS MODELS — via Gateway Proxy (verified 2026-03-23)
   # =====================================================================
   - model_name: gpt-oss-120b-medium
     litellm_params:
       model: openai/gpt-oss-120b-medium
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
-
-  # =====================================================================
-  # CLAUDE MODELS — via viber proxy (Vertex AI backend)
-  # =====================================================================
-  - model_name: claude-haiku-4-5
-    litellm_params:
-      model: openai/claude-haiku-4-5-20251001
-      api_base: os.environ/VIBER_PROXY_URL
-      api_key: os.environ/VIBER_PROXY_KEY
-
-  - model_name: claude-sonnet-4-5
-    litellm_params:
-      model: openai/claude-sonnet-4-5-20250929
-      api_base: os.environ/VIBER_PROXY_URL
-      api_key: os.environ/VIBER_PROXY_KEY
-
-  - model_name: claude-opus-4-5
-    litellm_params:
-      model: openai/claude-opus-4-5-20251101
-      api_base: os.environ/VIBER_PROXY_URL
-      api_key: os.environ/VIBER_PROXY_KEY
-
-  - model_name: claude-opus-4-6             # Secondary deployment via viber
-    litellm_params:
-      model: openai/claude-opus-4-6
-      api_base: os.environ/VIBER_PROXY_URL
-      api_key: os.environ/VIBER_PROXY_KEY
+      timeout: 120
 
   # =====================================================================
   # LOCAL DGX vLLM — Private / Offline / High Throughput
   # =====================================================================
   - model_name: rag-core
     litellm_params:
-      model: "qwen3.5-35b"
+      model: "qwen-local-primary"
       custom_llm_provider: "openai"
       api_base: os.environ/GATEWAY_LOCAL_URL
       api_key: "unused"
       tool_call_parser: "openai"
+      rpm: 600
+      tpm: 10000000
+      timeout: 900
     model_info:
       mode: chat
       supports_tool_calling: true
+      supports_vision: true
 
-  - model_name: qwen3.5-35b
+  - model_name: Qwen-3.6-35B-NVFP4
     litellm_params:
-      model: openai/qwen3.5-35b
+      model: "qwen-local-primary"
+      custom_llm_provider: "openai"
       api_base: os.environ/GATEWAY_LOCAL_URL
       api_key: "unused"
+      timeout: 900
+    model_info:
+      mode: chat
+      supports_vision: true
+      description: "Model chat siêu mạnh 35B tham số chạy cục bộ trên DGX Spark."
+
+  - model_name: qwen-local-primary
+    litellm_params:
+      model: openai/qwen-local-primary
+      api_base: os.environ/GATEWAY_LOCAL_URL
+      api_key: "unused"
+      rpm: 600
+      tpm: 10000000
+      timeout: 900
+    model_info:
+      mode: chat
+      supports_vision: true
 
   - model_name: rag-light
     litellm_params:
-      model: openai/qwen3.5-4b
+      model: openai/qwen3.5-9b
       api_base: http://vllm-4b:8000/v1
       api_key: "unused"
+      rpm: 1200
+      tpm: 10000000
       extra_body:
         temperature: 0.7
         top_p: 0.9
@@ -105,52 +530,534 @@ model_list:
       mode: chat
 
   # =====================================================================
-  # GEMINI MODELS — Direct Google API (verified working)
   # =====================================================================
-  - model_name: gemini-2.5-flash
+  # OCR CASCADING FALLBACK CHAIN (ALL 10 KEYS)
+  # ocr-primary -> ocr-fallback -> ocr-tier3 -> ocr-tier4 -> rag-core
+  # Phase-shifted: LiteLLM usage-based-routing naturally distributes keys
+  # =====================================================================
+  # ── ocr-tier4: gemini-3-flash ──
+  - model_name: ocr-tier4
     litellm_params:
-      model: gemini/gemini-2.5-flash
-      api_key: os.environ/GEMINI_API_KEY
+      <<: *ocr-tier4-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: ocr-tier4
+    litellm_params:
+      <<: *ocr-tier4-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: ocr-tier4
+    litellm_params:
+      <<: *ocr-tier4-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: ocr-tier4
+    litellm_params:
+      <<: *ocr-tier4-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: ocr-tier4
+    litellm_params:
+      <<: *ocr-tier4-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: ocr-tier4
+    litellm_params:
+      <<: *ocr-tier4-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: ocr-tier4
+    litellm_params:
+      <<: *ocr-tier4-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: ocr-tier4
+    litellm_params:
+      <<: *ocr-tier4-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: ocr-tier4
+    litellm_params:
+      <<: *ocr-tier4-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: ocr-tier4
+    litellm_params:
+      <<: *ocr-tier4-base
+      api_key: os.environ/GEMINI_API_KEY_11
 
-  - model_name: gemini-2.5-flash-lite
+  # ── ocr-fallback: gemini-2.5-flash-preview (acting as fallback) ──
+  - model_name: ocr-fallback
     litellm_params:
-      model: gemini/gemini-2.5-flash-lite
-      api_key: os.environ/GEMINI_API_KEY
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: ocr-fallback
+    litellm_params:
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: ocr-fallback
+    litellm_params:
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: ocr-fallback
+    litellm_params:
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: ocr-fallback
+    litellm_params:
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: ocr-fallback
+    litellm_params:
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: ocr-fallback
+    litellm_params:
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: ocr-fallback
+    litellm_params:
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: ocr-fallback
+    litellm_params:
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: ocr-fallback
+    litellm_params:
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_11
+
+  # ── ocr-primary: gemini-3.1-flash-lite ──
+  - model_name: ocr-primary
+    litellm_params:
+      <<: *ocr-primary-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: ocr-primary
+    litellm_params:
+      <<: *ocr-primary-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: ocr-primary
+    litellm_params:
+      <<: *ocr-primary-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: ocr-primary
+    litellm_params:
+      <<: *ocr-primary-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: ocr-primary
+    litellm_params:
+      <<: *ocr-primary-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: ocr-primary
+    litellm_params:
+      <<: *ocr-primary-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: ocr-primary
+    litellm_params:
+      <<: *ocr-primary-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: ocr-primary
+    litellm_params:
+      <<: *ocr-primary-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: ocr-primary
+    litellm_params:
+      <<: *ocr-primary-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: ocr-primary
+    litellm_params:
+      <<: *ocr-primary-base
+      api_key: os.environ/GEMINI_API_KEY_11
+
+  # ── text-gemma ──
+  - model_name: text-gemma
+    litellm_params:
+      <<: *text-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: text-gemma
+    litellm_params:
+      <<: *text-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: text-gemma
+    litellm_params:
+      <<: *text-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: text-gemma
+    litellm_params:
+      <<: *text-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: text-gemma
+    litellm_params:
+      <<: *text-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: text-gemma
+    litellm_params:
+      <<: *text-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: text-gemma
+    litellm_params:
+      <<: *text-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: text-gemma
+    litellm_params:
+      <<: *text-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: text-gemma
+    litellm_params:
+      <<: *text-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: text-gemma
+    litellm_params:
+      <<: *text-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_11
+
+  # ── text-gemma-12b ──
+  - model_name: text-gemma-12b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: text-gemma-12b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: text-gemma-12b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: text-gemma-12b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: text-gemma-12b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: text-gemma-12b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: text-gemma-12b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: text-gemma-12b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: text-gemma-12b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: text-gemma-12b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_11
+
+  # ── text-gemma-4b ──
+  - model_name: text-gemma-4b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: text-gemma-4b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: text-gemma-4b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: text-gemma-4b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: text-gemma-4b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: text-gemma-4b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: text-gemma-4b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: text-gemma-4b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: text-gemma-4b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: text-gemma-4b
+    litellm_params:
+      <<: *text-gemma-12b-base
+      api_key: os.environ/GEMINI_API_KEY_11
+
+  # ── reasoning-gemma & reasoning-fallback ──
+  - model_name: reasoning-gemma
+    litellm_params:
+      <<: *reasoning-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: reasoning-fallback
+    litellm_params:
+      <<: *reasoning-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: reasoning-gemma
+    litellm_params:
+      <<: *reasoning-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: reasoning-fallback
+    litellm_params:
+      <<: *reasoning-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: reasoning-gemma
+    litellm_params:
+      <<: *reasoning-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: reasoning-fallback
+    litellm_params:
+      <<: *reasoning-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: reasoning-gemma
+    litellm_params:
+      <<: *reasoning-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: reasoning-fallback
+    litellm_params:
+      <<: *reasoning-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: reasoning-gemma
+    litellm_params:
+      <<: *reasoning-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: reasoning-fallback
+    litellm_params:
+      <<: *reasoning-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: reasoning-gemma
+    litellm_params:
+      <<: *reasoning-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: reasoning-fallback
+    litellm_params:
+      <<: *reasoning-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: reasoning-gemma
+    litellm_params:
+      <<: *reasoning-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: reasoning-fallback
+    litellm_params:
+      <<: *reasoning-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: reasoning-gemma
+    litellm_params:
+      <<: *reasoning-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: reasoning-fallback
+    litellm_params:
+      <<: *reasoning-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: reasoning-gemma
+    litellm_params:
+      <<: *reasoning-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: reasoning-fallback
+    litellm_params:
+      <<: *reasoning-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: reasoning-gemma
+    litellm_params:
+      <<: *reasoning-gemma-base
+      api_key: os.environ/GEMINI_API_KEY_11
+  - model_name: reasoning-fallback
+    litellm_params:
+      <<: *reasoning-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_11
 
   # =====================================================================
-  # EMBEDDING — Local BGE-M3
+  # GEMINI EMBEDDING MODELS — Free Tier
   # =====================================================================
-  - model_name: bge-m3
+  # ── gemini-embed: gemini-embedding-2 ──
+  - model_name: gemini-embed
     litellm_params:
-      model: openai/bge-m3
-      api_base: http://qwen35b:8000/v1
+      <<: *gemini-embed-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: gemini-embed
+    litellm_params:
+      <<: *gemini-embed-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: gemini-embed
+    litellm_params:
+      <<: *gemini-embed-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: gemini-embed
+    litellm_params:
+      <<: *gemini-embed-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: gemini-embed
+    litellm_params:
+      <<: *gemini-embed-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: gemini-embed
+    litellm_params:
+      <<: *gemini-embed-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: gemini-embed
+    litellm_params:
+      <<: *gemini-embed-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: gemini-embed
+    litellm_params:
+      <<: *gemini-embed-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: gemini-embed
+    litellm_params:
+      <<: *gemini-embed-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: gemini-embed
+    litellm_params:
+      <<: *gemini-embed-base
+      api_key: os.environ/GEMINI_API_KEY_11
+
+  # =====================================================================
+  # WHISPER AUDIO MODELS
+  # =====================================================================
+  - model_name: audio-primary
+    litellm_params:
+      model: openai/Systran/faster-whisper-large-v3
+      api_base: http://whisper-local:8000/v1
       api_key: "unused"
+      timeout: 1800
+      drop_params: false
+    model_info:
+      mode: audio_transcription
+
+  - model_name: whisper-primary
+    litellm_params:
+      model: openai/Systran/faster-whisper-large-v3
+      api_base: http://whisper-local:8000/v1
+      api_key: "unused"
+      timeout: 1800
+      drop_params: false
+    model_info:
+      mode: audio_transcription
+      
+  - model_name: whisper-local
+    litellm_params:
+      model: openai/Systran/faster-whisper-large-v3
+      api_base: http://whisper-local:8000/v1
+      api_key: "unused"
+      timeout: 1800
+      drop_params: false
+    model_info:
+      mode: audio_transcription
 
 router_settings:
-  routing_strategy: latency-based-routing
-  allowed_fails: 1
-  cooldown_time: 300
-  num_retries: 3
-  fallbacks_retry_after: 800
+  routing_strategy: usage-based-routing
+  allowed_fails: 2
+  cooldown_time: 60
+  num_retries: 2
+  retry_after: 5
+  timeout: 900
+
+  # ── RPD Budget Enforcement (replaces the invalid `rpd` in litellm_params) ──
+  # These caps protect free-tier quotas. When a group hits its daily budget,
+  # LiteLLM will route to the next fallback automatically.
+  # Formula: budget = num_keys × rpd_per_key (from FREE_TIER_LIMITS.md)
+  model_budget_config:
+    ocr-primary:        # gemini-3.1-flash-lite, 10 keys (KEY_2..KEY_11)
+      max_budget: 5000  # 10 keys × 500 RPD — updated after BUG-1 pool expansion
+      budget_duration: 1d
+    ocr-fallback:       # gemini-3.1-flash-lite, 10 keys
+      max_budget: 5000  # 10 keys × 500 RPD
+      budget_duration: 1d
+    gemini-embed:       # gemini-embedding-2, 10 keys x 1000 RPD = 10,000
+      max_budget: 10000
+      budget_duration: 1d
+
+    gemini-2.5-flash-lite:
+      max_budget: 200   # 10 keys x 20 RPD = 200
+      budget_duration: 1d
+    gemini-embedding-2:
+      max_budget: 10000  # 10 keys x 1000 RPD = 10,000
+      budget_duration: 1d
+
+    gemini-3.5-flash-low:
+      max_budget: 200   # 10 keys x 20 RPD = 200
+      budget_duration: 1d
+    gemini-3.5-flash-medium:
+      max_budget: 200   # 10 keys x 20 RPD = 200
+      budget_duration: 1d
+    gemini-3.5-flash-high:
+      max_budget: 200   # 10 keys x 20 RPD = 200
+      budget_duration: 1d
+
+    text-gemma:         # gemma-3-27b-it, 10 keys × 14,400 RPD = 144,000
+      max_budget: 144000
+      budget_duration: 1d
+    text-gemma-12b:     # gemma-3-12b-it, 10 keys × 14,400 RPD = 144,000
+      max_budget: 144000
+      budget_duration: 1d
+    text-gemma-4b:      # gemma-3-4b-it, 10 keys × 14,400 RPD = 144,000
+      max_budget: 144000
+      budget_duration: 1d
+    reasoning-gemma:    # gemma-4-31b-it, 10 keys x 1,500 RPD = 15,000
+      max_budget: 15000
+      budget_duration: 1d
+    reasoning-fallback:    # gemma-4-26b-it, 10 keys x 1,500 RPD = 15,000
+      max_budget: 15000
+      budget_duration: 1d
 
   fallbacks:
-    - {"claude-opus-4-6-thinking": ["gemini-3.1-pro-high", "gpt-oss-120b-medium", "rag-core"]}
-    - {"claude-sonnet-4-6": ["gemini-3.1-pro-low", "gemini-2.5-flash", "rag-core"]}
-    - {"gemini-3.1-pro-low": ["gemini-2.5-flash", "gemini-2.5-flash-lite", "rag-core"]}
-    - {"gemini-3.1-pro-high": ["gemini-3.1-pro-low", "gemini-2.5-flash", "rag-core"]}
-    - {"gemini-2.5-flash": ["gemini-2.5-flash-lite", "rag-core"]}
-    - {"rag-core": ["gemini-2.5-flash"]}
+    - {"claude-opus-4-6-thinking": ["claude-opus-4-5-thinking", "claude-sonnet-4-6-thinking",
+        "gemini-3.1-pro-high", "rag-core"]}
+    - {"claude-opus-4-5-thinking": ["claude-sonnet-4-6-thinking", "claude-sonnet-4-5-thinking",
+        "gemini-3.1-pro-high", "rag-core"]}
+    - {"claude-sonnet-4-6-thinking": ["claude-sonnet-4-5-thinking", "ocr-tier4",
+        "rag-core"]}
+    - {"claude-sonnet-4-5-thinking": ["claude-sonnet-4-6", "ocr-tier4", "rag-core"]}
+    - {"claude-opus-4-6": ["claude-opus-4-5", "gemini-3.1-pro-high", "rag-core"]}
+    - {"claude-sonnet-4-6": ["claude-sonnet-4-5", "ocr-tier4", "rag-core"]}
+    - {"claude-sonnet-4-5": ["claude-haiku-4-5", "ocr-tier4", "rag-core"]}
+    - {"claude-haiku-4-5": ["claude-haiku-4", "ocr-tier4", "rag-core"]}
+    - {"gemini-3.1-pro-high": ["gemini-pro-agent", "gemini-3.1-pro-low", "rag-core"]}
+    - {"gemini-pro-agent": ["gemini-3.1-pro-low", "rag-core"]}
+    - {"gemini-3.1-pro-low": ["ocr-tier4", "rag-core"]}
+    - {"gemini-3.1-flash-lite": ["ocr-tier4", "rag-core"]}
+    - {"gemini-3.5-flash-low": ["gemini-3.1-pro-high", "ocr-tier4", "rag-core"]}
+    - {"gemini-3-flash-agent": ["gemini-3.5-flash-low", "gemini-3.1-pro-high", "ocr-tier4", "rag-core"]}
+    # NEW OCR FALLBACK CHAIN (rag-core restored as ultimate safety net)
+    - {"ocr-primary": ["ocr-fallback", "ocr-tier4", "rag-core"]}
+    - {"ocr-fallback": ["ocr-tier4", "rag-core"]}
+    - {"ocr-tier4": ["rag-core"]}
+
+    - {"audio-primary": ["whisper-primary", "whisper-local"]}
+
+    - {"gpt-oss-120b-medium": ["gemini-3.1-pro-high"]}
+    - {"text-gemma": ["text-gemma-12b", "text-gemma-4b", "rag-core"]}
+    - {"text-gemma-12b": ["text-gemma-4b", "rag-core"]}
+    - {"text-gemma-4b": ["rag-core"]}
+    - {"rag-core": []}  # No fallback — rag-light requires vllm-light profile (not always running)
+    - {"rag-light": ["rag-core"]}
+    - reasoning-gemma:
+        - reasoning-fallback
+        - rag-core
+    - reasoning-fallback:
+        - rag-core
+
+  default_fallbacks: ["ocr-fallback"]
 
 litellm_settings:
-  success_callback: ["prometheus"]
-  failure_callback: ["prometheus"]
+  success_callback: ["prometheus", "postgresql"]
+  failure_callback: ["prometheus", "postgresql"]
+  callbacks: ["custom_callbacks.gemini_corrector_instance"]
   cache: true
   cache_params:
     type: redis
     host: litellm-redis
     port: 6379
-    semantic_similarity_threshold: 0.85
+    ttl: 3600
+    caching_groups:
+      - ["ocr-primary", "ocr-fallback", reasoning-gemma, reasoning-fallback]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
+  background_health_checks: false
+  health_check_interval: 120
+  health_check_details: false

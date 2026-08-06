@@ -3,13 +3,14 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ingestion.text_normalizer import (
+from ingestion.text_normalizer import (  # noqa: E402
     rejoin_paragraphs,
     format_legal_structure,
     detect_garbled_table,
     normalize_chunk_text,
     fix_stuck_vietnamese_words,
     strip_document_boilerplate,
+    normalize_section_headings,
 )
 
 
@@ -30,26 +31,26 @@ class TestRejoinParagraphs:
         result = rejoin_paragraphs(text)
         assert "Điều 2." in result
         # Điều should NOT be merged onto the previous line
-        lines = [l for l in result.split("\n") if l.strip()]
-        assert any(l.strip().startswith("Điều 2.") for l in lines)
+        lines = [line for line in result.split("\n") if line.strip()]
+        assert any(line.strip().startswith("Điều 2.") for line in lines)
 
     def test_preserves_numbered_list(self):
         text = "nội dung như sau:\n1. Sắp xếp các đơn vị"
         result = rejoin_paragraphs(text)
-        lines = [l for l in result.split("\n") if l.strip()]
-        assert any(l.strip().startswith("1.") for l in lines)
+        lines = [line for line in result.split("\n") if line.strip()]
+        assert any(line.strip().startswith("1.") for line in lines)
 
     def test_preserves_lettered_list(self):
         text = "quy định:\na) Thành lập xã Quế Tân"
         result = rejoin_paragraphs(text)
-        lines = [l for l in result.split("\n") if l.strip()]
-        assert any(l.strip().startswith("a)") for l in lines)
+        lines = [line for line in result.split("\n") if line.strip()]
+        assert any(line.strip().startswith("a)") for line in lines)
 
     def test_no_merge_after_period(self):
         text = "Quyết định này có hiệu lực.\nĐiều 3. Các Bộ trưởng"
         result = rejoin_paragraphs(text)
         # After a period, should NOT merge
-        lines = [l for l in result.split("\n") if l.strip()]
+        lines = [line for line in result.split("\n") if line.strip()]
         assert len(lines) >= 2
 
 
@@ -153,18 +154,68 @@ class TestStuckVietnameseWords:
         assert fix_stuck_vietnamese_words('') == ''
         assert fix_stuck_vietnamese_words(None) is None
 
+    # ── BGTVT Thông tư corpus (2026-03 audit) ──
+    def test_camay(self):
+        assert fix_stuck_vietnamese_words('hao phí camáy chuyên dùng') == 'hao phí ca máy chuyên dùng'
+
+    def test_sonoi(self):
+        assert fix_stuck_vietnamese_words('sốnội dung') == 'số nội dung'
+
+    def test_nhucau(self):
+        assert fix_stuck_vietnamese_words('nhucầu sử dụng') == 'nhu cầu sử dụng'
+
+    def test_kykiet(self):
+        assert fix_stuck_vietnamese_words('kýkết theo quy định') == 'ký kết theo quy định'
+
+    def test_dautư(self):
+        assert fix_stuck_vietnamese_words('đầutư xây dựng') == 'đầu tư xây dựng'
+
+    def test_thong_tu_nay(self):
+        assert fix_stuck_vietnamese_words('Thông tưnày có hiệu lực') == 'Thông tư này có hiệu lực'
+
+
+class TestNormalizeSectionHeadings:
+    """Inline section number splitting for QCVN structure."""
+
+    def test_inline_split(self):
+        """Two section numbers on one line should be split."""
+        t = '1.1 Phạm vi điều chỉnh Quy chuẩn 1.2 Đối tượng áp dụng Quy chuẩn'
+        r = normalize_section_headings(t)
+        assert '1.2' in r and r.count('\n') >= 1, f"got: {r!r}"
+
+    def test_decimal_no_split(self):
+        """Decimal values like '1.5 triệu' should NOT be split."""
+        t = 'giá trị là 1.5 triệu đồng'
+        assert normalize_section_headings(t) == t
+
+    def test_table_ref_no_split(self):
+        """Table references like 'Bảng 1.2' should NOT be split."""
+        t = 'theo Bảng 1.2 quy định tại'
+        assert normalize_section_headings(t) == t
+
+    def test_separate_lines_preserved(self):
+        """Already-separate section lines should not be modified."""
+        t = '1.1 Phạm vi\n1.2 Đối tượng'
+        assert normalize_section_headings(t) == t
+
 
 class TestDigitalSignature:
     """Fix 5: Combined single-line digital signature block should be stripped."""
 
     def test_strips_ky_boi_line(self):
-        text = 'Ký bởi: Cổng Thông tin điện tử Chính phủ Email: thongtinchinhphu@chinhphu.vn Cơ quan: Văn phòng Chính phủ Thời gian ký: 16.03.2015 11:02:35 +07:00\nĐiều 1. Nội dung chính'
+        text = (
+            'Ký bởi: Cổng Thông tin điện tử Chính phủ Email: thongtinchinhphu@chinhphu.vn '
+            'Cơ quan: Văn phòng Chính phủ Thời gian ký: 16.03.2015 11:02:35 +07:00\nĐiều 1. Nội dung chính'
+        )
         result = strip_document_boilerplate(text)
         assert 'Ký bởi' not in result
         assert 'Điều 1' in result
 
     def test_strips_nguoi_ky_line(self):
-        text = 'Người ký: Cổng Thông tin điện tử Chính phủ Email: test@gov.vn Cơ quan: Test Thời gian ký: 22.05.2023 16:12:47 +07:00\nĐiều 2. Nội dung'
+        text = (
+            'Người ký: Cổng Thông tin điện tử Chính phủ Email: test@gov.vn '
+            'Cơ quan: Test Thời gian ký: 22.05.2023 16:12:47 +07:00\nĐiều 2. Nội dung'
+        )
         result = strip_document_boilerplate(text)
         assert 'Người ký' not in result
         assert 'Điều 2' in result
@@ -182,6 +233,7 @@ def run_all():
         ("TestDetectGarbledTable", TestDetectGarbledTable),
         ("TestNormalizeChunkText", TestNormalizeChunkText),
         ("TestStuckVietnameseWords", TestStuckVietnameseWords),
+        ("TestNormalizeSectionHeadings", TestNormalizeSectionHeadings),
         ("TestDigitalSignature", TestDigitalSignature),
     ]:
         instance = cls()

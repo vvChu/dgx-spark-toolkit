@@ -12,12 +12,13 @@ pymupdf>=1.23.0
 pdfplumber>=0.10.0
 # paddleocr>=2.7.0
 # paddlepaddle>=2.6.0
-surya-ocr>=0.4.0
+surya-ocr==0.17.1
 # PyTorch — pinned to CUDA 12.4 build matching the Blackwell driver on DGX Spark.
 # Install via: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 torch==2.5.1+cu124
 torchvision==0.20.1+cu124
 pillow<11.0.0
+opencv-python-headless>=4.8.0,<5.0.0
 
 # NeMo (optional, for advanced extraction)
 # nemo_toolkit[all]>=1.21.0
@@ -42,3 +43,5 @@ redis>=5.0.0,<6.0.0
 asyncpg>=0.29.0,<1.0.0
 langchain>=0.1.0,<1.0.0
 langchain-community>=0.0.10,<1.0.0
+openpyxl>=3.1.0,<4.0.0
+

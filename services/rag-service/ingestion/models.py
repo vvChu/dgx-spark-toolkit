@@ -32,7 +32,7 @@ class DocumentIdentity:
         if self.doc_number and re.match(r'^\d+/', self.doc_number):
             raw = f"{self.namespace}/{self.doc_number}"
         else:
-            clean_fn = self.file_name.replace(' ', '_').replace('.pdf', '')
+            clean_fn = os.path.splitext(self.file_name)[0].replace(' ', '_')
             if self.doc_number:
                 raw = f"{self.namespace}/{self.doc_number}_{clean_fn}"
             else:

@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "event": "PreToolUse",
+        "type": "command",
+        "command": "bash .github/hooks/lint-python.sh",
+        "timeout": 15
+      }
+    ]
+  }
+}

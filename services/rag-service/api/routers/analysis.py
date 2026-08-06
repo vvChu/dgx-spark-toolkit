@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 
+
 @router.post("/conflict")
 async def analyze_conflict(
     request: ConflictAnalysisRequest,
@@ -23,6 +24,7 @@ async def analyze_conflict(
         query=request.query,
         depth=request.depth
     )
+
 
 @router.post("/compliance")
 async def check_compliance(

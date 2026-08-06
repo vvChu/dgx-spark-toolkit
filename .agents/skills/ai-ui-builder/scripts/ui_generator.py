@@ -61,11 +61,11 @@ def run_ui_generator(image_source, output_file="generated_ui.tsx"):
 
     # Routing Decision
     if score > 8.5:
-        target_model = "smartest-brain" # Claude Opus 4.6 Thinking
-        model_label = "Claude Opus Thinking (Ultimate Quality - Thinker)"
+        target_model = "claude-opus-4-6-thinking"  # Ultimate quality with thinking
+        model_label = "Claude Opus 4.6 Thinking (Ultimate Quality)"
     elif score > 5.0:
-        target_model = "smart-brain" # Claude 3.5 Sonnet
-        model_label = "Claude 3.5 Sonnet (Premium Quality)"
+        target_model = "claude-sonnet-4-6"  # Premium quality
+        model_label = "Claude Sonnet 4.6 (Premium Quality)"
     else:
         target_model = "rag-core" # Local Qwen
         model_label = "rag-core (Local - High Speed)"

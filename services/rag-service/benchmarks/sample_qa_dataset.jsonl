@@ -1,0 +1,10 @@
+{"question": "Điều 15 Nghị định 87/2023/NĐ-CP quy định gì về thẩm quyền kiểm tra?", "expected_doc_numbers": ["87/2023/NĐ-CP"], "expected_answer_span": "Điều 15", "category": "exact_lookup", "min_recall_at_k": 1.0}
+{"question": "Yêu cầu phòng cháy chữa cháy đối với nhà cao tầng theo QCVN 06:2022?", "expected_doc_numbers": [], "expected_answer_span": "", "category": "semantic", "min_recall_at_k": 0.5}
+{"question": "Thông tư 16/2025/TT-BXD quy định về tiêu chuẩn xây dựng gì?", "expected_doc_numbers": ["16/2025/TT-BXD"], "expected_answer_span": "", "category": "exact_lookup", "min_recall_at_k": 1.0}
+{"question": "So sánh quy định về bảo hiểm y tế giữa Nghị định 146/2018/NĐ-CP và Nghị định 104/2023/NĐ-CP", "expected_doc_numbers": ["146/2018/NĐ-CP", "104/2023/NĐ-CP"], "expected_answer_span": "", "category": "comparison", "min_recall_at_k": 1.0}
+{"question": "Văn bản nào thay thế Nghị định 86/2015/NĐ-CP về xây dựng?", "expected_doc_numbers": [], "expected_answer_span": "", "category": "timeline", "min_recall_at_k": 0.0}
+{"question": "Quy định về khoảng cách an toàn phòng cháy theo QCVN 06?", "expected_doc_numbers": [], "expected_answer_span": "khoảng cách an toàn", "category": "semantic", "min_recall_at_k": 0.5}
+{"question": "Điều 5 khoản 3 Thông tư 14/2024/TT-BXD quy định về nghĩa vụ của chủ đầu tư", "expected_doc_numbers": ["14/2024/TT-BXD"], "expected_answer_span": "Điều 5", "category": "exact_lookup", "min_recall_at_k": 1.0}
+{"question": "Điều kiện cấp phép xây dựng nhà ở riêng lẻ tại đô thị là gì?", "expected_doc_numbers": [], "expected_answer_span": "cấp phép xây dựng", "category": "semantic", "min_recall_at_k": 0.5}
+{"question": "Nghị định 15/2021/NĐ-CP có hiệu lực từ ngày nào?", "expected_doc_numbers": ["15/2021/NĐ-CP"], "expected_answer_span": "hiệu lực", "category": "exact_lookup", "min_recall_at_k": 1.0}
+{"question": "Quy trình xử lý vi phạm hành chính trong lĩnh vực xây dựng thay đổi như thế nào từ 2020 đến 2024?", "expected_doc_numbers": [], "expected_answer_span": "", "category": "timeline", "min_recall_at_k": 0.0}

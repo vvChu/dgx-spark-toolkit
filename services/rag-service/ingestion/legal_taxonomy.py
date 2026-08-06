@@ -36,7 +36,6 @@ _DOC_TYPE_RULES = [
 _TB_DIGIT_RE = re.compile(r'TB\d')
 
 
-
 # Regex patterns for filename prefix matching (e.g. TT01-2023, ND15-2021, QD08-TTg)
 # Order: more specific doc types first, then generic ones
 _FILENAME_PREFIX_RULES = [
@@ -256,4 +255,3 @@ def classify_source_category(rel_path: str) -> str:
         if prefix in rel_path:
             return cat
     return "KHAC"
-

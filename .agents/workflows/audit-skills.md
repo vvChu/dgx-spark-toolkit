@@ -5,17 +5,16 @@ description: Scans all agent skills for outdated references, broken endpoints, a
 type: workflow
 category: custom
 enabled: true
-version: v3.0
+version: v4.0
 ---
 
 // turbo-all
 
-## Audit All Skills v3.1 (rag-core + rag-light + Parallel Optimization)
-This workflow scans all agent skills for outdated references and self-optimizes to match current architecture (rag-core / rag-light).
+## Audit All Skills v4.0
 
 1. List all registered skills:
 ```bash
-echo "📋 Registered Skills (v3.1):"; for d in /home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/*/; do name=$(basename "$d"); desc=$(head -4 "$d/SKILL.md" 2>/dev/null | grep "description:" | sed 's/description: //'); echo "  • $name — $desc"; done
+echo "📋 Registered Skills:"; for d in /home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/*/; do name=$(basename "$d"); desc=$(head -4 "$d/SKILL.md" 2>/dev/null | grep "description:" | sed 's/description: //'); echo "  • $name — $desc"; done
 ```
 
 2. Verify shared module imports:
@@ -23,42 +22,35 @@ echo "📋 Registered Skills (v3.1):"; for d in /home/vvc/Codebase/dgx-spark-too
 echo "🐍 Checking vllm_client imports..."; for script in /home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/*/scripts/*.py; do if grep -q "from vllm_client" "$script" 2>/dev/null; then echo "  ✅ $(basename $(dirname $(dirname $script)))/$(basename $script)"; fi; done
 ```
 
-3. Search for outdated references (Post-Alias Optimization):
+3. Search for outdated references:
 ```bash
-echo "🔍 Checking outdated references...";
+echo "🔍 Checking outdated references..."
 echo "--- OLD MODELS (Should not exist) ---"
-grep -rnEi "qwen3.5-9b-rag|qwen3.5-35b|qwen3-8b" /home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/ 2>/dev/null || echo "  ✅ No old model references found."
+grep -rnEi "qwen3.5-9b-rag|qwen3-8b|vllm-9b|smartest-brain|smart-brain" /home/vvc/Codebase/dgx-spark-toolkit/.agents/ --include="*.md" --include="*.py" --include="*.yaml" 2>/dev/null || echo "  ✅ No old model references found."
 echo "--- CORRECT ALIASES ---"
-grep -rnE "rag-core|rag-light" /home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/ || echo "  ✅ Aliases rag-core/rag-light active."
+grep -rnE "rag-core|rag-light" /home/vvc/Codebase/dgx-spark-toolkit/.agents/ --include="*.md" --include="*.py" || echo "  ℹ️ No alias references found."
 ```
 
-4. Verify Performance Optimization:
+4. Verify current config:
 ```bash
-echo "🚀 Checking concurrency & timeouts...";
-echo "--- OCR CONCURRENCY (Should be 4) ---"
-grep -rn "MAX_OCR_CONCURRENCY=4" /home/vvc/Codebase/dgx-spark-toolkit/ | head -n 5 || echo "  ⚠️ MAX_OCR_CONCURRENCY not set to 4"
-echo "--- TIMEOUT (Should be 300s) ---"
-grep -rn "VLLM_VISION_TIMEOUT=300" /home/vvc/Codebase/dgx-spark-toolkit/ | head -n 5 || echo "  ⚠️ Timeout not optimized"
+echo "🚀 Checking .env config..."
+echo "--- OCR CONCURRENCY ---"
+grep -n "MAX_OCR_CONCURRENCY" /home/vvc/Codebase/dgx-spark-toolkit/.env | head -n 3 || echo "  ⚠️ MAX_OCR_CONCURRENCY not set"
+echo "--- EMBEDDING MODEL ---"
+grep -n "EMBEDDING_MODEL" /home/vvc/Codebase/dgx-spark-toolkit/.env | head -n 3 || echo "  ⚠️ EMBEDDING_MODEL not set"
 ```
 
-5. Audit RAG Data Quality:
+5. Self-Optimization:
 ```bash
-echo "📊 Live RAG Quality Check...";
-docker exec -it dgx-spark-toolkit-rag-watcher-1 python3 -c "print('Watcher healthy')" || echo "  ⚠️ rag-watcher not available or quality check failed."
-```
-
-6. Self-Optimization v3.1:
-```bash
-echo "🤖 Running Self-Optimization v3.1...";
-# Note: Ensure workflow_optimizer.py exists and is updated
+echo "🤖 Running Self-Optimization..."
 if [ -f "/home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/vllm-manager/scripts/workflow_optimizer.py" ]; then
-    python3 /home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/vllm-manager/scripts/workflow_optimizer.py
+    cd /home/vvc && timeout 15 /usr/bin/python3 -u /home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/vllm-manager/scripts/workflow_optimizer.py
 else
     echo "  ⚠️ workflow_optimizer.py missing."
 fi
 ```
 
-7. Skill directory sizes:
+6. Skill directory sizes:
 ```bash
 echo "📊 Skill sizes:"; du -sh /home/vvc/Codebase/dgx-spark-toolkit/.agents/skills/*/ 2>/dev/null | sort -rh | head -10
 ```

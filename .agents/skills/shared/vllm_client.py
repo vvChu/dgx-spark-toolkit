@@ -1,7 +1,7 @@
 """
 Shared vLLM Client for all AI Skills.
 Routes through the AI Gateway (LiteLLM proxy) for unified model access,
-fallbacks, and cloud model support. Supports all 25+ models via gateway.
+fallbacks, and cloud model support. Supports all 22 models via gateway.
 """
 
 import base64
@@ -59,7 +59,7 @@ def chat_completion(messages: list, temperature: float = 0.1, max_tokens: int = 
                     model: str = None, api_base: str = None) -> str:
     """
     Send a chat completion request through the AI Gateway and return the assistant's content.
-    Supports all gateway models: rag-core (local), rag-light (local), claude-sonnet-4-6, gemini-3-flash, gpt-4o, etc.
+    Supports all gateway models: rag-core (local), rag-light (local), claude-sonnet-4-6, gemini-3-flash, gemma-3-27b, etc.
     """
     _model = model or VLLM_MODEL
     _base = api_base or VLLM_API_BASE

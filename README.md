@@ -1,6 +1,6 @@
 # NVIDIA DGX Spark Toolkit
 
-Comprehensive AI development toolkit for NVIDIA DGX Spark. Provides a unified **AI Gateway** routing to local vLLM models (Qwen 3.5) and a remote proxy (Claude 4.x, Gemini 3.x, GPT-4).
+Comprehensive AI development toolkit for NVIDIA DGX Spark. Provides a unified **AI Gateway** routing to local vLLM models (Qwen 3.5) and cloud proxies (Claude 4.x, Gemini 3.x, GPT-OSS).
 
 ## Hardware
 
@@ -10,8 +10,8 @@ Comprehensive AI development toolkit for NVIDIA DGX Spark. Provides a unified **
 | **Memory** | 128GB LPDDR5x unified |
 | **Performance** | 1 petaFLOP (FP4) |
 | **OS** | DGX OS (Ubuntu 24.04) |
-| **Tailscale IP** | _(see `.env`)_ |
-| **LAN IP** | `<LAN_IP>` (see `.env`) |
+| **Hostname** | `spark-CCBA` |
+| **Tailscale IP** | `100.83.192.30` |
 
 ---
 
@@ -20,30 +20,35 @@ Comprehensive AI development toolkit for NVIDIA DGX Spark. Provides a unified **
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     AI Gateway :8090                        │
-│                  (LiteLLM Proxy — 25 models)                │
+│              (LiteLLM Proxy — 22 models)                    │
 └──────┬──────────────────┬────────────────┬──────────────────┘
        │                  │                │
-   Local vLLM         Remote Proxy     Cloud Direct
-   :8004 (35B)     100.79.241.120      Gemini / Groq
-   qwen3.5-35b      claude/gemini/gpt   (fallback)
+   Local vLLM         Gateway Proxy    Cloud Direct
+   :8004 (35B)        Claude/Gemini    Gemini (6 keys)
+   :8003 (4B)         GPT-OSS         Gemma-3-27B
+   qwen3.5-35b                        (load-balanced)
         │
    RAG Service :8005
-   (Milvus + Reranker)
+   (Milvus + Neo4j + BGE-M3)
         │
    Hybrid Ingestion
-   (PaddleOCR + Qwen3.5 Vision)
+   (Surya OCR + Gemini Vision)
 ```
 
 ```
 dgx-spark-toolkit/
-├── .agents/skills/          # AI Agent Skills (11 skills)
-│   └── shared/vllm_client.py  # Unified gateway client
+├── .agents/
+│   ├── skills/              # AI Agent Skills (18 skills)
+│   │   └── shared/vllm_client.py  # Unified gateway client
+│   └── workflows/           # Slash-command workflows (14)
 ├── services/
-│   ├── ai-gateway/             # LiteLLM config (25 models)
-│   └── rag-service/            # RAG pipeline (FastAPI + BGE-M3)
-├── monitoring/                 # Prometheus + Grafana
-├── playbooks/                  # Setup guides
-├── scripts/                    # start-all, stop-all, setup-remote
+│   ├── ai-gateway/          # LiteLLM config (22 models, 38 routes)
+│   ├── rag-service/         # RAG pipeline (FastAPI + BGE-M3)
+│   └── frontend/            # React 19 + Vite 7 + Tailwind 4
+├── monitoring/              # Prometheus + Grafana
+├── playbooks/               # Setup guides & API docs
+├── examples/                # Client integration examples
+├── scripts/                 # start-all, stop-all, setup-remote
 └── docker-compose.yml
 ```
 
@@ -55,7 +60,7 @@ dgx-spark-toolkit/
 
 ```bash
 cp .env.example .env
-# Edit .env — set GATEWAY_PROXY_KEY from your proxy admin
+# Edit .env — set API keys and passwords
 ```
 
 ### 2. Start Everything
@@ -64,12 +69,12 @@ cp .env.example .env
 bash scripts/start-all.sh
 ```
 
-This starts vLLM (Qwen 3.5 35B) + Docker stack (Gateway + RAG + Milvus + Monitoring).
+This starts vLLM (Qwen 3.5 35B) + Docker stack (Gateway + RAG + Milvus + Neo4j + Monitoring).
 
 ### 3. Test the Gateway
 
 ```bash
-# List all 25 available models
+# List all 22 available models
 curl http://localhost:8090/v1/models \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY"
 
@@ -84,53 +89,64 @@ curl http://localhost:8090/v1/chat/completions \
 
 ## Available Models (via AI Gateway)
 
-### 🏎️ Tier 1 — Speed (< 1.5s)
+### 🖥️ Local GPU — Private / Offline / High Throughput
+| Model | Description |
+|-------|-------------|
+| `qwen3.5-35b` | Qwen 3.5 35B — main local model (32K context) |
+| `rag-core` | Alias of qwen3.5-35b (used by RAG pipeline) |
+| `rag-light` | Qwen 3.5 4B — lightweight fallback |
+
+### 🏎️ Speed Tier (< 1.5s)
 | Model | Best For |
 |-------|----------|
-| `gemini-2.5-flash` | Real-time chat, autocomplete |
-| `gemini-2.5-flash-lite` | High-volume batch tasks |
-| `gemini-3-flash` | Fast multimodal + reasoning |
-| `gpt-4o` | Vision + general purpose |
-| `gpt-4o-mini` | Cost-efficient GPT-4 class |
-| `claude-3-haiku` | Fast Claude, customer agents |
-| `qwen3.5-35b` | **Local** — private data, offline |
+| `gemini-3-flash` | Fast multimodal + reasoning (6-key load-balanced) |
+| `gemini-3.1-flash-lite` | Cheapest & fastest Gemini (6-key load-balanced) |
+| `gemma-3-27b` | Free tier, high-volume metadata (6-key load-balanced) |
+| `claude-haiku-4` | Fast Claude |
+| `claude-haiku-4-5` | Faster Claude with better quality |
 
-### 🧠 Tier 2 — Balanced (1–3s)
+### 🧠 Balanced Tier (1–3s)
 | Model | Best For |
 |-------|----------|
-| `claude-sonnet-4-6` ⭐ | **Default** — coding, agents (SWE-bench 79.6%) |
-| `claude-sonnet-thinking` | Code review with chain-of-thought |
-| `claude-opus-4-5` | Deep analysis, financial/legal |
-| `gpt-4-turbo` | Complex coding, JSON generation |
-| `gemini-2.5-flash-thinking` | Reasoning with thinking |
+| `claude-sonnet-4-6` ⭐ | **Default** — coding, agentic pipelines |
+| `claude-sonnet-4-5` | Previous gen Sonnet |
+| `claude-sonnet-4-6-thinking` | Reasoning with chain-of-thought |
+| `claude-sonnet-4-5-thinking` | Reasoning (previous gen) |
+| `claude-opus-4-6` | Deep analysis, legal/financial |
+| `claude-opus-4-5` | Previous gen Opus |
+| `claude-opus-4-6-thinking` | Opus + CoT |
+| `claude-opus-4-5-thinking` | Previous gen Opus + CoT |
+| `gpt-oss-120b-medium` | Large OSS model via proxy |
 
-### 🔬 Tier 3 — Deep Reasoning (7–13s, 1M context)
+### 🔬 Deep Reasoning (7–13s, 1M context)
 | Model | Best For |
 |-------|----------|
 | `gemini-3.1-pro` | Full codebase analysis, research |
-| `gemini-3-pro-high` | Scientific reasoning (GPQA 94.3%) |
-| `gemini-3.1-pro-high` | ARC-AGI-2 tasks, novel problems |
+| `gemini-3.1-pro-high` | ARC-AGI-2, novel problems |
+| `gemini-3.1-pro-low` | Cost-efficient Gemini Pro |
+| `gemini-3-pro-high` | Scientific reasoning |
+| `gemini-3-pro-low` | Budget deep reasoning |
 
 ---
 
 ## Remote Access
 
 ```bash
-# Open firewall (one-time setup)
+# Open firewall (one-time setup on server)
 sudo bash scripts/setup-remote-access.sh
 
-# Connect from any machine
-curl http://<TAILSCALE_IP>:8090/v1/models \
+# Connect from any machine via Tailscale
+curl http://100.83.192.30:8090/v1/models \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY"
 ```
 
 **Python:**
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://<TAILSCALE_IP>:8090/v1", api_key=os.environ["LITELLM_MASTER_KEY"])
+client = OpenAI(base_url="http://100.83.192.30:8090/v1", api_key=os.environ["LITELLM_MASTER_KEY"])
 ```
 
-See [`playbooks/remote-access.md`](playbooks/remote-access.md) for full details.
+See [`playbooks/client-setup-guide.md`](playbooks/client-setup-guide.md) for full setup guide with config files.
 
 ---
 
@@ -138,31 +154,41 @@ See [`playbooks/remote-access.md`](playbooks/remote-access.md) for full details.
 
 | Service | Port | Description |
 |---------|------|-------------|
-| AI Gateway | `8090` | LiteLLM proxy — 25 models |
-| RAG Service | `8005` | BIM semantic search + generation |
-| RAG Preview | `/preview/{fn}/{pg}` | GET page images for citations |
-| Qwen 3.5 35B | `8004` | Local vLLM (NVFP4, ~20GB) |
-| Milvus | `19530` | Vector database |
-| Prometheus | `9090` | Metrics |
+| AI Gateway | `8090` | LiteLLM proxy — 22 models, auto-fallback |
+| RAG Service | `8005` | Vietnamese legal document search + generation |
+| RAG Frontend | `5173` | React 19 web UI |
+| Qwen 3.5 35B | `8004` | Local vLLM (FP8 KV, ~85% GPU) |
+| Qwen 3.5 4B | `8003` | Local vLLM fallback (on-demand) |
+| Milvus | `19530` | Vector database (BGE-M3 dense+sparse) |
+| Neo4j | `7474`/`7687` | Knowledge graph |
+| Prometheus | `9090` | Metrics collection |
 | Grafana | `3000` | Dashboards |
 
 ---
 
 ## AI Skills
 
-All skills in `.agent/skills/` use the shared gateway client (`shared/vllm_client.py`) and automatically get access to all models + cloud fallbacks.
+All 18 skills in `.agents/skills/` use the shared gateway client (`shared/vllm_client.py`) and automatically get access to all models + cloud fallbacks.
 
 | Skill | Description |
 |-------|-------------|
-| `ai-ui-builder` | Mockup → React/Tailwind code (Qwen3-VL) |
-| `visual-qa-automator` | Visual regression testing |
-| `multimodal-ocr` | Document OCR & data extraction |
-| `bim-dev-ops` | BIM development operations |
-| `bim-qa-pipeline` | BIM quality assurance |
+| `ai-ui-builder` | Mockup → React/Tailwind code (Qwen 3.5 Vision) |
+| `audit` | Linters, tests, security checks on RAG service |
+| `autoresearch-runner` | Karpathy-style RAG optimization loop |
+| `bim-dev-ops` | BIM Planner development operations |
+| `bim-qa-pipeline` | BIM quality assurance testing |
+| `fix-frontmatter` | Validate/fix YAML frontmatter in skills |
 | `idop-app-scaffolder` | IDOP module scaffolding |
-| `idop-crud-generator` | IDOP CRUD generation |
-| `m365-integrator` | Microsoft 365 Graph API integration |
+| `idop-crud-generator` | IDOP CRUD code generation |
 | `infrastructure-manager` | Server & service management |
+| `legal-doc-processor` | Vietnamese legal document processing |
+| `m365-integrator` | Microsoft 365 Graph API integration |
+| `md-quality-auditor` | Markdown quality assessment vs PDF source |
+| `multimodal-ocr` | Invoice/drawing OCR → JSON |
+| `python-production-guidelines` | Python/FastAPI/RAG architecture guidelines |
+| `rag-audit-runner` | RAG quality audit → structured JSON scorecard |
+| `rag-local-python-runner` | Pipeline + audit + evaluate runner |
+| `visual-qa-automator` | Visual regression testing (CSS/Layout) |
 | `vllm-manager` | vLLM model serving & monitoring |
 
 ---

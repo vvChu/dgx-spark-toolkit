@@ -1,5 +1,6 @@
 """Show what the 14 PENDING (previously FAILED) docs are."""
-import sys; sys.path.insert(0, '/app')
+import sys
+sys.path.insert(0, '/app')
 from sqlalchemy import create_engine, text
 import os
 

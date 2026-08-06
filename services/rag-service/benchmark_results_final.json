@@ -1,0 +1,27 @@
+{
+  "gemini-3-flash": {
+    "error": "[ERROR: timed out]",
+    "elapsed": 300.08647537231445
+  },
+  "gemini-3.1-flash-lite": {
+    "error": "[ERROR: timed out]",
+    "elapsed": 300.10787081718445
+  },
+  "rag-core": {
+    "elapsed": 17.1,
+    "chars": 2132,
+    "lines": 29,
+    "accuracy": 100.0,
+    "hits": 13,
+    "total": 13,
+    "misses": [],
+    "hallucinations": [],
+    "halluc_count": 0,
+    "combined_score": 100.0,
+    "text_preview": "án quy hoạch xây dựng thuộc thẩm quyền phê duyệt của Thủ tướng Chính phủ và đồ án quy hoạch xây dựng do Bộ Xây dựng tổ chức lập. Bộ Xây dựng là cơ quan thường trực của Hội đồng thẩm định.\n\n2. Ủy ban nhân dân quyết định thành lập Hội đồng thẩm định nhiệm vụ và đồ án quy hoạch xây dựng thuộc thẩm quyề"
+  },
+  "gemma-3-27b": {
+    "error": "[ERROR: Server disconnected without sending a response.]",
+    "elapsed": 175.1174750328064
+  }
+}

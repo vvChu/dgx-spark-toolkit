@@ -8,11 +8,12 @@ _WEAK_PASSWORDS = frozenset({
     "litellm_pwd", "minioadmin", "placeholder_key", "changeme",
 })
 
+
 class Settings(BaseSettings):
     # Milvus Configuration
     MILVUS_HOST: str = "milvus-standalone"
     MILVUS_PORT: int = 19530
-    MILVUS_COLLECTION: str = "legal_docs_v9"
+    MILVUS_COLLECTION: str = "legal_docs_v10"
 
     # Neo4j Configuration
     # Accepts both NEO4J_PASSWORD and the legacy NEO4J_PASS env var name
@@ -46,9 +47,9 @@ class Settings(BaseSettings):
     FORCE_CPU_RERANKER: bool = False
     FORCE_CPU_EMBEDDING: bool = False
 
-    # Vision Models (ingestion pipeline)
-    PRIMARY_VISION_MODEL: str = "rag-core"
-    FALLBACK_VISION_MODEL: str = "gemini-2.5-flash"
+    # Vision Models (ingestion pipeline) — Free-tier-first strategy
+    PRIMARY_VISION_MODEL: str = "gemini-3-flash"
+    FALLBACK_VISION_MODEL: str = "gemini-3.1-flash-lite"
 
     # Paths
     PDF_DIR: str = "/app/data/pdf"
@@ -58,6 +59,17 @@ class Settings(BaseSettings):
     ENABLE_SEMANTIC_CACHE: bool = True
     SEMANTIC_CACHE_THRESHOLD: float = 0.92
     SEMANTIC_CACHE_TTL_SECONDS: int = 3600
+    SEMANTIC_CACHE_REDIS_ENABLED: bool = True  # Context Lake: persist cache to Redis
+
+    # Retrieval scoring weights — tune via env to calibrate ranking quality
+    RERANK_WEIGHT: float = 0.8
+    MILVUS_WEIGHT: float = 0.2
+    TABLE_BOOST: float = 0.2
+    VALIDITY_BOOST_ACTIVE: float = 0.15
+    VALIDITY_PENALTY_OUTDATED: float = -0.3
+
+    # Context Lake: Session Memory
+    SESSION_MEMORY_TTL: int = 7200  # 2 hours
 
     # Telegram Notifications
     TELEGRAM_BOT_TOKEN: SecretStr = SecretStr("")

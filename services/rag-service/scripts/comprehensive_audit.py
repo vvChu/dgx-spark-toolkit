@@ -43,7 +43,6 @@ def print_section(title):
     print(f"{'─' * 70}")
 
 
-
 def _has_broken_table(text: str) -> bool:
     """Block-aware broken-table detector.
 
@@ -117,7 +116,6 @@ def audit_markdown(md_files):
         re.IGNORECASE,
     )
     ocr_space_re = re.compile(r"[A-ZĐ]\s[A-ZĐ]\s[A-ZĐ]")  # e.g. B Ộ X Â Y
-
 
     for f in md_files:
         try:
@@ -585,7 +583,7 @@ def audit_fidelity(json_files, pdf_source_dir):
     flag_nc = "✅" if docs_no_content == 0 else "🟡"
     print(f"  {flag_nc} Docs with no chunks    : {docs_no_content}/{exported}")
 
-    # Page coverage basics  
+    # Page coverage basics
     if pages_per_doc:
         print(f"     Pages/doc stats: min={min(pages_per_doc)}, max={max(pages_per_doc)}, "
               f"mean={statistics.mean(pages_per_doc):.1f}")

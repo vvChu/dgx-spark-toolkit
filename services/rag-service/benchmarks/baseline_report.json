@@ -1,0 +1,108 @@
+{
+  "retrieval": {
+    "recall_at_1": 0.0,
+    "recall_at_3": 0.0,
+    "recall_at_5": 0.0,
+    "precision_at_5": 0.0,
+    "mrr": 0.0,
+    "avg_latency_ms": 0.0,
+    "p95_latency_ms": 0.0,
+    "total_queries": 10,
+    "cache_hit_rate": 0.0
+  },
+  "generation": {
+    "faithfulness": 0.0,
+    "answer_completeness": 0.0,
+    "hallucination_rate": 0.0
+  },
+  "by_category": {
+    "exact_lookup": {
+      "recall_at_1": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "mrr": 0.0,
+      "avg_latency_ms": 0.0,
+      "p95_latency_ms": 0.0,
+      "total_queries": 4,
+      "cache_hit_rate": 0.0
+    },
+    "semantic": {
+      "recall_at_1": 1.0,
+      "recall_at_3": 1.0,
+      "recall_at_5": 1.0,
+      "precision_at_5": 0.0,
+      "mrr": 1.0,
+      "avg_latency_ms": 20180.7,
+      "p95_latency_ms": 36864.7,
+      "total_queries": 3,
+      "cache_hit_rate": 0.0
+    },
+    "comparison": {
+      "recall_at_1": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "mrr": 0.0,
+      "avg_latency_ms": 4548.8,
+      "p95_latency_ms": 4548.8,
+      "total_queries": 1,
+      "cache_hit_rate": 0.0
+    },
+    "timeline": {
+      "recall_at_1": 1.0,
+      "recall_at_3": 1.0,
+      "recall_at_5": 1.0,
+      "precision_at_5": 0.0,
+      "mrr": 1.0,
+      "avg_latency_ms": 2761.9,
+      "p95_latency_ms": 2851.7,
+      "total_queries": 2,
+      "cache_hit_rate": 0.0
+    }
+  },
+  "failed_queries": [
+    {
+      "question": "Điều 15 Nghị định 87/2023/NĐ-CP quy định gì về thẩm quyền kiểm tra?",
+      "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    },
+    {
+      "question": "Yêu cầu phòng cháy chữa cháy đối với nhà cao tầng theo QCVN 06:2022?",
+      "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    },
+    {
+      "question": "Thông tư 16/2025/TT-BXD quy định về tiêu chuẩn xây dựng gì?",
+      "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    },
+    {
+      "question": "So sánh quy định về bảo hiểm y tế giữa Nghị định 146/2018/NĐ-CP và Nghị định 104/2023/NĐ-CP",
+      "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    },
+    {
+      "question": "Văn bản nào thay thế Nghị định 86/2015/NĐ-CP về xây dựng?",
+      "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    },
+    {
+      "question": "Quy định về khoảng cách an toàn phòng cháy theo QCVN 06?",
+      "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    },
+    {
+      "question": "Điều 5 khoản 3 Thông tư 14/2024/TT-BXD quy định về nghĩa vụ của chủ đầu tư",
+      "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    },
+    {
+      "question": "Điều kiện cấp phép xây dựng nhà ở riêng lẻ tại đô thị là gì?",
+      "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    },
+    {
+      "question": "Nghị định 15/2021/NĐ-CP có hiệu lực từ ngày nào?",
+      "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    },
+    {
+      "question": "Quy trình xử lý vi phạm hành chính trong lĩnh vực xây dựng thay đổi như thế nào từ 2020 đến 2024?",
+      "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+    }
+  ],
+  "evaluated_at": "2026-03-31T07:56:33.492785",
+  "dataset_size": 10
+}

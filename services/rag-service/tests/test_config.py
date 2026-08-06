@@ -1,6 +1,7 @@
 """Unit tests for core.config.Settings validation."""
 import os
 import pytest
+from unittest.mock import patch
 
 # Ensure CI-safe credentials are set *before* any import triggers get_settings().
 os.environ.setdefault("NEO4J_PASSWORD", "ci_test_placeholder_safe")
@@ -15,6 +16,7 @@ def _make_settings(**overrides):
     defaults = {
         "NEO4J_PASSWORD": "strong_safe_password_1",
         "LITELLM_MASTER_KEY": "sk-strong-safe-key-2",
+        "_env_file": None,
     }
     defaults.update(overrides)
     return Settings(**defaults)
@@ -56,8 +58,11 @@ class TestAliases:
 # ── Defaults ────────────────────────────────────────────────────────────
 class TestDefaults:
     def test_default_values(self):
-        s = _make_settings()
-        assert s.MILVUS_COLLECTION == "legal_docs_v9"
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ["NEO4J_PASSWORD"] = "strong_safe_password_1"
+            os.environ["LITELLM_MASTER_KEY"] = "sk-strong-safe-key-2"
+            s = _make_settings()
+            assert s.MILVUS_COLLECTION == "legal_docs_v10"
         assert s.MILVUS_PORT == 19530
         assert s.GPU_ENABLED is True
         assert s.ENABLE_HYDE is False

@@ -19,6 +19,9 @@ class _FakeEmbeddingModel:
     def __init__(self, *args, **kwargs):
         pass
 
+    def embed_query(self, text):
+        return {"dense": [0.1] * 1024, "sparse": {}}
+
 
 _fake_embedding_module.BGE_M3_HybridEmbedding = _FakeEmbeddingModel
 sys.modules.setdefault("retrieval.embeddings.bge_m3_hybrid", _fake_embedding_module)
@@ -34,6 +37,7 @@ async def _test_lifespan(_app):
 
 
 app.router.lifespan_context = _test_lifespan
+
 
 @pytest.fixture
 def client():
@@ -175,8 +179,9 @@ class _FakeNeo4jRepo:
 
 
 class _FakeHttpResponse:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self._payload = payload
+        self.status_code = status_code
 
     def raise_for_status(self):
         return None

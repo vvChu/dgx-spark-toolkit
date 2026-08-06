@@ -9,21 +9,23 @@ from ingestion.text_normalizer import normalize_chunk_text, detect_garbled_table
 logger = logging.getLogger(__name__)
 
 # ── P5: Boilerplate patterns to strip from Content section ───────────────
+# [P5-FIX] Tolerant of OCR word-merges: "HỘICHỦ" instead of "HỘI CHỦ"
 _CONTENT_BOILERPLATE_RE = re.compile(
     r'(?:^|\n)'
-    r'(?:CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM\s*'
-    r'(?:Độc lập\s*[-–—]\s*Tự do\s*[-–—]\s*Hạnh phúc)?'
-    r'|Độc lập\s*[-–—]\s*Tự do\s*[-–—]\s*Hạnh phúc)'
+    r'(?:CỘNG\s*HÒA\s*XÃ\s*HỘI\s*CHỦ\s*NGHĨA\s*VIỆT\s*NAM\s*'
+    r'(?:Độc\s*lập\s*[-–—]\s*Tự\s*do\s*[-–—]\s*Hạnh\s*phúc)?'
+    r'|Độc\s*lập\s*[-–—]\s*Tự\s*do\s*[-–—]\s*Hạnh\s*phúc)'
     r'\s*(?:\n|$)',
     re.IGNORECASE | re.MULTILINE
 )
+
 
 class DataExporter:
     def __init__(self, export_dir: str = "/app/exports"):
         self.export_dir = export_dir
         self.json_dir = os.path.join(export_dir, "json")
         self.md_dir = os.path.join(export_dir, "markdown")
-        
+
         # Create directories if they don't exist
         try:
             os.makedirs(self.json_dir, exist_ok=True)
@@ -37,7 +39,7 @@ class DataExporter:
         try:
             # Sanitize doc_id for filename (replace / and other chars)
             safe_filename = doc_id.replace('/', '_').replace('\\', '_').replace(':', '_').replace(' ', '_')
-            
+
             # 1. Export JSON
             json_path = os.path.join(self.json_dir, f"{safe_filename}.json")
             json_data = {
@@ -49,13 +51,13 @@ class DataExporter:
             }
             with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump(json_data, f, ensure_ascii=False, indent=2)
-            
+
             # 2. Export Markdown
             md_path = os.path.join(self.md_dir, f"{safe_filename}.md")
             md_content = self._generate_markdown(rel_path, doc_id, meta, summary, chunks)
             with open(md_path, 'w', encoding='utf-8') as f:
                 f.write(md_content)
-                
+
             logger.info(f"Successfully exported data for {doc_id} to {self.export_dir}")
         except Exception as e:
             logger.error(f"Failed to export data for {doc_id}: {e}")
@@ -84,8 +86,17 @@ class DataExporter:
 
         last = parts[-1].strip().strip("[]")
         # Skip noise-only segments
-        if not last or last == doc_id or last.lower() == "header":
+        if not last or last == doc_id or last.lower() in ("header", "table"):
             return None
+
+        # [P2] Handle numbered section format from VietLawNumberedSectionChunker
+        # e.g. "Article 3.2.1" -> "#### 3.2.1" or "Article 8.2.1.2" -> "#### 8.2.1.2"
+        article_match = re.match(r'Article\s+(\d+(?:\.\d+)*)', last, re.IGNORECASE)
+        if article_match:
+            section_num = article_match.group(1)
+            depth = section_num.count('.')
+            hashes = '####' if depth >= 1 else '###'
+            return f"{hashes} {section_num}"  # Return with hashes prefix for caller to use directly
 
         # If it looks like a legal marker, extract ONLY the marker part
         # Prevent body text from leaking into the heading
@@ -114,7 +125,12 @@ class DataExporter:
         A valid GFM table requires a separator row (|---|---|) immediately
         after the header row. This method detects header-like pipe rows
         NOT followed by a separator and inserts one.
-        Tracks state to avoid inserting separators for data rows.
+
+        Header heuristic refinements (v2):
+        - Reject rows where the first cell is a plain number (data row, not header)
+        - Reject rows where ALL cells are short words/abbreviations like "B", "K", ""
+          (compliance checkmark rows)
+        - Reset table state on blank-line gaps between consecutive tables
         """
         if '|' not in text:
             return text
@@ -131,11 +147,12 @@ class DataExporter:
             )
 
             if not is_pipe_row:
+                # Reset table state on non-pipe lines (gap between tables)
                 in_table = False
                 fixed.append(line)
                 continue
 
-            # Check if the NEXT line is a separator
+            # Check if the NEXT line is already a separator
             next_line = lines[i + 1].strip() if i + 1 < len(lines) else ''
             is_next_sep = bool(re.match(r'^\|[\s:-]+\|', next_line))
 
@@ -145,14 +162,24 @@ class DataExporter:
                 continue
 
             if in_table:
-                # Already inside a table (separator was seen/inserted) — this is a data row
+                # Already inside a table (separator was seen/inserted) — data row
                 fixed.append(line)
                 continue
 
-            # First pipe row without a following separator — check if it's a header
+            # First pipe row without a following separator — header detection
             cells = [c.strip() for c in stripped.split('|')[1:-1]]
+
+            # Reject: first cell is a plain number (data row like "| 1 | Name | XX |")
+            first_cell = cells[0] if cells else ''
+            first_cell_is_number = bool(re.match(r'^\d+\.?$', first_cell.strip()))
+
+            # Reject: all cells are empty or single-char abbreviations
+            all_trivial = all(len(c) <= 2 for c in cells)
+
             is_header = (
                 cells
+                and not first_cell_is_number
+                and not all_trivial
                 and all(len(c) < 60 for c in cells)
                 and any(re.search(r'[a-zA-Z\u00c0-\u1ef9]', c) for c in cells)
                 and not all(re.match(r'^[\d.,\s%]+$', c) for c in cells if c)
@@ -233,6 +260,113 @@ class DataExporter:
 
         return False
 
+    # ── [P2-FIX] Vietnamese word-merge spacing correction ─────────────
+    # OCR output often strips spaces between Vietnamese words, producing
+    # artifacts like: "vềcải cách", "doBộ trưởng", "làcơ sở".
+    # This regex detects lowercase-to-uppercase transitions and inserts a space.
+    _VN_LOWER = (
+        r'a-zàáạảãăắằẳẵặâấầẩẫậđèéẹẻẽêếềểễệìíịỉĩ'
+        r'òóọỏõôốồổỗộơớờởỡợùúụủũưứừửữựỳýỵỷỹ'
+    )
+    _VN_UPPER = (
+        r'A-ZÀÁẠẢÃĂẮẰẲẴẶÂẤẦẨẪẬĐÈÉẸẺẼÊẾỀỂỄỆÌÍỊỈĨ'
+        r'ÒÓỌỎÕÔỐỒỔỖỘƠỚỜỞỠỢÙÚỤỦŨƯỨỪỬỮỰỲÝỴỶỸ'
+    )
+    _SPACING_RE = re.compile(
+        rf'([{_VN_LOWER}])([{_VN_UPPER}])'
+    )
+    # Also fix ALL-CAPS merges like "ĐÔTHỊVÀ" → "ĐÔ THỊ VÀ"
+    _ALLCAPS_MERGE_RE = re.compile(
+        rf'([{_VN_UPPER}]{{2,}})([{_VN_UPPER}][{_VN_LOWER}])'
+    )
+
+    # [P2-FIX-v2] Common Vietnamese word-merge patterns (lowercase→lowercase)
+    # that the regex approach cannot detect reliably.
+    # These are high-frequency merge artifacts found in OCR output of legal docs.
+    _WORD_MERGE_FIXES = [
+        # Preposition/conjunction merges (sorted longest first to avoid partial matches)
+        ('vềcác', 'về các'), ('vềcán', 'về cán'), ('vềcác', 'về các'),
+        ('vềnhà', 'về nhà'), ('vền hà', 'về nhà'),  # split-merge artifact
+        ('docơ', 'do cơ'), ('của', 'của'), ('vàtên', 'và tên'),
+        ('vàtài', 'và tài'), ('vàmối', 'và mối'), ('vàmức', 'và mức'),
+        ('đãkê', 'đã kê'), ('đãkế', 'đã kế'),
+        ('cócấp', 'có cấp'), ('cóảnh', 'có ảnh'),
+        ('cón hà', 'có nhà'),  # split-merge artifact
+        ('đầy đủcác', 'đầy đủ các'),
+        ('sở hữucủa', 'sở hữu của'), ('ởcủa', 'ở của'),
+        ('củatôi', 'của tôi'), ('têncủa', 'tên của'), ('cáccon', 'các con'),
+        ('mẹcủa', 'mẹ của'),
+        ('hợp lệc ho', 'hợp lệ cho'), ('nhà ởc ho', 'nhà ở cho'),
+        ('mởc ho', 'mở cho'),
+        ('phục vụtại', 'phục vụ tại'),
+        ('đăng kýtạm', 'đăng ký tạm'), ('đăng kýtại', 'đăng ký tại'),
+        ('nghề nghiệp3', 'nghề nghiệp'), ('đối tượng5', 'đối tượng'),
+        ('đơn vịnơi', 'đơn vị nơi'),
+        ('yêucầu', 'yêu cầu'), ('đápứng', 'đáp ứng'),
+        ('Đạitá', 'Đại tá'), ('phụcấp', 'phụ cấp'),
+        ('tổ chức cơ yếu hưởng', 'tổ chức cơ yếu hưởng'),
+        ('thiết kếkỹ', 'thiết kế kỹ'), ('thiết kếcơ', 'thiết kế cơ'),
+        ('quản lýn hà', 'quản lý nhà'), ('quản lýc hi', 'quản lý chi'),
+        ('XÃHỘI', 'XÃ HỘI'), ('HỘICHỦ', 'HỘI CHỦ'), ('BỐHỢP', 'BỐ HỢP'),
+        ('dovi phạm', 'do vi phạm'), ('phá dỡn hà', 'phá dỡ nhà'),
+        ('hỗ trợn hà', 'hỗ trợ nhà'), ('hỗ trợcải', 'hỗ trợ cải'),
+        ('bịảnh', 'bị ảnh'),
+        ('cấp xãnơi', 'cấp xã nơi'),
+        ('làcơ', 'là cơ'), ('làtài', 'là tài'), ('làkế', 'là kế'),
+        ('làcác', 'là các'), ('làmcơ', 'làm cơ'),
+        ('vớiquy', 'với quy'),
+        ('đápứngcác', 'đáp ứng các'), ('đápứngcácmục', 'đáp ứng các mục'),
+        ('yêucầucủa', 'yêu cầu của'),
+        ('Hồ sơYêu', 'Hồ sơ Yêu'), ('sơYêu', 'sơ Yêu'),
+    ]
+
+    @classmethod
+    def _fix_vietnamese_spacing(cls, text: str) -> str:
+        """Fix OCR word-merge artifacts by inserting missing spaces."""
+        if not text:
+            return text
+        # Don't modify table rows or markdown headings with REGEX fix
+        # but DO apply dictionary fixes to all lines (safe exact replacements)
+        lines = text.split('\n')
+        fixed = []
+        for line in lines:
+            s = line.strip()
+            # [P2-FIX-v2] Apply dictionary fixes to ALL lines (safe for tables)
+            for wrong, correct in cls._WORD_MERGE_FIXES:
+                if wrong in line:
+                    line = line.replace(wrong, correct)
+            # Skip regex fix for table rows and markdown headings
+            if s.startswith('|') or s.startswith('#'):
+                fixed.append(line)
+                continue
+            # Fix lowercase→uppercase transitions: "vềcải" → "về cải"
+            line = cls._SPACING_RE.sub(r'\1 \2', line)
+            fixed.append(line)
+        return '\n'.join(fixed)
+
+    @staticmethod
+    def _wrap_xml_blocks(text: str) -> str:
+        """[Fix #5b] Detect XML/code content and wrap in a fenced code block.
+
+        Applicable to technical annexes (Phụ lục) containing XML examples (edXML)
+        or structured data that should not be rendered as prose.
+        """
+        import re as _re
+        # Already wrapped?
+        if '```xml' in text or '```json' in text:
+            return text
+        # Detect XML: starts with <?xml or contains edXML namespace tags
+        if _re.search(r'<\?xml|<edXML|<edXMLEnvelope|xmlns:edXML', text):
+            xml_match = _re.search(r'(<\?xml|<edXML)', text)
+            if xml_match:
+                pre = text[:xml_match.start()].rstrip()
+                xml_body = text[xml_match.start():]
+                # Clean up any BASE64_DATA placeholders for readability
+                xml_body = xml_body.replace('[BASE64_DATA]', '... [base64 binary data] ...')
+                result = f"{pre}\n\n```xml\n{xml_body.strip()}\n```" if pre else f"```xml\n{xml_body.strip()}\n```"
+                return result
+        return text
+
     def _generate_markdown(self, rel_path: str, doc_id: str, meta: Dict[str, Any],
                            summary: str, chunks: List[Dict[str, Any]]) -> str:
         """Generate a formatted markdown string with natural document flow."""
@@ -309,6 +443,9 @@ class DataExporter:
             # ── P1: Fix broken GFM table formatting ──
             text = self._fix_table_gfm(text)
 
+            # ── P2: Fix Vietnamese word-merge spacing from OCR ──
+            text = self._fix_vietnamese_spacing(text)
+
             if not text.strip():
                 continue
 
@@ -360,6 +497,69 @@ class DataExporter:
                         lines.append(body_part)
                     lines.append("")
                     continue
+
+            # [P2-QCVN] ALL-CAPS numbered section heading detection
+            # e.g. "1. QUY ĐỊNH CHUNG\nCác từ ngữ..." or "3. TỔ CHỨC THỰC HIỆN\n..."
+            qcvn_section_match = re.match(
+                r'^(\d+\.)\s+([A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴ]'
+                r'[A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴ\s,]+)'
+                r'(?:\n(.+))?$',
+                text, re.DOTALL
+            )
+            if qcvn_section_match:
+                sec_num = qcvn_section_match.group(1).rstrip('.')
+                sec_title = qcvn_section_match.group(2).strip()
+                body_part = (qcvn_section_match.group(3) or '').strip()
+                heading_line = f"### {sec_num}. {sec_title}"
+                if len(heading_line) <= 120:
+                    lines.append(heading_line)
+                    prev_heading = f"{sec_num}. {sec_title}"
+                    if body_part:
+                        lines.append(body_part)
+                    lines.append("")
+                    continue
+
+            # [P2-QCVN] Phụ lục heading detection
+            # e.g. "Phụ lục A\n(Quy định)\n..." or "PHỤ LỤC B\n..."
+            phuluc_match = re.match(
+                r'^((?:Phụ lục|PHỤ LỤC)\s+[A-Z](?:\.\d+)?(?:\s*[-–—]\s*[^\n]{0,60})?)\s*(?:\n(.+))?$',
+                text, re.DOTALL
+            )
+            if phuluc_match:
+                phuluc_title = phuluc_match.group(1).strip()
+                body_part = (phuluc_match.group(2) or '').strip()
+                heading_line = f"### {phuluc_title}"
+                if len(heading_line) <= 120 and phuluc_title != prev_heading:
+                    lines.append(heading_line)
+                    prev_heading = phuluc_title
+                    if body_part:
+                        lines.append(body_part)
+                    lines.append("")
+                    continue
+
+            # [P2] Numbered section inline detection (1.1., 3.2.4. at start of text)
+            # Emit #### heading for numbered sections without Điều/Chương prefix
+            num_section_match = re.match(
+                r'^(\d+\.(?:\d+\.)*\d*\.?)\s+([^\n]{3,80})\n(.+)',
+                text, re.DOTALL
+            )
+            if num_section_match:
+                sec_num = num_section_match.group(1).rstrip('.')
+                sec_title = num_section_match.group(2).strip()
+                body_part = num_section_match.group(3).strip()
+                depth = sec_num.count('.')
+                hashes = '#####' if depth >= 2 else '####'
+                heading_line = f"{hashes} {sec_num}. {sec_title}"
+                if len(heading_line) <= 120:
+                    lines.append(heading_line)
+                    prev_heading = f"{sec_num}. {sec_title}"
+                    if body_part:
+                        lines.append(body_part)
+                    lines.append("")
+                    continue
+
+            # [Fix #5b] Detect XML/code blocks and wrap in code fence
+            text = self._wrap_xml_blocks(text)
 
             lines.append(text)
             lines.append("")

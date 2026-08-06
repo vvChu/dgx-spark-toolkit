@@ -13,12 +13,12 @@ with driver.session() as session:
 
     count = session.run("MATCH (d:Document) WHERE d.doc_type = 'unknown' RETURN count(d)").single()[0]
     print(f"Total unknown doc nodes: {count}")
-    
+
     print("Checking 09/2022")
     res2 = session.run("MATCH (d:Document) WHERE d.id CONTAINS '09/2022' RETURN d.id, d.title, d.doc_type LIMIT 20")
     for r in res2:
         print(f"Node: {r.get('d.id')}, Title: {r.get('d.title')}, Type: {r.get('d.doc_type')}")
-        
+
     count2 = session.run("MATCH (d:Document) WHERE d.id CONTAINS '09/2022' RETURN count(d)").single()[0]
     print(f"Total 09/2022 docs: {count2}")
 

@@ -2,7 +2,9 @@
 Process QCVN_113_2023 directly via pipeline and export the markdown.
 This verifies that the TABLE-FIX and PARA-FIX work end-to-end.
 """
-import sys, os, re
+import sys
+import os
+import re
 sys.path.insert(0, '/app')
 
 from ingestion.pipeline import ProductionIngestor
@@ -31,7 +33,7 @@ for c in chunks:
         lines = text.split('\n')
         for i, ln in enumerate(lines):
             if '|---|' in ln or '| --- |' in ln:
-                preview = '\n'.join(lines[max(0,i-2):i+4])
+                preview = '\n'.join(lines[max(0, i-2):i+4])
                 print(f"\nPage {page} — TABLE detected:")
                 print(preview[:400])
                 break

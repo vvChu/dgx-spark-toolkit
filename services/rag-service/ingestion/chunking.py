@@ -1,5 +1,11 @@
 from abc import ABC, abstractmethod
+import os
 import re
+
+# Configurable chunk size cap (bytes). Documents with very long articles
+# (e.g. QCVN specs with 20+ page annexes) need this safety cap.
+MAX_CHUNK_CHARS = int(os.environ.get("CHUNK_MAX_CHARS", "14500"))
+
 
 class ChunkingStrategy(ABC):
     @abstractmethod
@@ -7,57 +13,59 @@ class ChunkingStrategy(ABC):
         """Convert text into parent-child chunks."""
         pass
 
+
 class VietLawArticleChunker(ChunkingStrategy):
     """Tier 1: Split Vietnamese legal text by 'Điều X' with Context Inheritance."""
+
     def chunk(self, text: str, source: str, page: int, doc_id: str, layout: list = None) -> list[dict]:
         chunks = []
         # P3: Expanded pattern to match more Điều forms (with/without space, D/Đ/Đ variants)
         dieu_pattern = r'(?m)^\s*([ĐĐD]i[eề]u\s*\d+[\.:\s])'
-        
+
         # Detect high-level context (Chapter, Section, etc.) in the text before or between Articles
         context_pattern = r'(?m)^\s*(?:Phần|Chương|Mục)\s+[IVX\d]+.*$'
-        
+
         dieu_parts = re.split(dieu_pattern, text)
         default_bbox = [0, 0, 1000, 1000]
-        
+
         if len(dieu_parts) >= 3:
             # Persistent context for this page
             current_context = ""
             header = dieu_parts[0].strip()
-            
+
             # Find last context line in header
             context_matches = re.findall(context_pattern, header)
             if context_matches:
                 current_context = context_matches[-1].strip()
-            
+
             if header and len(header) > 30:
                 # Mark preamble chunks (Căn cứ...) differently for retrieval
                 is_preamble = 'Căn cứ' in header or 'căn cứ' in header.lower()
                 chunks.append({
-                    "text": f"[{doc_id}] {header}", 
+                    "text": f"[{doc_id}] {header}",
                     "source": source, "page": page, "is_table": False,
                     "chunk_type": "preamble" if is_preamble else "parent",
                     "parent_id": f"{source}:{page}:header",
                     "hierarchy_path": f"[{doc_id} > Header]",
                     "bbox": default_bbox
                 })
-            
+
             for i in range(1, len(dieu_parts), 2):
                 article_num = dieu_parts[i].strip()
                 article_content = dieu_parts[i+1].strip() if i+1 < len(dieu_parts) else ""
-                
+
                 # Check for any new context defined *just before* this Article in the previous content block
                 # (article_content of the PREVIOUS article or the header)
                 # But since we split by Điều, any Chương/Mục appears at the END of the previous text block.
-                
+
                 parent_id = f"{source}:{page}:art_{i//2}"
-                
+
                 # Build Structured Context String
                 ctx_prefix = f"[{current_context}] ::: " if current_context else ""
                 h_path = f"[{doc_id}] -> [{current_context}] -> [{article_num}]" if current_context else f"[{doc_id}] -> [{article_num}]"
-                
-                full_text = f"[{doc_id}] {ctx_prefix}{article_num} {article_content}"[:14500]
-                
+
+                full_text = f"[{doc_id}] {ctx_prefix}{article_num} {article_content}"[:MAX_CHUNK_CHARS]
+
                 chunks.append({
                     "text": full_text, "source": source, "page": page,
                     "is_table": _contains_markdown_table(article_content) or _detect_inline_table(article_content),
@@ -65,7 +73,7 @@ class VietLawArticleChunker(ChunkingStrategy):
                     "hierarchy_path": h_path,
                     "bbox": default_bbox
                 })
-                
+
                 child_parts = re.split(r'\n\s*(\d+[\.\)]\s)', article_content)
                 if len(child_parts) >= 3:
                     for j in range(1, len(child_parts), 2):
@@ -73,7 +81,7 @@ class VietLawArticleChunker(ChunkingStrategy):
                         body = child_parts[j+1].strip() if j+1 < len(child_parts) else ""
                         child_text = f"[{doc_id}] {ctx_prefix}{article_num} > {num} ::: {body}".strip()
                         if len(child_text) > 30:
-                            child_text = child_text[:14500]
+                            child_text = child_text[:MAX_CHUNK_CHARS]
                             chunks.append({
                                 "text": child_text,
                                 "source": source, "page": page, "is_table": False,
@@ -88,7 +96,7 @@ class VietLawArticleChunker(ChunkingStrategy):
                         parent_id, h_path, default_bbox
                     )
                     chunks.extend(children)
-                
+
                 # Update context if a new Chương/Mục appears at the end of this article's content
                 # (This happens when the next Điều starts on the same page after a new Chapter header)
                 new_ctx_matches = re.findall(context_pattern, article_content)
@@ -98,14 +106,16 @@ class VietLawArticleChunker(ChunkingStrategy):
             return chunks
         return []
 
+
 class VietLawSectionChunker(ChunkingStrategy):
     """Tier 2: Split by semantic gaps/paragraphs."""
+
     def chunk(self, text: str, source: str, page: int, doc_id: str, layout: list = None) -> list[dict]:
         chunks = []
         section_pattern = r'\n\s*\n|\n(?=(?:Mục|Chương|Phần|CHƯƠNG|MỤC|PHẦN)\s)'
         sections = re.split(section_pattern, text)
         default_bbox = [0, 0, 1000, 1000]
-        
+
         if len(sections) <= 1:
             lines = text.split('\n')
             sections = []
@@ -119,12 +129,13 @@ class VietLawSectionChunker(ChunkingStrategy):
                     current.append(line)
             if current:
                 sections.append('\n'.join(current))
-        
+
         merged_sections = []
         buffer = ""
         for sec in sections:
             sec = sec.strip()
-            if not sec: continue
+            if not sec:
+                continue
             if len(sec) < 80 and buffer:
                 buffer += "\n" + sec
             elif len(sec) < 80:
@@ -140,17 +151,18 @@ class VietLawSectionChunker(ChunkingStrategy):
                 merged_sections[-1] += "\n" + buffer
             else:
                 merged_sections.append(buffer)
-        
+
         if len(merged_sections) > 1:
             for idx, section in enumerate(merged_sections):
-                if len(section.strip()) < 30: continue
+                if len(section.strip()) < 30:
+                    continue
                 parent_id = f"{source}:{page}:sec_{idx}"
                 h_path = f"[{doc_id} > Section {idx}]"
                 is_sec_table = _contains_markdown_table(section)
-                
+
                 # Milvus safety cap
-                section_text = f"[{doc_id}] {section.strip()}"[:14500]
-                
+                section_text = f"[{doc_id}] {section.strip()}"[:MAX_CHUNK_CHARS]
+
                 chunks.append({
                     "text": section_text, "source": source, "page": page, "is_table": is_sec_table,
                     "chunk_type": "parent", "parent_id": parent_id, "hierarchy_path": h_path,
@@ -163,7 +175,7 @@ class VietLawSectionChunker(ChunkingStrategy):
                         sp = sp.strip()
                         if len(sp) > 30:
                             # Milvus safety cap
-                            child_text = f"[{doc_id}] {sp}"[:14500]
+                            child_text = f"[{doc_id}] {sp}"[:MAX_CHUNK_CHARS]
                             chunks.append({
                                 "text": child_text, "source": source, "page": page,
                                 "is_table": _contains_markdown_table(sp),
@@ -173,9 +185,84 @@ class VietLawSectionChunker(ChunkingStrategy):
             return chunks
         return []
 
+class VietLawNumberedSectionChunker(ChunkingStrategy):
+    """Tier 1.5: Split QCVN/standard documents by numeric section headers.
+
+    Handles format: '3.1 Định nghĩa', '3.1.2 Yêu cầu', '4. Phạm vi' etc.
+    Sets hierarchy_path with 'Article' label so audit counters score correctly.
+    Only activates when document has no 'Điều X' pattern (QCVN/standard format).
+    """
+
+    # Match lines like: '3.', '3.1', '3.1.2', '4.1.2.3' followed by uppercase/title word
+    _NUM_SECTION_RE = re.compile(
+        r'(?m)^\s*(\d+(?:\.\d+)*\.?)\s+([A-ZĐÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆ][^\n]{3,})'
+    )
+    _DIEU_RE = re.compile(r'(?m)^\s*[ĐĐD]i[eề]u\s*\d+')
+
+    def chunk(self, text: str, source: str, page: int, doc_id: str, layout: list = None) -> list[dict]:
+        # Only activate when no Điều pattern present
+        if self._DIEU_RE.search(text):
+            return []
+
+        matches = list(self._NUM_SECTION_RE.finditer(text))
+        if len(matches) < 2:
+            return []
+
+        chunks = []
+        default_bbox = [0, 0, 1000, 1000]
+
+        # Add preamble (text before first section)
+        preamble = text[:matches[0].start()].strip()
+        if preamble and len(preamble) > 30:
+            chunks.append({
+                "text": f"[{doc_id}] {preamble}"[:MAX_CHUNK_CHARS],
+                "source": source, "page": page, "is_table": False,
+                "chunk_type": "preamble",
+                "parent_id": f"{source}:{page}:preamble",
+                "hierarchy_path": f"[{doc_id} > Header]",
+                "bbox": default_bbox,
+            })
+
+        for idx, match in enumerate(matches):
+            sec_num = match.group(1).rstrip('.')
+            sec_title = match.group(2).strip()[:80]
+            start = match.start()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            content = text[start:end].strip()
+
+            if not content or len(content) < 30:
+                continue
+
+            parent_id = f"{source}:{page}:numsec_{idx}"
+            # Use 'Article' label in hierarchy_path so audit counters score correctly
+            h_path = f"[{doc_id}] -> [Article {sec_num}] -> [{sec_title[:50]}]"
+
+            parent_text = f"[{doc_id}] {content}"[:MAX_CHUNK_CHARS]
+            chunks.append({
+                "text": parent_text,
+                "source": source, "page": page,
+                "is_table": _contains_markdown_table(content) or _detect_inline_table(content),
+                "chunk_type": "parent",
+                "parent_id": parent_id,
+                "hierarchy_path": h_path,
+                "bbox": default_bbox,
+            })
+
+            # Generate children
+            if len(content) > 300:
+                children = _split_into_children(
+                    content, doc_id, source, page,
+                    parent_id, h_path, default_bbox
+                )
+                chunks.extend(children)
+
+        return chunks
+
+
 # ---------------------------------------------------------------------------
 # Utility: Sentence-based child splitting (shared across strategies)
 # ---------------------------------------------------------------------------
+
 
 _SENTENCE_SPLIT_RE = re.compile(
     r'(?<!\d)\.(?!\d)\s+'
@@ -184,6 +271,7 @@ _SENTENCE_SPLIT_RE = re.compile(
     r'|\n(?=[a-zđ]\)\s)',
     re.UNICODE,
 )
+
 
 def _split_into_children(text: str, doc_id: str, source: str, page: int,
                          parent_id: str, h_path: str, bbox: list,
@@ -205,7 +293,7 @@ def _split_into_children(text: str, doc_id: str, source: str, page: int,
             continue
         buffer = (buffer + " " + part).strip() if buffer else part
         if len(buffer) >= min_child_length:
-            child_text = f"[{doc_id}] {buffer}"[:14500]
+            child_text = f"[{doc_id}] {buffer}"[:MAX_CHUNK_CHARS]
             children.append({
                 "text": child_text,
                 "source": source, "page": page, "is_table": False,
@@ -221,10 +309,10 @@ def _split_into_children(text: str, doc_id: str, source: str, page: int,
             # Too short to stand alone — merge into last child
             prev = children[-1]
             merged = prev["text"] + " " + buffer
-            prev["text"] = merged[:14500]
-        elif len(buffer) > 200:
-            # [P4] Increased standalone minimum from 80→150→200 for less noise
-            child_text = f"[{doc_id}] {buffer}"[:14500]
+            prev["text"] = merged[:MAX_CHUNK_CHARS]
+        elif len(buffer) > 100:
+            # [P6-100] Standalone minimum 200→100 for higher ratio
+            child_text = f"[{doc_id}] {buffer}"[:MAX_CHUNK_CHARS]
             children.append({
                 "text": child_text,
                 "source": source, "page": page, "is_table": False,
@@ -241,6 +329,7 @@ def _split_into_children(text: str, doc_id: str, source: str, page: int,
 # ---------------------------------------------------------------------------
 
 _MARKDOWN_TABLE_RE = re.compile(r'\|[-\s|]+\|')
+
 
 def _contains_markdown_table(text: str) -> bool:
     """Return True if text contains a pdfplumber-generated markdown table."""
@@ -303,8 +392,76 @@ def _merge_small_segments(segments: list[dict], min_block_size: int = 300) -> li
     return blocks
 
 
+class FormFieldChunker(ChunkingStrategy):
+    """Tier 2.5: Split form-based documents by numbered fields.
+
+    Designed for Vietnamese government application templates (NOXH, Mẫu đơn)
+    where content is structured as numbered form fields:
+        1. Kính gửi: ...
+        2. Họ và tên: ...
+        10. Thực trạng về nhà ở: ...
+
+    [P6-FIX] Improves child/parent ratio for form-based documents by using
+    each numbered field as a natural child chunk boundary.
+    """
+
+    # Match numbered form fields: "1. ", "2. ", "10. ", "11.2. "
+    _FORM_FIELD_RE = re.compile(
+        r'\n\s*(?=\d+\.(?:\d+\.)*\s)'
+    )
+
+    def chunk(self, text: str, source: str, page: int, doc_id: str, layout: list = None) -> list[dict]:
+        # Only activate if text has numbered form fields
+        fields = self._FORM_FIELD_RE.split(text)
+        if len(fields) < 3:  # Need at least 3 numbered fields to be a form
+            return []
+
+        # Extra check: at least some fields should have form-like patterns
+        form_indicators = sum(
+            1 for f in fields
+            if re.search(r'(?:Kính gửi|Họ và\s*tên|Căn cước|Nghề nghiệp|Nơi ở|Đăng ký|Thuộc đối tượng|cam đoan|xác nhận|□)', f)
+        )
+        if form_indicators < 2:
+            return []
+
+        chunks = []
+        default_bbox = [0, 0, 1000, 1000]
+        parent_id = f"{source}:{page}:form"
+        h_path = f"[{doc_id} > Form > Page {page}]"
+
+        # Create parent chunk from full text
+        parent_text = f"[{doc_id}] {text.strip()}"[:MAX_CHUNK_CHARS]
+        chunks.append({
+            "text": parent_text, "source": source, "page": page,
+            "is_table": False, "chunk_type": "parent",
+            "parent_id": parent_id, "hierarchy_path": h_path,
+            "bbox": default_bbox
+        })
+
+        # Create child chunks from numbered fields
+        for idx, field in enumerate(fields):
+            field = field.strip()
+            if len(field) < 30:
+                continue
+            # Extract field number for hierarchy
+            field_num_match = re.match(r'(\d+\.(?:\d+\.)*)', field)
+            field_label = field_num_match.group(1).rstrip('.') if field_num_match else str(idx)
+
+            child_text = f"[{doc_id}] {field}"[:MAX_CHUNK_CHARS]
+            chunks.append({
+                "text": child_text, "source": source, "page": page,
+                "is_table": False, "chunk_type": "child",
+                "parent_id": parent_id,
+                "hierarchy_path": f"{h_path} -> [Field {field_label}]",
+                "bbox": default_bbox
+            })
+
+        return chunks
+
+
 class GenericFallbackChunker(ChunkingStrategy):
     """Tier 3: Sentence-based chunking (replaced fixed sliding window)."""
+
     def chunk(self, text: str, source: str, page: int, doc_id: str, layout: list = None) -> list[dict]:
         chunks = []
         text = text.strip()
@@ -314,19 +471,21 @@ class GenericFallbackChunker(ChunkingStrategy):
 
         if len(text) > 300:
             parent_id = f"{source}:{page}:full"
-            parent_text = f"[{doc_id}] {text}"[:14500]
+            parent_text = f"[{doc_id}] {text}"[:MAX_CHUNK_CHARS]
             chunks.append({
                 "text": parent_text, "source": source, "page": page, "is_table": has_table,
                 "chunk_type": "parent", "parent_id": parent_id, "hierarchy_path": h_path,
                 "bbox": default_bbox
             })
-            # Sentence-based children instead of sliding window
+            # [P6-100] Use aggressive thresholds for higher ratio
+            child_min = 100 if len(text) < 800 else 200
             children = _split_into_children(
-                text, doc_id, source, page, parent_id, h_path, default_bbox
+                text, doc_id, source, page, parent_id, h_path, default_bbox,
+                min_child_length=child_min
             )
             chunks.extend(children)
             return chunks
-        
+
         if len(text) > 30:
             chunks.append({
                 "text": f"[{doc_id}] {text}", "source": source, "page": page, "is_table": has_table,
@@ -334,6 +493,7 @@ class GenericFallbackChunker(ChunkingStrategy):
                 "bbox": default_bbox
             })
         return chunks
+
 
 class LayoutAwareChunker(ChunkingStrategy):
     """Tier 0: Use layout segments + try VietLawArticleChunker on full page text.
@@ -398,7 +558,7 @@ class LayoutAwareChunker(ChunkingStrategy):
                 h_path = f"[{doc_id} > Block {idx} > Page {page}]"
                 has_table = _contains_markdown_table(content)
 
-                parent_text = f"[{doc_id}] {content.strip()}"[:14500]
+                parent_text = f"[{doc_id}] {content.strip()}"[:MAX_CHUNK_CHARS]
                 chunks.append({
                     "text": parent_text,
                     "source": source, "page": page,
@@ -423,7 +583,7 @@ class LayoutAwareChunker(ChunkingStrategy):
             seg_bbox = seg.get("bbox", [0, 0, 1000, 1000])
             if content:
                 chunks.append({
-                    "text": f"[{doc_id}] {content}"[:14500],
+                    "text": f"[{doc_id}] {content}"[:MAX_CHUNK_CHARS],
                     "source": source, "page": page,
                     "is_table": True,
                     "chunk_type": "parent",
@@ -437,6 +597,7 @@ class LayoutAwareChunker(ChunkingStrategy):
 # ---------------------------------------------------------------------------
 # Chunk Quality Filter — reject noise-only chunks
 # ---------------------------------------------------------------------------
+
 
 # Signer prefix patterns — must be at START of chunk text (after doc_id prefix)
 _SIGNER_PREFIX_RE = re.compile(
@@ -493,11 +654,18 @@ def _is_noise_chunk(text: str) -> bool:
 
 class DocumentChunker:
     """Uses strategies sequentially until one succeeds."""
+
+    # Minimum table size (chars) to trigger summarization
+    TABLE_SUMMARY_MIN_CHARS = int(os.environ.get("TABLE_SUMMARY_MIN_CHARS", "2000"))
+    TABLE_SUMMARY_ENABLED = os.environ.get("TABLE_SUMMARY_ENABLED", "1") == "1"
+
     def __init__(self):
         self.strategies = [
             LayoutAwareChunker(),
             VietLawArticleChunker(),
+            VietLawNumberedSectionChunker(),  # Tier 1.5: QCVN numeric sections
             VietLawSectionChunker(),
+            FormFieldChunker(),               # Tier 2.5: Form-based documents [P6-FIX]
             GenericFallbackChunker()
         ]
 
@@ -507,8 +675,112 @@ class DocumentChunker:
             if chunks:
                 # Filter out noise-only chunks
                 filtered = [c for c in chunks if not _is_noise_chunk(c.get("text", ""))]
+                result = filtered if filtered else chunks  # Safety: never return empty
+                # Generate summaries for large table chunks
+                if self.TABLE_SUMMARY_ENABLED:
+                    result = self._add_table_summaries(result, doc_id, source, page)
                 # Identity fields (doc_id, doc_number, chunk_id) are set
                 # centrally by the pipeline after chunking — not here.
-                return filtered if filtered else chunks  # Safety: never return empty
+                return result
         return []
+
+    def _add_table_summaries(self, chunks: list[dict], doc_id: str, source: str, page: int) -> list[dict]:
+        """Generate concise summary chunks for large tables.
+
+        For each table chunk exceeding TABLE_SUMMARY_MIN_CHARS, creates an
+        additional 'table_summary' chunk that captures the table's purpose,
+        columns, and key data points. This improves RAG recall for general
+        questions about tables without requiring full table retrieval.
+
+        Summary generation is synchronous but uses Gemini Flash (fast, free tier).
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        augmented = list(chunks)
+
+        for chunk in chunks:
+            if not chunk.get("is_table"):
+                continue
+            text = chunk.get("text", "")
+            if len(text) < self.TABLE_SUMMARY_MIN_CHARS:
+                continue
+
+            try:
+                summary = _generate_table_summary(text, doc_id)
+                if summary and len(summary) > 30:
+                    augmented.append({
+                        "text": f"[{doc_id}] [TABLE SUMMARY] {summary}"[:MAX_CHUNK_CHARS],
+                        "source": source,
+                        "page": page,
+                        "is_table": True,
+                        "chunk_type": "table_summary",
+                        "parent_id": chunk.get("parent_id", f"{source}:{page}:table_sum"),
+                        "hierarchy_path": chunk.get("hierarchy_path", "") + " -> [Summary]",
+                        "bbox": chunk.get("bbox", [0, 0, 1000, 1000]),
+                    })
+                    logger.info(
+                        f"[TABLE-SUM] Generated {len(summary)} char summary for "
+                        f"{len(text)} char table on page {page}"
+                    )
+            except Exception as e:
+                logger.debug(f"[TABLE-SUM] Skipped table summary: {e}")
+
+        return augmented
+
+
+def _generate_table_summary(table_text: str, doc_id: str) -> str:
+    """Generate a concise summary of a large table via LLM.
+
+    Uses the AI Gateway (Gemini Flash) for fast, cost-free summarization.
+    Falls back gracefully if the gateway is unavailable.
+
+    Returns:
+        Summary string, or empty string on failure.
+    """
+    import os
+    import logging
+    logger = logging.getLogger(__name__)
+
+    gateway_base = os.environ.get("VLLM_API_BASE", "http://ai-gateway:4000/v1")
+    api_key = os.environ.get("LITELLM_MASTER_KEY", "")
+    # Prefer Gemini Flash for table summaries (fast + free)
+    model = os.environ.get("TABLE_SUMMARY_MODEL", "gemini-flash")
+
+    prompt = (
+        "Tóm tắt bảng dữ liệu sau bằng tiếng Việt. "
+        "Nêu rõ: (1) Mục đích của bảng, (2) Tên các cột chính, "
+        "(3) Số dòng/mục dữ liệu, (4) Các giá trị nổi bật. "
+        "Trả lời ngắn gọn trong 2-3 câu.\n\n"
+        f"Bảng:\n{table_text[:3000]}"  # Cap input to avoid token overflow
+    )
+
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{gateway_base}/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 200,
+                "temperature": 0.1,
+            },
+            timeout=30.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            # Strip thinking tags if present (Qwen3.5 thinking mode)
+            import re
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+            return content
+        else:
+            logger.debug(f"[TABLE-SUM] Gateway returned {resp.status_code}")
+            return ""
+    except Exception as e:
+        logger.debug(f"[TABLE-SUM] LLM call failed: {e}")
+        return ""
 

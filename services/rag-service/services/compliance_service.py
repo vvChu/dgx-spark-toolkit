@@ -11,6 +11,7 @@ from core.llm_client import call_llm_json
 
 logger = logging.getLogger(__name__)
 
+
 class ComplianceService:
     def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None):
         self.milvus_repo = milvus_repo
@@ -32,13 +33,13 @@ class ComplianceService:
         search_query = f"Quy định, bắt buộc, nghiêm cấm về {', '.join(keywords)}"
         # Filter for ACTIVE documents only
         expr = "validity_status == 'ACTIVE'"
-        
+
         # Get embeddings from the shard model
         from services.retrieval_service import get_embedding_model
         model = get_embedding_model()
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(None, model.embed_query, search_query)
-        
+
         retrieved_chunks = await self.milvus_repo.hybrid_search(
             query_vector=embeddings["dense"],
             sparse_vector=embeddings["sparse"],
@@ -56,7 +57,7 @@ class ComplianceService:
 
         # 3. LLM Analysis: Compare profile vs context
         report = await self._generate_compliance_report(project_profile, context, focus_area)
-        
+
         return {
             "focus_area": focus_area,
             "keywords_analyzed": keywords,

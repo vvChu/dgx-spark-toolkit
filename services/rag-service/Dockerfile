@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgl1 \
     libglib2.0-0 \
+    libreoffice-nogui \
     && rm -rf /var/lib/apt/lists/*
 
 # Install application dependencies
@@ -26,9 +27,10 @@ RUN grep -v "torch" requirements.txt > requirements_no_torch.txt && \
 COPY . .
 
 # Non-root user — rag-service uses CPU-only reranker/embedding, no CUDA perms needed
-RUN useradd -m -u 1000 appuser && \
+RUN (useradd -m -o -u 1000 appuser 2>/dev/null || true) && \
     mkdir -p /home/appuser/.cache/huggingface && \
-    chown -R appuser:appuser /app /home/appuser/.cache
+    chown -R $(id -un 1000):$(id -gn 1000) /app /home/appuser/.cache 2>/dev/null || \
+    chown -R 1000:1000 /app
 USER appuser
 
 # Reset entrypoint from base image

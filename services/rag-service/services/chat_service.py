@@ -1,10 +1,12 @@
 import httpx
 import logging
+import uuid
 
 from repositories.milvus_repo import MilvusRepository
 from repositories.neo4j_repo import Neo4jRepository
 from services.retrieval_service import RetrievalService
 from retrieval.query_rewriter import rewrite_query
+from retrieval.query_tracer import QueryTracer
 from core.llm_client import call_llm
 from core.prompts import get_system_prompt
 from core.config import get_settings
@@ -16,74 +18,181 @@ class ChatService:
     """
     Service layer for chat/generation functionality.
     Orchestrates query rewriting, retrieval, and LLM generation.
+    Integrates Context Lake: session memory, reasoning traces,
+    context accumulation, and optional agentic retrieval.
     """
 
     def __init__(
         self,
         milvus_repo: MilvusRepository,
         neo4j_repo: Neo4jRepository,
-        http_client: httpx.AsyncClient
+        http_client: httpx.AsyncClient,
+        session_memory=None,
+        trace_store=None,
+        context_accumulator=None,
     ):
         self.milvus_repo = milvus_repo
         self.neo4j_repo = neo4j_repo
         self.http_client = http_client
         self.retrieval_service = RetrievalService(milvus_repo, neo4j_repo)
+        self.session_memory = session_memory
+        self.trace_store = trace_store
+        self.context_accumulator = context_accumulator
 
     async def generate_response(
         self,
         query: str,
         history: list[dict] | None = None,
         language: str = "vi",
-        model: str | None = None
+        model: str | None = None,
+        session_id: str | None = None,
+        use_agentic: bool = False,
     ) -> dict:
-        """
-        Generate a chat response with retrieved context.
+        """Generate a chat response with retrieved context.
 
-        Args:
-            query: User query string
-            history: Conversation history (list of message dicts)
-            language: Language code for system prompt (default "vi")
-            model: Target LLM model (defaults to VLLM_MODEL from settings)
-
-        Returns:
-            Dict with keys: answer, context, usage, cached
+        Orchestrates 6 sub-steps:
+          1. Load session context from Redis
+          2. Build message array
+          3. Retrieve relevant documents (standard or agentic)
+          4. Accumulate cross-turn context
+          5. Generate LLM answer
+          6. Store session turn + trace
         """
         settings = get_settings()
+        session_id = session_id or str(uuid.uuid4())[:12]
+        tracer = QueryTracer(query, session_id=session_id)
+        target_model = model or settings.VLLM_MODEL
 
-        # Build messages
-        system_content = get_system_prompt(language)
-        messages = [{"role": "system", "content": system_content}]
-        if history:
-            messages.extend(history[-6:])
-        messages.append({"role": "user", "content": query})
+        # 1. Session Memory
+        session_context = await self._load_session_context(session_id, tracer)
 
-        target_model = model if model else settings.VLLM_MODEL
+        # 2. Build messages
+        messages = self._build_messages(query, history, session_context, language)
 
-        # 1. Query Rewriting (Fast 4B model)
-        rewritten_query = await rewrite_query(query, self.http_client)
+        # 3. Retrieve
+        all_context = await self._retrieve_context(query, tracer, session_id, use_agentic)
 
-        # 2. Semantic Search & Graph Context
-        # We increase search limit to 15 to give the reranker more candidates,
-        # but only take the top results for LLM context.
-        search_res = await self.retrieval_service.search(
-            query=rewritten_query,
-            limit=15,
-            use_reranker=True
-        )
-        all_context_used = search_res["results"]
+        # 4. Accumulate
+        all_context = await self._accumulate_context(session_id, all_context, tracer)
 
-        # Format context for LLM
-        context_str = "\n\n".join([
-            f"[Source: {r.get('doc_number', 'unknown')}#page={r['page']}&rect={r.get('bbox', [0,0,1000,1000])}]\n{r['text']}"
-            for r in all_context_used
-        ])
-
-        # 3. Final Reasoning (High-Power 35B model)
+        # 5. Generate
         messages.append({
             "role": "system",
-            "content": f"Dưới đây là các đoạn trích từ văn bản pháp luật liên quan:\n\n{context_str}\n\nHãy trả lời câu hỏi dựa TRÊN CÁC NGUỒN TRÊN. Trích dẫn chính xác mã nguồn [Source: ID#page=X&rect=...] cho mỗi thông tin."
+            "content": self._format_context(all_context),
         })
+        answer = await self._generate_answer(messages, target_model, tracer)
 
+        # 6. Store turn + trace
+        trace_data = await self._store_turn(
+            session_id, query, answer, all_context, target_model, tracer
+        )
+
+        return {
+            "answer": answer,
+            "context": all_context[:10],
+            "usage": None,
+            "cached": False,
+            "session_id": session_id,
+            "trace": trace_data,
+        }
+
+    # ── Sub-steps ─────────────────────────────────────────────────────
+
+    async def _load_session_context(self, session_id: str, tracer: QueryTracer) -> str:
+        """Load past conversation context from session memory."""
+        if not self.session_memory:
+            return ""
+        tracer.start_step("session_memory_load")
+        try:
+            ctx = await self.session_memory.get_context_summary(session_id) or ""
+        except Exception as e:
+            logger.warning("Session memory load failed: %s", e)
+            ctx = ""
+        tracer.end_step(has_context=bool(ctx))
+        return ctx
+
+    def _build_messages(
+        self, query: str, history: list[dict] | None,
+        session_context: str, language: str,
+    ) -> list[dict]:
+        """Construct the OpenAI-style messages array."""
+        messages = [{"role": "system", "content": get_system_prompt(language)}]
+        if session_context:
+            messages.append({"role": "system", "content": session_context})
+        # Add client-sent history only when no session context
+        if history and not session_context:
+            messages.extend(history[-6:])
+        messages.append({"role": "user", "content": query})
+        return messages
+
+    async def _retrieve_context(
+        self, query: str, tracer: QueryTracer,
+        session_id: str, use_agentic: bool,
+    ) -> list[dict]:
+        """Execute standard or agentic retrieval."""
+        rewritten_query = await rewrite_query(query, self.http_client)
+
+        if use_agentic:
+            tracer.start_step("agentic_retrieval")
+            try:
+                from retrieval.agentic_retriever import AgenticRetriever
+                agentic = AgenticRetriever(self.retrieval_service, self.http_client)
+                result = await agentic.retrieve(query, tracer=tracer, session_id=session_id)
+                tracer.end_step(hops=result.hops, sub_queries=result.sub_queries)
+                return result.results
+            except Exception as e:
+                logger.warning("Agentic retrieval failed, falling back: %s", e)
+
+        # Standard retrieval (also fallback from failed agentic)
+        search_res = await self.retrieval_service.search(
+            query=rewritten_query, limit=15, use_reranker=True,
+            session_id=session_id, tracer=tracer,
+        )
+        return search_res["results"]
+
+    async def _accumulate_context(
+        self, session_id: str, results: list[dict], tracer: QueryTracer,
+    ) -> list[dict]:
+        """Merge current results with past session context via Context Lake."""
+        if not self.context_accumulator or not session_id:
+            return results
+
+        tracer.start_step("context_accumulate")
+        try:
+            await self.context_accumulator.add_retrieval(
+                session_id, results,
+                [r.get("score", 0.5) for r in results],
+            )
+            accumulated = await self.context_accumulator.get_accumulated_context(session_id)
+            seen_keys = {r.get("doc_number", "") + str(r.get("page", 0)) for r in results}
+            for acc in accumulated:
+                key = acc.get("doc_number", "") + str(acc.get("page", 0))
+                if key not in seen_keys:
+                    results.append(acc)
+                    seen_keys.add(key)
+            tracer.end_step(accumulated_count=len(accumulated))
+        except Exception as e:
+            logger.warning("Context accumulator failed: %s", e)
+            tracer.end_step(error=str(e))
+        return results
+
+    @staticmethod
+    def _format_context(results: list[dict]) -> str:
+        """Format retrieved results as a context string for the LLM."""
+        context_str = "\n\n".join([
+            f"[Source: {r.get('doc_number', 'unknown')}#page={r.get('page', 0)}&rect={r.get('bbox', [0, 0, 1000, 1000])}]\n{r.get('text', '')}"
+            for r in results
+        ])
+        return (
+            f"Dưới đây là các đoạn trích từ văn bản pháp luật liên quan:\n\n{context_str}\n\n"
+            f"Hãy trả lời câu hỏi dựa TRÊN CÁC NGUỒN TRÊN. Trích dẫn chính xác mã nguồn [Source: ID#page=X&rect=...] cho mỗi thông tin."
+        )
+
+    async def _generate_answer(
+        self, messages: list[dict], target_model: str, tracer: QueryTracer,
+    ) -> str:
+        """Call the LLM and return the generated answer."""
+        tracer.start_step("generate")
         enable_thinking = "35b" in target_model.lower() or "core" in target_model.lower()
         extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
 
@@ -99,10 +208,27 @@ class ChatService:
                 **extra,
             },
         )
+        tracer.end_step(model=target_model, answer_length=len(answer))
+        return answer
 
-        return {
-            "answer": answer,
-            "context": all_context_used[:10],
-            "usage": None,
-            "cached": False
-        }
+    async def _store_turn(
+        self, session_id: str, query: str, answer: str,
+        results: list[dict], target_model: str, tracer: QueryTracer,
+    ) -> dict:
+        """Store session memory turn and finalize query trace."""
+        if self.session_memory:
+            try:
+                sources = [r.get("doc_number", "") for r in results[:5] if r.get("doc_number")]
+                await self.session_memory.add_turn(session_id, query, answer, sources)
+            except Exception as e:
+                logger.warning("Session memory save failed: %s", e)
+
+        trace_data = tracer.finalize(result_count=len(results), model=target_model)
+
+        if self.trace_store:
+            try:
+                await self.trace_store.store(trace_data)
+            except Exception as e:
+                logger.warning("Trace store failed: %s", e)
+
+        return trace_data

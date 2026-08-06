@@ -51,5 +51,6 @@ VÍ DỤ:
 Câu hỏi gốc: {original_query}
 Câu truy vấn chuẩn hóa:"""
 
+
 def get_system_prompt(language: str) -> str:
     return SYSTEM_PROMPT_EN if language == "en" else SYSTEM_PROMPT_VI
