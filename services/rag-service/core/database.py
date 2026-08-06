@@ -217,13 +217,20 @@ async def get_compliance_service(
     return ComplianceService(milvus_repo, graph_rag, http_client)
 
 
-async def get_retrieval_service(
+async def get_search_pipeline(
     milvus_repo: MilvusRepository = Depends(get_milvus_repo),
     neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
-) -> "RetrievalService":
-    """Dependency to inject the RetrievalService."""
-    from services.retrieval_service import RetrievalService
-    return RetrievalService(milvus_repo, neo4j_repo)
+):
+    """Dependency to inject deep SearchPipeline."""
+    from retrieval.search_pipeline import SearchPipeline
+    return SearchPipeline(milvus_repo, neo4j_repo)
+
+
+async def get_retrieval_service(
+    pipeline = Depends(get_search_pipeline),
+):
+    """Dependency alias for backward compatibility."""
+    return pipeline
 
 
 async def get_chat_service(

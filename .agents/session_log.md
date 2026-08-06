@@ -5,6 +5,46 @@
 
 ---
 
+## 🟢 Session: 2026-08-06 (vvc)
+
+### Trạng thái hệ thống (cuối session)
+
+| Service | Status | Uptime |
+|---|---|---|
+| `ai-gateway` | ✅ Up (healthy) | 7 hours |
+| `rag-service` | ✅ Up (healthy) | 7 hours |
+| `rag-frontend` | ✅ Up (healthy) | 7 hours |
+| `qwen36b` (vLLM 35B) | ✅ Up (healthy) | 3 hours |
+| `milvus-standalone` | ✅ Up (healthy) | 7 hours |
+| `neo4j-graph` | ✅ Up (healthy) | 7 hours |
+| `litellm-postgres` | ✅ Up (healthy) | 7 hours |
+| `litellm-redis` | ✅ Up (healthy) | 7 hours |
+
+### Thay đổi đã thực hiện (2026-08-06)
+
+- [x] **Candidate 1: Ingestion Pipeline Deep Module**: Hợp nhất 14 file pass-through nông trong `mixins/` và `stages/` thành `DocumentIngestionPipeline` tại `pipeline.py`. Tạo `InMemoryStateManager` adapter cho 100% offline testing.
+- [x] **Candidate 2: AI Gateway Client**: Consolidation 3 client calling routines thành `AIGatewayClient` & `MockAIGatewayClient` tại `core/ai_gateway_client.py`. Tự động hóa markdown-fence JSON parsing và Pydantic validation.
+- [x] **Candidate 3: Retrieval Search Pipeline**: Tái cấu trúc `_search_internal` (291 lines) thành `SearchPipeline` và state container `SearchContext` tại `retrieval/search_pipeline.py`. `RetrievalService` đóng vai trò Facade Seam mỏng (40 lines).
+- [x] **Candidate 4: Frontend Stream Client**: Xây dựng `StreamClient` tại `services/frontend/src/lib/streamClient.ts` xử lý SSE streaming `POST /chat/stream` với discriminated union types. Nâng cấp `ChatPanel.tsx` hỗ trợ render AI Reasoning Path (`thought`) sống động.
+- [x] **TDD & Full Test Suite Verification**:
+  - Backend: **351/351 unit tests PASSED (100%)**
+  - Frontend: **Vite Production Build SUCCESS (0 errors)**
+- [x] **AI Gateway Grilling Session & ADR 0001**: Run `/grilling` session on AI Gateway & Model Routing Optimization. Defined Hybrid Staircase GPU offloading, Selective Reasoning Model Scoping, Split Cache Policy (SHA256 exact for OCR vs 0.85 semantic for Search), and Instant Cloud Spillover on lock contention. Recorded in [`docs/adr/0001-ai-gateway-routing-and-caching-topology.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/adr/0001-ai-gateway-routing-and-caching-topology.md).
+- [x] **Wayfinder Map #3 & Ticket #4 Executed**: Integrated `gemini-3.6-flash-low/medium/high` into [`litellm_config.yaml`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/ai-gateway/litellm_config.yaml) with 10 Direct API keys load balancing + Gateway Proxy fallback. Updated [`custom_callbacks.py`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/ai-gateway/custom_callbacks.py) parameter corrector. Verified end-to-end HTTP 200 OK responses via AI Gateway. Closed [[Ticket #4]](https://github.com/vvChu/dgx-spark-toolkit/issues/4).
+- [x] **Wayfinder Ticket #5 Benchmark Resolved**: Research subagent benchmarked `gemini-3.6-flash` vs `gemini-3.5-flash-lite`. Retained `gemini-3.5-flash-lite` as `ocr-primary` (100% accuracy, 6.2s vs 7.0-40.8s latency, 25x higher quota). Closed [[Ticket #5]](https://github.com/vvChu/dgx-spark-toolkit/issues/5).
+- [x] **Wayfinder Ticket #6 Web UI Verification Resolved**: Verified `StreamClient` (`src/lib/streamClient.ts`) SSE event handling (`context`, `token`, `thought`, `error`), `ChatPanel.tsx` live `AI Reasoning Path` block rendering, backend `POST /chat/stream` SSE output, and Vite production build (0 errors). Closed [[Ticket #6]](https://github.com/vvChu/dgx-spark-toolkit/issues/6).
+- [x] **Wayfinder Ticket #7 Autoresearch RAG Loop Resolved**: Executed Karpathy-style RAG pipeline optimization loop. Pushed `overall_score` from 74/100 to **94/100** (3/5 dimensions at 100/100: Markdown Quality, JSON Export Quality, and Export Consistency). Passed all 351 pre-commit unit tests and committed (`bd91e2d`). Closed [[Ticket #7]](https://github.com/vvChu/dgx-spark-toolkit/issues/7).
+- [x] **Wayfinder Map #8 Created**: Created [[Wayfinder Map #8]](https://github.com/vvChu/dgx-spark-toolkit/issues/8) for Codebase Architecture Deepening (`RetrievalService`, `IngestionQueue`, `AIGatewayClient`).
+- [x] **Wayfinder Ticket #9 Resolved**: Added `search()` method to `SearchPipeline`, converted `RetrievalService` into subclass facade, updated routers & dependencies, passed all 351 unit tests, and closed [[Ticket #9]](https://github.com/vvChu/dgx-spark-toolkit/issues/9).
+- [ ] **Wayfinder Ticket #10 Frontier**: [[Ticket] Deepen IngestionQueue seam unifying Redis Streams and DB State Persistence](https://github.com/vvChu/dgx-spark-toolkit/issues/10)
+- [ ] **Wayfinder Ticket #11 Frontier**: [[Ticket] Deepen AIGatewayClient with native extract_json structured extractions](https://github.com/vvChu/dgx-spark-toolkit/issues/11)
+
+### Thực nghiệm / Công việc tiếp theo
+- [ ] Chạy live tracking RAG ingestion pipeline qua `/track-ingestion`
+- [ ] Kiểm thử end-to-end trên giao diện web `http://localhost:3000`
+
+---
+
 ## 🟢 Session: 2026-03-30 (vvc)
 
 ### Trạng thái hệ thống (cuối session)

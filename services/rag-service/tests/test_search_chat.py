@@ -3,7 +3,10 @@ from unittest.mock import AsyncMock
 
 from starlette.testclient import TestClient
 
-from core.database import get_http_client, get_milvus_repo, get_neo4j_repo, get_retrieval_service, get_chat_service
+from core.database import (
+    get_http_client, get_milvus_repo, get_neo4j_repo,
+    get_retrieval_service, get_search_pipeline, get_chat_service,
+)
 from main import app
 
 
@@ -38,6 +41,7 @@ def test_search_endpoint_success(client):
         return fake_service
 
     app.dependency_overrides[get_retrieval_service] = _override_retrieval
+    app.dependency_overrides[get_search_pipeline] = _override_retrieval
 
     response = client.post(
         "/search",
@@ -60,6 +64,7 @@ def test_search_endpoint_validation_error(client):
         return fake_service
 
     app.dependency_overrides[get_retrieval_service] = _override_retrieval
+    app.dependency_overrides[get_search_pipeline] = _override_retrieval
 
     response = client.post("/search", json={"limit": 3})
 
