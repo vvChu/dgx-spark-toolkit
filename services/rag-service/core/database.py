@@ -237,7 +237,7 @@ async def get_search_pipeline(
 
 
 async def get_retrieval_service(
-    pipeline = Depends(get_search_pipeline),
+    pipeline=Depends(get_search_pipeline),
 ):
     """Dependency alias for backward compatibility."""
     return pipeline
