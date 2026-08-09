@@ -32,7 +32,7 @@ ai = OpenAI(
     timeout=120.0,
 )
 
-DEFAULT_MODEL = os.environ.get("AI_MODEL", "qwen3.5-35b")
+DEFAULT_MODEL = os.environ.get("AI_MODEL", "qwen-local-primary")
 
 
 def chat(
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     # List models
     print("📋 Available models:")
     for m in list_models():
-        prefix = "🖥️ " if m in ("qwen3.5-35b", "rag-core", "rag-light") else "☁️ "
+        prefix = "🖥️ " if m in ("qwen-local-primary", "rag-core", "rag-light") else "☁️ "
         print(f"   {prefix} {m}")
 
     # Quick chat

@@ -1,6 +1,6 @@
 # LLM API Integration Guide
 
-## AI Gateway (Recommended — 22 Models)
+## AI Gateway (Recommended — 44 Models)
 
 All AI access should go through the **AI Gateway** for unified routing, fallbacks, and cloud model support.
 
@@ -28,27 +28,43 @@ curl http://localhost:8090/v1/chat/completions \
 ### 🖥️ Local GPU — Private / Offline
 | Model | Description |
 |-------|-------------|
-| `qwen-local-primary` | Qwen 3.6 35B — main local model |
-| `rag-core` | Alias of qwen-local-primary (RAG pipeline) |
-| `rag-light` | Qwen 3.5 9B — lightweight fallback |
+| `qwen-local-primary` | Floating role alias for main local GPU model (Qwen 3.5 35B FP8) |
+| `qwen-3.5-35b` | Version-specific alias for Qwen 3.5 35B |
+| `rag-core` | Alias of `qwen-local-primary` (RAG pipeline) |
+| `rag-light` | Qwen 3.5 9B / fallback routing — lightweight fallback |
+
+> 💡 **Cấu hình Động & Kiểm định Tự động**:
+> - Tên model và đường dẫn trọng số được quản lý động qua file `.env` (`LOCAL_PRIMARY_LLM_DIR`, `LOCAL_PRIMARY_SERVED_NAME`).
+> - Chạy kiểm định tự động tính khớp giữa đĩa và AI Gateway: `python3 scripts/verify_local_model_integrity.py`
+>
+> ⚠️ **Warning**: Do NOT use legacy unmapped aliases like `qwen3.5-35b` or `Qwen-3.6-35B-NVFP4`. Use `qwen-local-primary` (or `qwen-3.5-35b`) instead.
 
 ### 🏎️ Speed Tier (< 1.5s)
-| Model | Best For |
-|-------|----------|
-| `gemini-3-flash` | Fast multimodal + reasoning |
-| `gemini-3.1-flash-lite` | Cheapest & fastest Gemini |
-| `gemma-3-27b` | Free tier, high-volume tasks |
-| `claude-haiku-4` | Fast Claude |
-| `claude-haiku-4-5` | Faster Claude, better quality |
+| Model | Latency | Best For |
+|-------|---------|----------|
+| `gemini-3.5-flash-low` ⚡ | **0.66s** | Ultra-fast text completion & summarization |
+| `gemini-3-flash` | **0.96s** | Fast multimodal + reasoning |
+| `gemini-3.6-flash-low` | **1.11s** | High-speed structured extraction |
+| `gemini-3.1-flash-lite` | **1.22s** | Cheapest & fastest Gemini (OCR primary) |
+| `gemini-3.5-flash-lite` | **1.35s** | Backup lightweight Flash model |
+| `claude-haiku-4` | **1.40s** | Fast Claude |
+| `claude-haiku-4-5` | **1.45s** | Faster Claude, better quality |
+
+### 🖼️ Image Generation Tier
+| Model | Endpoint | Description |
+|-------|----------|-------------|
+| `gemini-3-pro-image` | `/v1/images/generations` | High-quality image generation via Imagen/Gemini |
+| `gemini-3.1-flash-image` | `/v1/images/generations` | Fast image generation & editing |
 
 ### 🛠️ RAG Virtual Aliases (Free Tier Farm)
-Mô hình "ảo" (Alias) được Gateway tự động định tuyến để tận dụng Quota Free của Google. Hãy dùng các alias này cho các logic lập trình thay vì gọi trực tiếp model thật để không sập Rate Limit.
-| Alias / Bí Danh | Model Thật (Backend) | Công Dụng (Best For) | Quota System (10 Keys) |
+Mô hình "ảo" (Alias) được Gateway tự động định tuyến để tận dụng Quota Free của Google & Proxy Gateway.
+| Alias / Bí Danh | Model Thật (Backend) | Công Dụng (Best For) | Quota & Routing Policy |
 |-------|----------|----------|----------|
+| `ocr-primary` | Gemini 3.1 Flash Lite | Cloud OCR Vision (Backup: `ocr-fallback` gemini-3.5-flash-lite) | **10 Keys x 500 RPD** |
+| `ocr-fallback` | Gemini 3.5 Flash Lite | OCR Secondary Backup | **10 Keys x 500 RPD** |
 | `text-gemma` | Gemma 3 27B | High-volume NLP (Sinh câu hỏi, Summarize) | **144,000 req/ngày** |
 | `text-light-gemma` | Gemma 3 12B | Bóc tách siêu dữ liệu (Metadata, Tagging) | **144,000 req/ngày** |
 | `reasoning-gemma` | Gemma 4 31B | Logical Graph (Neo4j), Structured JSON | **15,000 req/ngày** |
-| `ocr-primary` | Gemini 3.1 Flash Lite| Cloud OCR Vision (Trích xuất văn bản từ Ảnh) | **5,000 req/ngày** |
 
 ### 🧠 Balanced Tier (1–3s)
 | Model | Best For |
@@ -66,6 +82,7 @@ Mô hình "ảo" (Alias) được Gateway tự động định tuyến để t�
 ### 🔬 Deep Reasoning (7–13s, 1M context)
 | Model | Best For |
 |-------|----------|
+| `gemini-3.6-flash-high` | High-reasoning Flash model |
 | `gemini-3.1-pro` | Full codebase analysis, research |
 | `gemini-3.1-pro-high` | ARC-AGI-2, novel problems |
 | `gemini-3.1-pro-low` | Cost-efficient Gemini Pro |
@@ -99,11 +116,14 @@ print(response.choices[0].message.content)
 
 Use only when you need raw vLLM access without gateway routing:
 
+- **Port 8004 (Active)**: Direct vLLM primary serving `qwen-local-primary` (and `rag-core`).
+- **Port 8003 (Inactive)**: vLLM fallback instance (currently offline).
+
 ```bash
-# Qwen 3.6 35B (port 8004)
+# Qwen 35B Direct vLLM Primary (port 8004)
 curl http://localhost:8004/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "rag-core", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"model": "qwen-local-primary", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
 > ⚠️ Direct vLLM access has no fallbacks and no cloud models. Prefer the gateway.
