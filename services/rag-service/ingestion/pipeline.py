@@ -549,12 +549,15 @@ class DocumentIngestionPipeline:
                     for msg in messages:
                         msg_id = msg.get("msg_id")
                         file_path = msg.get("file_path")
-                        try:
-                            res = self.safe_process(file_path)
-                            doc_id = res.doc_id if hasattr(res, "doc_id") else ""
-                            queue.acknowledge(msg_id, file_path=file_path, doc_id=doc_id)
-                        except Exception as e:
-                            queue.nack(msg_id, file_path=file_path, error=str(e))
+                        if msg_id and file_path:
+                            try:
+                                res = self.safe_process(file_path)
+                                doc_id = res.doc_id if hasattr(res, "doc_id") else ""
+                                queue.acknowledge(
+                                    msg_id, file_path=file_path, doc_id=doc_id
+                                )
+                            except Exception as e:
+                                queue.nack(msg_id, file_path=file_path, error=str(e))
                 else:
                     time.sleep(1)
         except Exception as e:

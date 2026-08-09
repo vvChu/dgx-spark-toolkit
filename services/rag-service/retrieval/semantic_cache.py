@@ -136,7 +136,8 @@ class SemanticCache:
                 if l2_result is not None:
                     # Promote to L1
                     self.set(query, query_embedding, l2_result, filter_key=filter_key, skip_redis=True)
-                    self._hits += 1
+                    with self._lock:
+                        self._hits += 1
                     logger.info("Semantic cache L2 (Redis) hit, promoted to L1.")
                     return l2_result
             except Exception as e:
@@ -155,30 +156,31 @@ class SemanticCache:
         if not entries:
             return None
 
-        norm_q = np.linalg.norm(query_embedding)
-        if norm_q == 0:
-            return None
-
         for raw_entry in entries:
             try:
                 entry = json.loads(raw_entry)
-                # Skip entries with different filter keys
                 if entry.get("filter_key", "") != filter_key:
                     continue
-                cached_emb = np.array(entry["embedding"], dtype=np.float32)
-                norm_c = np.linalg.norm(cached_emb)
-                if norm_c == 0:
+
+                cached_emb = np.array(entry.get("embedding", []), dtype=np.float32)
+                if len(cached_emb) != len(query_embedding) or len(cached_emb) == 0:
                     continue
-                similarity = float(np.dot(query_embedding, cached_emb) / (norm_q * norm_c))
-                if similarity >= self.threshold:
-                    return entry["results"]
-            except (json.JSONDecodeError, KeyError, ValueError):
+
+                score = float(np.dot(query_embedding, cached_emb) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(cached_emb) + 1e-9
+                ))
+                if score >= self.threshold:
+                    return entry.get("results")
+            except Exception:
                 continue
 
         return None
 
     def set(self, query: str, query_embedding: np.ndarray, results, filter_key: str = "", skip_redis: bool = False):
         """Store results in L1 (always) and L2 Redis (if available)."""
+        if len(query_embedding) == 0:
+            return
+
         # L1: in-memory
         with self._lock:
             if len(self._keys) >= self.max_size:
@@ -196,15 +198,14 @@ class SemanticCache:
             self._results.append(results)
             self._timestamps.append(time.monotonic())
 
-            if len(query_embedding) > 0:
-                emb = query_embedding.reshape(1, -1)
-                norm = np.linalg.norm(query_embedding)
-                if self._embeddings is None:
-                    self._embeddings = emb
-                    self._norms = np.array([norm])
-                else:
-                    self._embeddings = np.vstack([self._embeddings, emb])
-                    self._norms = np.append(self._norms, norm)
+            emb = query_embedding.reshape(1, -1)
+            norm = np.linalg.norm(query_embedding)
+            if self._embeddings is None:
+                self._embeddings = emb
+                self._norms = np.array([norm])
+            else:
+                self._embeddings = np.vstack([self._embeddings, emb])
+                self._norms = np.append(self._norms, norm)
 
         # L2: Redis persistent (skip if this is a L2→L1 promotion)
         if self._redis and not skip_redis and len(query_embedding) > 0:

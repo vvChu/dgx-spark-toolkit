@@ -300,8 +300,6 @@ class ChatService:
                         continue
                     data_str = line[6:]
                     if data_str.strip() == "[DONE]":
-                        yield "data: [DONE]\n\n"
-
                         answer_text = "".join(full_answer)
                         tracer.end_step(model=target_model, answer_length=len(answer_text))
 
@@ -310,6 +308,7 @@ class ChatService:
                         )
 
                         yield f"data: {json.dumps({'type': 'trace', 'data': trace_data}, ensure_ascii=False, default=str)}\n\n"
+                        yield "data: [DONE]\n\n"
                         return
 
                     try:
