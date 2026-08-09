@@ -540,18 +540,21 @@ class DocumentIngestionPipeline:
         """Worker loop entry point."""
         logger.info("Starting DocumentIngestionPipeline worker loop...")
         try:
-            from ingestion.queue import RedisQueue
-            queue = RedisQueue()
-            logger.info("Connected to Redis Queue ✓")
+            from ingestion.ingestion_queue import IngestionQueue
+            queue = IngestionQueue()
+            logger.info("Connected to IngestionQueue ✓")
             while True:
                 messages = queue.claim_next(count=1, block_ms=5000)
                 if messages:
-                    for msg_id, file_path in messages:
+                    for msg in messages:
+                        msg_id = msg.get("msg_id")
+                        file_path = msg.get("file_path")
                         try:
-                            self.safe_process(file_path)
-                            queue.ack(msg_id)
+                            res = self.safe_process(file_path)
+                            doc_id = res.doc_id if hasattr(res, "doc_id") else ""
+                            queue.acknowledge(msg_id, file_path=file_path, doc_id=doc_id)
                         except Exception as e:
-                            queue.nack(msg_id, str(e))
+                            queue.nack(msg_id, file_path=file_path, error=str(e))
                 else:
                     time.sleep(1)
         except Exception as e:

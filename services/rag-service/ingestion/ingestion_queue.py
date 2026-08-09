@@ -1,17 +1,16 @@
-"""Deep IngestionQueue module consolidating Redis Streams queueing and DB state tracking."""
+"""Deep IngestionQueue module consolidating Redis Streams & DB state."""
 import logging
-import os
 import time
 from typing import Optional, List, Dict, Any
 
 from ingestion.queue import RedisQueue
-from ingestion.state_manager import StateManager, InMemoryStateManager, PostgresStateManager
+from ingestion.state_manager import StateManager, InMemoryStateManager
 
 logger = logging.getLogger(__name__)
 
 
 class IngestionQueue:
-    """Deep queue module managing Redis stream dispatch and Postgres/In-Memory state updates."""
+    """Deep queue module managing Redis stream dispatch & state updates."""
 
     def __init__(
         self,
@@ -36,15 +35,22 @@ class IngestionQueue:
                 self.state_manager.update_status(f["file_path"], "PENDING")
         return count
 
-    def claim_next(self, count: int = 1, block_ms: int = 5000, worker_id: str = "worker-1") -> List[Dict[str, Any]]:
-        """Claim next message(s) from queue and atomically set state to CLAIMED."""
+    def claim_next(
+        self,
+        count: int = 1,
+        block_ms: int = 5000,
+        worker_id: str = "worker-1",
+    ) -> List[Dict[str, Any]]:
+        """Claim next message(s) from queue and set state to CLAIMED."""
         messages = self.redis_queue.claim_next(count=count, block_ms=block_ms)
         claimed_messages = []
         for msg in messages:
             file_path = msg.get("file_path", "")
             content_hash = msg.get("content_hash", "")
             if file_path:
-                claimed = self.state_manager.claim_file(file_path, worker_id, content_hash=content_hash)
+                claimed = self.state_manager.claim_file(
+                    file_path, worker_id, content_hash=content_hash
+                )
                 if claimed:
                     msg["worker_id"] = worker_id
                     claimed_messages.append(msg)
@@ -52,11 +58,19 @@ class IngestionQueue:
                 claimed_messages.append(msg)
         return claimed_messages
 
-    def acknowledge(self, msg_id: str, file_path: str, doc_id: str = "", metadata: Optional[dict] = None):
+    def acknowledge(
+        self,
+        msg_id: str,
+        file_path: str,
+        doc_id: str = "",
+        metadata: Optional[dict] = None,
+    ):
         """Acknowledge successful completion of worker task."""
         self.redis_queue.ack(msg_id)
         if file_path and hasattr(self.state_manager, "update_status"):
-            self.state_manager.update_status(file_path, "COMPLETED", doc_id=doc_id, metadata=metadata)
+            self.state_manager.update_status(
+                file_path, "COMPLETED", doc_id=doc_id, metadata=metadata
+            )
 
     def nack(self, msg_id: str, file_path: str, error: str = ""):
         """Nack message and record error/FAILED state in StateManager."""
@@ -74,7 +88,7 @@ class IngestionQueue:
 
 
 class InMemoryIngestionQueue(IngestionQueue):
-    """In-memory adapter for offline testing without Redis or PostgreSQL dependencies."""
+    """In-memory adapter for testing without Redis or PostgreSQL."""
 
     def __init__(self):
         self.state_manager = InMemoryStateManager()
@@ -96,29 +110,46 @@ class InMemoryIngestionQueue(IngestionQueue):
         self.state_manager.update_status(file_path, "PENDING")
         return msg_id
 
-    def claim_next(self, count: int = 1, block_ms: int = 0, worker_id: str = "test-worker") -> List[Dict[str, Any]]:
+    def claim_next(
+        self,
+        count: int = 1,
+        block_ms: int = 0,
+        worker_id: str = "test-worker",
+    ) -> List[Dict[str, Any]]:
         claimed = []
         while self.queue and len(claimed) < count:
             msg = self.queue.pop(0)
             file_path = msg["file_path"]
-            if self.state_manager.claim_file(file_path, worker_id, content_hash=msg.get("content_hash")):
+            if self.state_manager.claim_file(
+                file_path, worker_id, content_hash=msg.get("content_hash")
+            ):
                 msg["worker_id"] = worker_id
                 self.claimed[msg["msg_id"]] = msg
                 claimed.append(msg)
         return claimed
 
-    def acknowledge(self, msg_id: str, file_path: str, doc_id: str = "", metadata: Optional[dict] = None):
+    def acknowledge(
+        self,
+        msg_id: str,
+        file_path: str,
+        doc_id: str = "",
+        metadata: Optional[dict] = None,
+    ):
         if msg_id in self.claimed:
             del self.claimed[msg_id]
         if file_path:
-            self.state_manager.update_status(file_path, "COMPLETED", doc_id=doc_id, metadata=metadata)
+            self.state_manager.update_status(
+                file_path, "COMPLETED", doc_id=doc_id, metadata=metadata
+            )
 
     def nack(self, msg_id: str, file_path: str, error: str = ""):
         if msg_id in self.claimed:
             msg = self.claimed.pop(msg_id)
             self.dead_letter.append(msg)
         if file_path:
-            self.state_manager.update_status(file_path, "FAILED", error=error)
+            self.state_manager.update_status(
+                file_path, "FAILED", error=error
+            )
 
     def get_stats(self) -> Dict[str, Any]:
         return {
