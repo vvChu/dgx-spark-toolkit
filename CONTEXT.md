@@ -21,6 +21,12 @@ The structured output returned after running `DocumentIngestionPipeline.ingest_f
 ### `StateManager`
 The database adapter responsible for persisting and querying `IngestionState` across processing workers. Supports both production PostgreSQL storage and an in-memory test adapter for offline unit testing.
 
+### `TextNormalizer`
+The single, deep text normalization engine responsible for orchestrating multi-pass legal OCR text cleanups: OCR typo correction, boilerplate header/footer stripping, paragraph rejoining, legal structure formatting, and table data recovery behind a clean `clean_chunk()` and `clean_document()` seam.
+
+### `DocumentStore`
+The unified deep persistence module responsible for orchestrating vector indexing (Milvus), Knowledge Graph relationships (Neo4j), and `IngestionState` tracking across document processing. Supports both production multi-database persistence and an `InMemoryDocumentStore` test adapter for fast offline testing.
+
 ## AI Gateway & LLM Domain
 
 ### `AIGatewayClient`

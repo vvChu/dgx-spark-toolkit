@@ -67,25 +67,27 @@ class TestSemanticCache:
 class TestRewriteQuery:
     def test_rewrite_returns_original_on_failure(self):
         from retrieval.query_rewriter import rewrite_query, _query_rewrite_cache
+        from core.ai_gateway_client import MockAIGatewayClient
         _query_rewrite_cache.clear()
 
-        with patch("retrieval.query_rewriter.call_llm", new_callable=AsyncMock) as mock_call:
-            mock_call.side_effect = Exception("timeout")
+        client = MockAIGatewayClient()
+        client.complete = AsyncMock(side_effect=Exception("timeout"))
 
-            result = asyncio.run(
-                rewrite_query("test query")
-            )
-            assert result == "test query"
+        result = asyncio.run(
+            rewrite_query("test query", ai_client=client)
+        )
+        assert result == "test query"
 
     def test_rewrite_caches_result(self):
         from retrieval.query_rewriter import rewrite_query, _query_rewrite_cache
+        from core.ai_gateway_client import MockAIGatewayClient
         _query_rewrite_cache.clear()
 
-        with patch("retrieval.query_rewriter.call_llm", new_callable=AsyncMock) as mock_call:
-            mock_call.return_value = '"improved query"'
+        client = MockAIGatewayClient()
+        client.complete = AsyncMock(return_value='"improved query"')
 
-            result = asyncio.run(
-                rewrite_query("original")
-            )
-            assert result == "improved query"
-            assert "original" in _query_rewrite_cache
+        result = asyncio.run(
+            rewrite_query("original", ai_client=client)
+        )
+        assert result == "improved query"
+        assert "original" in _query_rewrite_cache

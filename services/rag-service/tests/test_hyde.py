@@ -16,38 +16,33 @@ def _run(coro):
 class TestHyDEGeneratorUnit:
     def _make_generator(self):
         from retrieval.hyde import HyDEGenerator
-        gen = HyDEGenerator(http_client=AsyncMock())
-        return gen
+        from core.ai_gateway_client import MockAIGatewayClient
+        ai_client = MockAIGatewayClient()
+        gen = HyDEGenerator(http_client=AsyncMock(), ai_client=ai_client)
+        return gen, ai_client
 
     def test_empty_query_returns_empty(self):
-        gen = self._make_generator()
+        gen, _ = self._make_generator()
         result = _run(gen.generate_hypothetical_answer(""))
         assert result == ""
 
     def test_successful_generation(self):
-        gen = self._make_generator()
+        gen, ai_client = self._make_generator()
+        ai_client.complete = AsyncMock(return_value="Hypothetical answer text")
 
-        with patch("retrieval.hyde.call_llm", new_callable=AsyncMock) as mock_call:
-            mock_call.return_value = "Hypothetical answer text"
-
-            result = _run(gen.generate_hypothetical_answer("Quy định về PCCC?"))
-            assert result == "Hypothetical answer text"
-            mock_call.assert_called_once()
+        result = _run(gen.generate_hypothetical_answer("Quy định về PCCC?"))
+        assert result == "Hypothetical answer text"
 
     def test_api_error_returns_original_query(self):
-        gen = self._make_generator()
+        gen, ai_client = self._make_generator()
+        ai_client.complete = AsyncMock(side_effect=Exception("Connection refused"))
 
-        with patch("retrieval.hyde.call_llm", new_callable=AsyncMock) as mock_call:
-            mock_call.side_effect = Exception("Connection refused")
-
-            result = _run(gen.generate_hypothetical_answer("some query"))
-            assert result == "some query"
+        result = _run(gen.generate_hypothetical_answer("some query"))
+        assert result == "some query"
 
     def test_empty_content_returns_empty(self):
-        gen = self._make_generator()
+        gen, ai_client = self._make_generator()
+        ai_client.complete = AsyncMock(return_value="")
 
-        with patch("retrieval.hyde.call_llm", new_callable=AsyncMock) as mock_call:
-            mock_call.return_value = ""
-
-            result = _run(gen.generate_hypothetical_answer("test"))
-            assert result == ""
+        result = _run(gen.generate_hypothetical_answer("test"))
+        assert result == ""

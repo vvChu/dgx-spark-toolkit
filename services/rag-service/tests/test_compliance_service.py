@@ -7,6 +7,7 @@ os.environ.setdefault("NEO4J_PASSWORD", "ci_test_placeholder_safe")
 os.environ.setdefault("LITELLM_MASTER_KEY", "sk-ci-test-placeholder-safe")
 
 from services.compliance_service import ComplianceService
+from core.ai_gateway_client import MockAIGatewayClient
 
 
 def _run(coro):
@@ -18,50 +19,45 @@ def _make_service():
     graph_rag = AsyncMock()
     graph_rag._get_client = AsyncMock(return_value=AsyncMock())
     http = AsyncMock()
-    service = ComplianceService(milvus, graph_rag, http)
-    return service, milvus, graph_rag
+    ai_client = MockAIGatewayClient()
+    service = ComplianceService(milvus, graph_rag, http, ai_client=ai_client)
+    return service, milvus, graph_rag, ai_client
 
 
 class TestComplianceService:
     def test_keyword_extraction_success(self):
-        service, milvus, _ = _make_service()
-        with patch("services.compliance_service.call_llm_json", new_callable=AsyncMock) as mock_call:
-            mock_call.return_value = {"keywords": ["BIM", "fire safety"]}
-            result = _run(service._extract_compliance_keywords("tower project", "BIM"))
-            assert result == ["BIM", "fire safety"]
+        service, milvus, _, ai_client = _make_service()
+        ai_client.complete_json = AsyncMock(return_value={"keywords": ["BIM", "fire safety"]})
+        result = _run(service._extract_compliance_keywords("tower project", "BIM"))
+        assert result == ["BIM", "fire safety"]
 
     def test_keyword_extraction_fallback(self):
-        service, milvus, _ = _make_service()
-        with patch("services.compliance_service.call_llm_json", new_callable=AsyncMock) as mock_call:
-            mock_call.side_effect = Exception("LLM error")
-            result = _run(service._extract_compliance_keywords("profile", "Construction"))
-            assert result == ["Construction"]
+        service, milvus, _, ai_client = _make_service()
+        ai_client.complete_json = AsyncMock(side_effect=Exception("LLM error"))
+        result = _run(service._extract_compliance_keywords("profile", "Construction"))
+        assert result == ["Construction"]
 
     def test_report_generation_success(self):
-        service, milvus, _ = _make_service()
-        with patch("services.compliance_service.call_llm_json", new_callable=AsyncMock) as mock_call:
-            mock_call.return_value = {"compliant": [], "risks": [], "violations": []}
-            context = [{"text": "some law", "source": "ND/1", "page": 1}]
-            result = _run(service._generate_compliance_report("profile", context, "BIM"))
-            assert "compliant" in result
+        service, milvus, _, ai_client = _make_service()
+        ai_client.complete_json = AsyncMock(return_value={"compliant": [], "risks": [], "violations": []})
+        context = [{"text": "some law", "source": "ND/1", "page": 1}]
+        result = _run(service._generate_compliance_report("profile", context, "BIM"))
+        assert "compliant" in result
 
     def test_report_generation_failure(self):
-        service, milvus, _ = _make_service()
-        with patch("services.compliance_service.call_llm_json", new_callable=AsyncMock) as mock_call:
-            mock_call.side_effect = Exception("fail")
-            result = _run(service._generate_compliance_report("p", [], "BIM"))
-            assert "error" in result
+        service, milvus, _, ai_client = _make_service()
+        ai_client.complete_json = AsyncMock(side_effect=Exception("fail"))
+        result = _run(service._generate_compliance_report("p", [], "BIM"))
+        assert "error" in result
 
     def test_check_compliance_full(self):
-        service, milvus, _ = _make_service()
+        service, milvus, _, ai_client = _make_service()
 
-        # Mock keyword extraction
-        with patch("services.compliance_service.call_llm_json", new_callable=AsyncMock) as mock_json, \
-             patch("services.retrieval_service.get_embedding_model") as mock_embed:
-            mock_json.side_effect = [
-                {"keywords": ["fire"]},  # keyword extraction
-                {"compliant": ["ok"]},   # report generation
-            ]
+        ai_client.complete_json = AsyncMock(side_effect=[
+            {"keywords": ["fire"]},  # keyword extraction
+            {"compliant": ["ok"]},   # report generation
+        ])
+        with patch("retrieval.search_pipeline.get_embedding_model") as mock_embed:
             mock_model = MagicMock()
             mock_model.embed_query.return_value = {"dense": [0.1] * 1024, "sparse": {}}
             mock_embed.return_value = mock_model
