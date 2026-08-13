@@ -84,7 +84,7 @@ class TestChatStream:
         _install_overrides()
 
         # Mock the internal retrieval and streaming to avoid real LLM calls
-        with patch("api.routers.chat_stream._stream_chat") as mock_stream:
+        with patch("services.chat_service.ChatService.stream_response") as mock_stream:
             async def _fake_stream(*args, **kwargs):
                 yield 'data: {"type": "token", "data": "hello"}\n\n'
                 yield "data: [DONE]\n\n"

@@ -42,5 +42,14 @@ The type-safe state container passed across `SearchPipeline` stages, encapsulati
 ### `StreamClient`
 The deep client module managing Server-Sent Events (SSE) streaming connections (`POST /chat/stream`), providing automatic reconnection, buffer decoding, discriminated union event parsing, and transparent fallback to REST API.
 
+## Agent & Skill Infrastructure Domain
 
+### `SkillState`
+The status lifecycle matrix of an agent skill within the system manifest (`manifest.json`):
+- `installed`: Active, verified skill available for agent invocation.
+- `errored`: Skill installation or runtime execution failed; requires diagnosis and repair.
+- `repairing`: Transitive state while source files are being patched and validated.
+- `disabled`: Intentionally deactivated skill by user or environment policy.
 
+### `SkillRepairAssistant`
+The agent skill procedure responsible for diagnosing failed skill installations, editing source files at `Source Path`, synchronizing fixes to `Installed Path`, validating YAML frontmatter and code syntax, and atomically updating `manifest.json`.

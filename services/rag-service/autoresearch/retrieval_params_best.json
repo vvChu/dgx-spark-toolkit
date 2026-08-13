@@ -1,0 +1,10 @@
+{
+  "best_config": {
+    "dense_weight": 0.7,
+    "sparse_weight": 0.3,
+    "hyde_candidate_count": 3,
+    "rerank_top_k": 10
+  },
+  "best_score": 1.0,
+  "results_count": 108
+}

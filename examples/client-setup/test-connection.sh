@@ -31,7 +31,7 @@ fi
 # --- Test 2: Gateway health ---
 echo ""
 echo "2️⃣  Gateway health check..."
-HEALTH=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "${GATEWAY_URL}/health" 2>/dev/null || echo "000")
+HEALTH=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 -H "Authorization: Bearer ${API_KEY}" "${GATEWAY_URL}/health" 2>/dev/null || echo "000")
 if [ "$HEALTH" = "200" ]; then
   echo "   ✅ Gateway is healthy"
 else
@@ -67,10 +67,12 @@ import sys, json
 try:
     data = json.load(sys.stdin)
     models = sorted(set(m['id'] for m in data['data']))
-    local = [m for m in models if m in ('qwen3.5-35b', 'rag-core', 'rag-light')]
-    cloud = [m for m in models if m not in ('qwen3.5-35b', 'rag-core', 'rag-light')]
-    print(f'   🖥️  Local ({len(local)}): {', '.join(local)}')
-    print(f'   ☁️  Cloud ({len(cloud)}): {', '.join(cloud)}')
+    local = [m for m in models if m in ('qwen-local-primary', 'rag-core', 'rag-light')]
+    cloud = [m for m in models if m not in ('qwen-local-primary', 'rag-core', 'rag-light')]
+    local_str = ', '.join(local)
+    cloud_str = ', '.join(cloud)
+    print(f'   🖥️  Local ({len(local)}): {local_str}')
+    print(f'   ☁️  Cloud ({len(cloud)}): {cloud_str}')
     print(f'   📊 Total: {len(models)} models')
 except Exception as e:
     print(f'   ⚠️  Could not parse models: {e}')
@@ -78,13 +80,13 @@ except Exception as e:
 
 # --- Test 5: Chat completion with Qwen 35B ---
 echo ""
-echo "5️⃣  Test chat (Qwen 3.5 35B local)..."
+echo "5️⃣  Test chat (Qwen 35B local: qwen-local-primary)..."
 RESPONSE=$(curl -s --max-time 30 \
   -H "Authorization: Bearer ${API_KEY}" \
   -H "Content-Type: application/json" \
   "${GATEWAY_URL}/v1/chat/completions" \
   -d '{
-    "model": "qwen3.5-35b",
+    "model": "qwen-local-primary",
     "messages": [{"role": "user", "content": "Say hello in Vietnamese, one sentence only."}],
     "max_tokens": 50
   }' 2>/dev/null)

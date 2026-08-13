@@ -26,7 +26,9 @@ async def _get_full_embeddings(query: str) -> dict:
     return embeddings  # {"dense": [...], "sparse": {...}}
 
 
-class LegalAnalysisService:
+class LegalAnalysisEngine:
+    """Deep domain module for legal conflict analysis, compliance checking, and validity verification."""
+
     def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None):
         self.milvus_repo = milvus_repo
         self.graph_rag = graph_rag
@@ -34,12 +36,9 @@ class LegalAnalysisService:
         self._http_client = http_client
 
     async def analyze_conflicts(self, doc_id: str, query: str, depth: int = 1) -> Dict[str, Any]:
-        """
-        Compare a document with its predecessors to identify regulatory changes or conflicts.
-        """
+        """Compare a document with its predecessors to identify regulatory changes or conflicts."""
         logger.info(f"Analyzing conflicts for {doc_id} with query: '{query}' (depth={depth})")
 
-        # 1. Get the legal timeline/predecessors from Neo4j
         timeline = await self.graph_rag.get_legal_timeline(doc_id)
         if not timeline or len(timeline) < 2:
             return {
@@ -47,10 +46,6 @@ class LegalAnalysisService:
                 "message": f"No previous versions or related documents found for {doc_id}.",
                 "timeline": timeline
             }
-
-        # The timeline is [Newest -> ... -> Oldest] or [Oldest -> ... -> Newest] depending on query.
-        # get_legal_timeline query ORDER BY length(path) DESC returns the full path.
-        # It's better to explicitly find the 'target' of REPLACES/AMENDS.
 
         predecessors = []
         for entry in timeline:
@@ -62,10 +57,6 @@ class LegalAnalysisService:
         if not predecessors:
             return {"status": "no_predecessors", "timeline": timeline}
 
-        # 2. Retrieve relevant chunks from the NEW document
-        # We use a standard dense search for the specific topic within the document
-        # [FIX] Use full hybrid embeddings (dense + sparse) — empty sparse
-        # bypasses BM25 completely, causing poor exact-term lookup within docs.
         _emb_new = await _get_full_embeddings(query)
         new_results = await self.milvus_repo.hybrid_search(
             query_vector=_emb_new.get("dense", []),
@@ -73,16 +64,12 @@ class LegalAnalysisService:
             limit=5,
             expr=f"doc_number == '{doc_id.split('/')[-1]}'"
         )
-        # Note: doc_number in Milvus usually doesn't include the namespace part if extracted via regex.
-        # But doc_id in graph is Namespace/Number.
 
         new_context = "\n".join([hit.entity.get("text") for hit in new_results[0]]) if new_results else "No content found."
 
-        # 3. Retrieve relevant chunks from PREDECESSOR(S)
         predecessor_analyses = []
         for pred in predecessors:
             pred_id = pred["id"]
-            # Extract number from ID (Namespace/Number)
             pred_num = pred_id.split('/')[-1] if '/' in pred_id else pred_id
 
             _emb_pred = await _get_full_embeddings(query)
@@ -94,7 +81,6 @@ class LegalAnalysisService:
             )
             pred_context = "\n".join([hit.entity.get("text") for hit in pred_results[0]]) if pred_results else "No content found."
 
-            # 4. LLM Delta Analysis
             analysis = await self._generate_delta_analysis(doc_id, pred_id, query, new_context, pred_context)
             predecessor_analyses.append({
                 "predecessor_id": pred_id,
@@ -110,7 +96,7 @@ class LegalAnalysisService:
         }
 
     async def _get_query_embedding(self, query: str) -> List[float]:
-        """Return only dense embedding (kept for backward compat with callers needing just dense)."""
+        """Return dense embedding vector."""
         embeddings = await _get_full_embeddings(query)
         if isinstance(embeddings, dict):
             return embeddings.get("dense", [])
@@ -148,3 +134,32 @@ Trình bày bằng tiếng Việt, có cấu trúc rõ ràng (sử dụng Header
             )
         except Exception as e:
             return f"Lỗi phân tích: {e}"
+
+
+class LegalAnalysisService(LegalAnalysisEngine):
+    """Backward-compatible facade alias for LegalAnalysisEngine."""
+    pass
+
+
+class InMemoryLegalAnalysisEngine(LegalAnalysisEngine):
+    """In-memory test adapter for LegalAnalysisEngine for offline unit testing."""
+
+    def __init__(self, default_analysis: str = "Mocked Delta Analysis"):
+        self.default_analysis = default_analysis
+        self.call_history: List[Dict[str, Any]] = []
+
+    async def analyze_conflicts(self, doc_id: str, query: str, depth: int = 1) -> Dict[str, Any]:
+        self.call_history.append({"doc_id": doc_id, "query": query, "depth": depth})
+        return {
+            "status": "success",
+            "doc_id": doc_id,
+            "query": query,
+            "comparisons": [
+                {
+                    "predecessor_id": "mock_pred_1",
+                    "relation": "REPLACES",
+                    "analysis": self.default_analysis,
+                }
+            ]
+        }
+

@@ -1,6 +1,7 @@
-import httpx
+import json
 import logging
 import uuid
+import httpx
 
 from repositories.milvus_repo import MilvusRepository
 from repositories.neo4j_repo import Neo4jRepository
@@ -232,3 +233,97 @@ class ChatService:
                 logger.warning("Trace store failed: %s", e)
 
         return trace_data
+
+    async def stream_response(
+        self,
+        query: str,
+        history: list[dict] | None = None,
+        language: str = "vi",
+        model: str | None = None,
+        session_id: str | None = None,
+        use_agentic: bool = False,
+    ):
+        """Generator yielding SSE events for real-time streaming chat responses."""
+        settings = get_settings()
+        session_id = session_id or str(uuid.uuid4())[:12]
+        tracer = QueryTracer(query, session_id=session_id)
+        target_model = model or settings.VLLM_MODEL
+
+        try:
+            # 1. Session Memory
+            session_context = await self._load_session_context(session_id, tracer)
+
+            # 2. Retrieve Context
+            all_context = await self._retrieve_context(query, tracer, session_id, use_agentic)
+
+            # 3. Accumulate Context
+            all_context = await self._accumulate_context(session_id, all_context, tracer)
+
+            # Yield context as first SSE event
+            yield f"data: {json.dumps({'type': 'context', 'data': all_context[:10]}, ensure_ascii=False, default=str)}\n\n"
+
+            # 4. Build Messages
+            messages = self._build_messages(query, history, session_context, language)
+            messages.append({
+                "role": "system",
+                "content": self._format_context(all_context),
+            })
+
+            # 5. Stream tokens from LLM via AIGatewayClient
+            tracer.start_step("generate_stream")
+            enable_thinking = "35b" in target_model.lower() or "core" in target_model.lower()
+            extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
+
+            payload = {
+                "model": target_model,
+                "messages": messages,
+                "temperature": 0.1,
+                "max_tokens": 8192,
+                "stream": True,
+                "stop": ["\nUser:", "\nObservation:", "</s>"],
+                "repetition_penalty": 1.1,
+                "presence_penalty": 0.1,
+                **extra,
+            }
+
+            full_answer = []
+            async with self.http_client.stream(
+                "POST",
+                f"{settings.VLLM_API_BASE}/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {settings.LITELLM_MASTER_KEY.get_secret_value()}"},
+                timeout=120.0,
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str.strip() == "[DONE]":
+                        answer_text = "".join(full_answer)
+                        tracer.end_step(model=target_model, answer_length=len(answer_text))
+
+                        trace_data = await self._store_turn(
+                            session_id, query, answer_text, all_context, target_model, tracer
+                        )
+
+                        yield f"data: {json.dumps({'type': 'trace', 'data': trace_data}, ensure_ascii=False, default=str)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            full_answer.append(content)
+                            yield f"data: {json.dumps({'type': 'token', 'data': content}, ensure_ascii=False)}\n\n"
+                    except json.JSONDecodeError:
+                        continue
+
+        except Exception as e:
+            logger.error("Streaming chat error: %s", e, exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+
+        yield "data: [DONE]\n\n"
+

@@ -3,9 +3,11 @@ from unittest.mock import AsyncMock, Mock, patch
 from core.database import (
     get_compliance_service,
     get_http_client,
+    get_legal_analysis_engine,
     get_legal_analysis_service,
     get_milvus_repo,
     get_neo4j_repo,
+    get_rag_evaluator,
     get_state_manager,
 )
 from main import app
@@ -50,11 +52,18 @@ async def _override_compliance_service():
     return service
 
 
+async def _override_rag_evaluator():
+    from evaluation.evaluator import MockRAGEvaluator
+    return MockRAGEvaluator(faithfulness=0.9, relevancy=0.8)
+
+
 def _install_common_overrides():
     app.dependency_overrides[get_milvus_repo] = _override_milvus_repo
     app.dependency_overrides[get_neo4j_repo] = _override_neo4j_repo
     app.dependency_overrides[get_http_client] = _override_http_client
     app.dependency_overrides[get_state_manager] = _override_state_manager
+    app.dependency_overrides[get_rag_evaluator] = _override_rag_evaluator
+    app.dependency_overrides[get_legal_analysis_engine] = _override_legal_analysis_service
     app.dependency_overrides[get_legal_analysis_service] = _override_legal_analysis_service
     app.dependency_overrides[get_compliance_service] = _override_compliance_service
 
@@ -190,7 +199,31 @@ def test_analysis_endpoints(client):
         json={"project_profile": "tower", "focus_area": "BIM"},
     )
 
+    diagram_response = client.post(
+        "/analysis/generate-diagram",
+        json={"sop_title": "SOP PCCC 2026", "workflow_steps": ["Step 1", "Step 2"]},
+    )
+
     assert conflict_response.status_code == 200
     assert conflict_response.json()["status"] == "ok"
     assert compliance_response.status_code == 200
     assert compliance_response.json()["status"] == "ok"
+    assert diagram_response.status_code == 200
+    assert diagram_response.json()["model"] == "imagen-4-fast"
+    assert diagram_response.json()["daily_quota_limit"] == 25
+
+
+def test_admin_quota_status_endpoint(client):
+    _install_common_overrides()
+
+    response = client.get(
+        "/admin/quota-status",
+        headers={"X-Admin-Key": "test-admin-key-for-ci"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "free_tier_quota_summary" in data
+    assert data["free_tier_quota_summary"]["gemini-3.1-flash-lite"]["rpd"] == 500
+

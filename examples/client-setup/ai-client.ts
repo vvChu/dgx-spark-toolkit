@@ -25,7 +25,7 @@ export const ai = new OpenAI({
   apiKey: process.env.AI_GATEWAY_KEY || process.env.OPENAI_API_KEY || '',
 });
 
-const DEFAULT_MODEL = process.env.AI_MODEL || 'qwen3.5-35b';
+const DEFAULT_MODEL = process.env.AI_MODEL || 'qwen-local-primary';
 
 interface ChatOptions {
   model?: string;
@@ -106,7 +106,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const models = await listModels();
   console.log('📋 Available models:');
   for (const m of models) {
-    const prefix = ['qwen3.5-35b', 'rag-core', 'rag-light'].includes(m) ? '🖥️ ' : '☁️ ';
+    const prefix = ['qwen-local-primary', 'rag-core', 'rag-light'].includes(m) ? '🖥️ ' : '☁️ ';
     console.log(`   ${prefix} ${m}`);
   }
 

@@ -1,74 +1,125 @@
-import threading
+"""GPU VRAM Manager for context-managed VRAM allocation & health monitoring.
+
+Manages dynamic PyTorch GPU offloading with non-blocking VRAM checks,
+mutex locking for concurrent model execution, and VRAM health monitoring.
+"""
 import contextlib
 import logging
+import threading
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Global lock to ensure only one task can move a large model to VRAM at a time
-GPU_INFERENCE_LOCK = threading.Lock()
 
-@contextlib.contextmanager
-def vram_accelerate(huggingface_wrapper, min_vram_gb: float = 4.0):
-    """
-    Context manager to dynamically move a PyTorch model to GPU if enough VRAM is available.
-    Moves the model back to CPU and clears cache upon exit.
-    
-    Args:
-        huggingface_wrapper: The wrapper object (e.g. BGEM3FlagModel or CrossEncoder)
-        min_vram_gb: Minimum free VRAM in GB required to offload to GPU.
-    """
-    import torch
-    
-    # Check if GPU is available
-    if not torch.cuda.is_available():
-        yield False
-        return
-        
-    try:
-        device_id = torch.cuda.current_device()
-        free_mem, _ = torch.cuda.mem_get_info(device_id)
-        free_gb = free_mem / (1024 ** 3)
-    except Exception as e:
-        logger.warning(f"Could not check VRAM: {e}")
-        free_gb = 0.0
-    
-    # If we have enough VRAM, try to acquire the GPU usage lock non-blockingly
-    if free_gb >= min_vram_gb:
-        acquired = GPU_INFERENCE_LOCK.acquire(blocking=False)
-        if acquired:
-            old_device_attr = getattr(huggingface_wrapper, 'device', None)
-            old_target_device = getattr(huggingface_wrapper, '_target_device', None)
-            try:
-                # Move underlying PyTorch model to GPU
-                if hasattr(huggingface_wrapper, 'model'):
-                    huggingface_wrapper.model.to('cuda')
-                
-                # Patch attributes indicating target device so inputs are sent to GPU
-                if old_device_attr is not None:
-                    huggingface_wrapper.device = 'cuda'
-                if old_target_device is not None:
-                    huggingface_wrapper._target_device = 'cuda'
-                    
-                # logger.debug(f"[VRAM Accel] Offloading to GPU. Free VRAM: {free_gb:.1f}GB")
-                yield True
-            except Exception as e:
-                logger.error(f"[VRAM Accel] Error during GPU acceleration: {e}")
-                yield False
-            finally:
-                # Revert attributes
-                if old_device_attr is not None:
-                    huggingface_wrapper.device = old_device_attr
-                if old_target_device is not None:
-                    huggingface_wrapper._target_device = old_target_device
-                
-                # Revert PyTorch model to CPU and clear Cache
-                if hasattr(huggingface_wrapper, 'model'):
-                    huggingface_wrapper.model.to('cpu')
-                torch.cuda.empty_cache()
-                GPU_INFERENCE_LOCK.release()
-                # logger.debug(f"[VRAM Accel] Returned model to CPU.")
+class GPUResourceManager:
+    """Singleton/Instance GPU VRAM Manager for model offloading."""
+
+    _instance: Optional["GPUResourceManager"] = None
+    _lock = threading.Lock()
+
+    def __init__(self):
+        self.inference_lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls) -> "GPUResourceManager":
+        """Get or create singleton GPUResourceManager instance."""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+
+    def get_vram_info(self) -> Tuple[float, float, bool]:
+        """Check free & total GPU memory in GB.
+
+        Returns (free_gb, total_gb, is_available).
+        """
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                return 0.0, 0.0, False
+            device_id = torch.cuda.current_device()
+            free_mem, total_mem = torch.cuda.mem_get_info(device_id)
+            return (
+                free_mem / (1024 ** 3),
+                total_mem / (1024 ** 3),
+                True,
+            )
+        except Exception as e:
+            logger.warning("Could not query GPU VRAM: %s", e)
+            return 0.0, 0.0, False
+
+    @contextlib.contextmanager
+    def allocate(
+        self,
+        huggingface_wrapper: Any,
+        min_vram_gb: float = 4.0,
+    ):
+        """Context manager to dynamically move PyTorch model to GPU.
+
+        Args:
+            huggingface_wrapper: Wrapper (e.g. BGEM3FlagModel, CrossEncoder).
+            min_vram_gb: Minimum free VRAM in GB required to offload to GPU.
+        """
+        free_gb, _, available = self.get_vram_info()
+        if not available or free_gb < min_vram_gb:
+            yield False
             return
 
-    # Fallback to CPU if not enough VRAM or lock is taken
-    # logger.debug(f"[VRAM Accel] Falling back to bare CPU. Free VRAM: {free_gb:.1f}GB. Lock state: {GPU_INFERENCE_LOCK.locked()}")
-    yield False
+        acquired = self.inference_lock.acquire(blocking=False)
+        if not acquired:
+            yield False
+            return
+
+        import torch
+
+        old_device_attr = getattr(huggingface_wrapper, "device", None)
+        old_target_device = getattr(
+            huggingface_wrapper, "_target_device", None
+        )
+
+        try:
+            if hasattr(huggingface_wrapper, "model"):
+                huggingface_wrapper.model.to("cuda")
+
+            if old_device_attr is not None:
+                huggingface_wrapper.device = "cuda"
+            if old_target_device is not None:
+                huggingface_wrapper._target_device = "cuda"
+
+            yield True
+        except Exception as e:
+            logger.error("[GPUManager] Error during GPU acceleration: %s", e)
+            yield False
+        finally:
+            if old_device_attr is not None:
+                huggingface_wrapper.device = old_device_attr
+            if old_target_device is not None:
+                huggingface_wrapper._target_device = old_target_device
+
+            if hasattr(huggingface_wrapper, "model"):
+                huggingface_wrapper.model.to("cpu")
+
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+            self.inference_lock.release()
+
+    def health_check(self) -> Dict[str, Any]:
+        """Return structured health status of GPU resources."""
+        free_gb, total_gb, available = self.get_vram_info()
+        return {
+            "gpu_available": available,
+            "free_vram_gb": round(free_gb, 2),
+            "total_vram_gb": round(total_gb, 2),
+            "is_locked": self.inference_lock.locked(),
+        }
+
+
+# Backwards compatibility function
+def vram_accelerate(huggingface_wrapper: Any, min_vram_gb: float = 4.0):
+    """Legacy helper wrapping GPUResourceManager.allocate()."""
+    manager = GPUResourceManager.get_instance()
+    return manager.allocate(huggingface_wrapper, min_vram_gb=min_vram_gb)

@@ -449,23 +449,23 @@ services:
     environment:
       - PORT=8000
       - ATTENTION_BACKEND=flashinfer
-      - GPU_MEMORY_UTIL=0.75
-      - MAX_MODEL_LEN=65536
+      - GPU_MEMORY_UTIL=${LOCAL_PRIMARY_GPU_UTIL:-0.75}
+      - MAX_MODEL_LEN=${LOCAL_PRIMARY_MAX_MODEL_LEN:-98304}
       - VLLM_USE_FLASHINFER_MOE_FP4=0
       - VLLM_TEST_FORCE_FP8_MARLIN=1
     volumes:
-      - ${LOCAL_PRIMARY_LLM_DIR}:/models/model
+      - ${LOCAL_PRIMARY_LLM_DIR:-/home/vvc/models/Qwen3.5-35B-A3B-FP8}:/models/model
       - ./scripts:/app/scripts
       - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
     entrypoint: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
     command: >
       --model /models/model
-      --served-model-name qwen-local-primary
+      --served-model-name ${LOCAL_PRIMARY_SERVED_NAME:-qwen-local-primary}
       --host 0.0.0.0
       --port 8000
       --limit-mm-per-prompt '{"image": 1}'
-      --gpu-memory-utilization 0.75
-      --max-model-len 65536
+      --gpu-memory-utilization ${LOCAL_PRIMARY_GPU_UTIL:-0.75}
+      --max-model-len ${LOCAL_PRIMARY_MAX_MODEL_LEN:-98304}
       --max-num-batched-tokens 16384
       --max-num-seqs 64
       --enable-prefix-caching
@@ -501,8 +501,8 @@ services:
       - WEBUI_AUTH=False
       - ENABLE_SIGNUP=False
       - WEBUI_SECRET_KEY=spark_dgx_secure_key_2026
-      - DEFAULT_MODELS=Qwen-3.6-35B-NVFP4
-      - TASK_MODEL=Qwen-3.6-35B-NVFP4
+      - DEFAULT_MODELS=qwen-local-primary
+      - TASK_MODEL=qwen-local-primary
       - WEBUI_NAME=Spark AI Assistant
       - ENABLE_RAG_WEB_SEARCH=True
       - RAG_WEB_SEARCH_ENGINE=duckduckgo

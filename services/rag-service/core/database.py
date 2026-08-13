@@ -201,17 +201,34 @@ async def get_http_client(request: Request) -> httpx.AsyncClient:
     return request.app.state.http_client
 
 
-async def get_legal_analysis_service(
+async def get_rag_evaluator(
+    http_client: httpx.AsyncClient = Depends(get_http_client)
+):
+    """Dependency to inject deep RAGEvaluator."""
+    from evaluation.evaluator import RAGEvaluator
+    from core.ai_gateway_client import AIGatewayClient
+    gateway_client = AIGatewayClient(http_client=http_client)
+    return RAGEvaluator(ai_gateway_client=gateway_client)
+
+
+async def get_legal_analysis_engine(
     milvus_repo: MilvusRepository = Depends(get_milvus_repo),
     neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
     http_client: httpx.AsyncClient = Depends(get_http_client)
-) -> "LegalAnalysisService":
-    """Dependency to inject the LegalAnalysisService."""
-    from services.legal_analysis_service import LegalAnalysisService
+):
+    """Dependency to inject deep LegalAnalysisEngine."""
+    from services.legal_analysis_service import LegalAnalysisEngine
     from retrieval.graph_timeline_retriever import AdvancedGraphRAG
 
     graph_rag = AdvancedGraphRAG(neo4j_repo.driver, http_client)
-    return LegalAnalysisService(milvus_repo, graph_rag, http_client)
+    return LegalAnalysisEngine(milvus_repo, graph_rag, http_client)
+
+
+async def get_legal_analysis_service(
+    engine=Depends(get_legal_analysis_engine),
+):
+    """Dependency alias for backward compatibility."""
+    return engine
 
 
 async def get_compliance_service(

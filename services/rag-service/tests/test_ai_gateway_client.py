@@ -55,3 +55,60 @@ class TestAIGatewayClient:
         assert isinstance(data, dict)
         assert "title" in data
         assert "category" in data
+
+    def test_tiered_router_estimation_text_and_vision(self):
+        import sys
+        from pathlib import Path
+        gateway_dir = str(Path(__file__).resolve().parents[2] / "ai-gateway")
+        if gateway_dir not in sys.path:
+            sys.path.insert(0, gateway_dir)
+
+        try:
+            from custom_callbacks import _estimate_tokens_and_has_vision
+        except ImportError:
+            pytest.skip("litellm environment not installed in current pytest runner")
+
+        text_messages = [{"role": "user", "content": "Hello world " * 50}]
+        tokens, has_vision = _estimate_tokens_and_has_vision(text_messages)
+        assert tokens > 0
+        assert has_vision is False
+
+        vision_messages = [
+            {"role": "user", "content": [{"type": "text", "text": "OCR"}, {"type": "image_url", "image_url": "data:image/png"}]}
+        ]
+        _, vision_flag = _estimate_tokens_and_has_vision(vision_messages)
+        assert vision_flag is True
+
+    def test_tiered_router_pre_call_hook_routing(self):
+        import sys
+        import asyncio
+        from pathlib import Path
+        gateway_dir = str(Path(__file__).resolve().parents[2] / "ai-gateway")
+        if gateway_dir not in sys.path:
+            sys.path.insert(0, gateway_dir)
+
+        try:
+            from custom_callbacks import GeminiParameterCorrector
+        except ImportError:
+            pytest.skip("litellm environment not installed in current pytest runner")
+
+        corrector = GeminiParameterCorrector()
+
+        # Short text prompt -> Should route to Gemma 4
+        req_data = {
+            "model": "text-auto",
+            "messages": [{"role": "user", "content": "Short query"}]
+        }
+        res = asyncio.run(corrector.async_pre_call_hook({}, req_data))
+        assert res["model"] == "openai/gemma-4-26b-a4b-it"
+
+        # Long text prompt (> 500 tokens = > 2000 chars) -> Should route to Gemini 3.5 Flash Lite
+        long_text = "Detailed legal analysis request. " * 100
+        req_data_long = {
+            "model": "text-auto",
+            "messages": [{"role": "user", "content": long_text}]
+        }
+        res_long = asyncio.run(corrector.async_pre_call_hook({}, req_data_long))
+        assert res_long["model"] == "gemini/gemini-3.5-flash-lite"
+
+

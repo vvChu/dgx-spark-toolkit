@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import numpy as np
-from prometheus_client import Summary, Counter, Histogram, Gauge
+from prometheus_client import Counter, Histogram
 
 from core.config import get_settings
 from core.singleton import LazyInit
@@ -103,6 +103,7 @@ class SearchContext:
     raw_hits: Optional[list] = None
     top_results: List[Dict[str, Any]] = field(default_factory=list)
     cached_hit: bool = False
+    search_grounding_triggered: bool = False
 
 
 class SearchPipeline:
@@ -170,6 +171,15 @@ class SearchPipeline:
             # Step 5: Graph RAG & Timeline Enrichment
             await self._stage_graph_enrichment(ctx)
 
+            # Step 6: Search Grounding Fallback Check (1,500 RPD Free Quota Pool)
+            max_score = max((r.get("score", 0.0) for r in ctx.top_results), default=0.0)
+            if not ctx.top_results or max_score < 0.65:
+                ctx.search_grounding_triggered = True
+                logger.info(
+                    f"[SEARCH-GROUNDING] Low RAG confidence ({max_score:.2f} < 0.65). "
+                    f"Triggered 1,500 RPD Search Grounding Fallback for query: {ctx.raw_query}"
+                )
+
             # Cache final results
             if ctx.use_cache and ctx.top_results:
                 _semantic_cache.get().set(ctx.search_query, ctx.query_vector_np, ctx.top_results, filter_key=ctx.cache_filter_key)
@@ -185,7 +195,8 @@ class SearchPipeline:
             return {
                 "results": ctx.top_results,
                 "trace": trace_data,
-                "query_intent": ctx.intent.value if ctx.intent else "GENERAL"
+                "query_intent": ctx.intent.value if ctx.intent else "GENERAL",
+                "search_grounding_triggered": ctx.search_grounding_triggered,
             }
 
     async def _stage_intent_and_cache(self, ctx: SearchContext) -> bool:

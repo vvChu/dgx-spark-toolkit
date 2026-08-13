@@ -1,7 +1,7 @@
 # Hướng Dẫn Cài Đặt Client — Kết Nối AI Gateway từ Máy Khác
 
 > **Server**: DGX Spark (`spark-CCBA`)
-> **Gateway**: LiteLLM AI Gateway — 22 models (Claude, Gemini, GPT, Qwen local)
+> **Gateway**: LiteLLM AI Gateway — 44 models (Claude, Gemini, GPT, Qwen local)
 > **Cập nhật**: 2026-03-28
 
 ---
@@ -25,8 +25,8 @@
 │  :8090 ─► AI Gateway (LiteLLM)                               │
 │              │                                               │
 │              ├── Claude, Gemini, GPT  (cloud proxy)          │
-│              ├── Qwen 3.6 35B (:8004) (local GPU)            │
-│              ├── Qwen 3.5 9B  (:8003) (local GPU, fallback)  │
+│              ├── qwen-local-primary (:8004 active direct)   │
+│              ├── rag-light (:8003 inactive, fallback)        │
 │              └── Auto-fallback + Redis cache                 │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -78,12 +78,14 @@ curl http://<LAN_IP>:8090/v1/models \
 > Khi không có Tailscale và không cùng LAN. Tạo tunnel qua SSH.
 
 ```bash
-# Chạy trên máy client — mở tunnel:
+# Chạy trên máy client — mở tunnel (Port 8090: Gateway, Port 8004: Direct vLLM primary):
 ssh -N -L 8090:localhost:8090 -L 8004:localhost:8004 vvc@<SERVER_IP>
 
 # Sau đó dùng localhost:
 curl http://localhost:8090/v1/models \
   -H "Authorization: Bearer sk-spark-secure-key-2026"
+
+# Ghi chú: Port 8004 là direct vLLM primary (qwen-local-primary). Port 8003 (vLLM fallback) hiện đang inactive/offline.
 ```
 
 > 💡 Thêm `-f` để chạy nền: `ssh -fN -L 8090:localhost:8090 vvc@<SERVER_IP>`
@@ -102,6 +104,7 @@ Copy file `.env.ai-gateway` (đã cung cấp sẵn) vào project, hoặc thêm c
 #   Tailscale:  100.83.192.30
 #   LAN:        <LAN_IP>
 #   SSH Tunnel: localhost
+# Ghi chú: `sk-spark-secure-key-2026` là master key mặc định cho $LITELLM_MASTER_KEY / $AI_GATEWAY_KEY
 
 AI_GATEWAY_URL=http://100.83.192.30:8090/v1
 AI_GATEWAY_KEY=sk-spark-secure-key-2026
@@ -111,16 +114,19 @@ OPENAI_API_BASE=http://100.83.192.30:8090/v1
 OPENAI_API_KEY=sk-spark-secure-key-2026
 
 # Model mặc định (tùy chọn)
-AI_MODEL=qwen3.5-35b
+AI_MODEL=qwen-local-primary
 ```
 
 ### 2.2 — Danh Sách Models Có Sẵn
 
 | Tier | Model Name | Mô Tả |
 |------|-----------|--------|
-| 🖥️ **Local GPU** | `qwen3.5-35b` | Qwen 35B — private, offline, nhanh |
-| 🖥️ **Local GPU** | `rag-core` | Alias của qwen3.5-35b (dùng trong RAG) |
-| 🖥️ **Local GPU** | `rag-light` | Qwen 4B — nhẹ, nhanh hơn |
+| 🖥️ **Local GPU** | `qwen-local-primary` | Main local GPU model alias (Qwen 3.5 35B FP8 - private, offline, nhanh) |
+| 🖥️ **Local GPU** | `qwen-3.5-35b` | Version-specific alias cho Qwen 3.5 35B |
+| 🖥️ **Local GPU** | `rag-core` | Alias của `qwen-local-primary` (dùng trong RAG) |
+| 🖥️ **Local GPU** | `rag-light` | Qwen 3.5 9B / fallback routing (nhẹ, nhanh hơn) |
+
+> ⚠️ **Cảnh báo**: Không sử dụng các alias lỗi thời không có trong registry như `qwen3.5-35b` hay `Qwen-3.6-35B-NVFP4`. Dùng `qwen-local-primary`, `qwen-3.5-35b` hoặc `rag-core`.
 | ☁️ **Cloud** | `claude-sonnet-4-6` | ⭐ Best coding/agentic |
 | ☁️ **Cloud** | `claude-sonnet-4-6-thinking` | Claude + Chain-of-Thought |
 | ☁️ **Cloud** | `claude-opus-4-6` | Claude mạnh nhất |
@@ -158,7 +164,7 @@ client = OpenAI(
 
 # --- Chat đơn giản ---
 response = client.chat.completions.create(
-    model="qwen3.5-35b",
+    model="qwen-local-primary",
     messages=[{"role": "user", "content": "Giải thích REST API trong 3 câu"}],
     max_tokens=512,
     temperature=0.7,
@@ -204,7 +210,7 @@ const client = new OpenAI({
 });
 
 // Chat
-async function chat(message, model = 'qwen3.5-35b') {
+async function chat(message, model = 'qwen-local-primary') {
   const response = await client.chat.completions.create({
     model,
     messages: [{ role: 'user', content: message }],
@@ -241,7 +247,7 @@ using OpenAI;
 using OpenAI.Chat;
 
 var client = new ChatClient(
-    model: "qwen3.5-35b",
+    model: "qwen-local-primary",
     credential: new ApiKeyCredential("sk-spark-secure-key-2026"),
     options: new OpenAIClientOptions
     {
@@ -265,7 +271,7 @@ curl http://100.83.192.30:8090/v1/chat/completions \
   -H "Authorization: Bearer sk-spark-secure-key-2026" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "qwen3.5-35b",
+    "model": "qwen-local-primary",
     "messages": [{"role": "user", "content": "Hello!"}],
     "max_tokens": 256
   }'
@@ -275,7 +281,7 @@ curl http://100.83.192.30:8090/v1/chat/completions \
   -H "Authorization: Bearer sk-spark-secure-key-2026" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "qwen3.5-35b",
+    "model": "qwen-local-primary",
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": true
   }'
@@ -285,22 +291,22 @@ curl http://100.83.192.30:8090/v1/chat/completions \
 
 ## Bước 4: Verify Kết Nối
 
-Chạy script test (đã cung cấp sẵn):
+Chạy script test (đã cung cấp sẵn trong repo):
 
 ```bash
-# Download script test
-curl -O http://100.83.192.30:8005/static/test-gateway.sh
-# hoặc copy từ server:
-# scp vvc@<SERVER_IP>:/home/vvc/Codebase/dgx-spark-toolkit/examples/client-setup/test-connection.sh .
+# Chạy script test từ repository:
+bash examples/client-setup/test-connection.sh
 
-bash test-connection.sh
+# Hoặc nếu ở máy remote khác, copy script qua SCP rồi chạy:
+# scp vvc@<SERVER_IP>:/home/vvc/Codebase/dgx-spark-toolkit/examples/client-setup/test-connection.sh .
+# bash test-connection.sh
 ```
 
 Hoặc tự test:
 
 ```bash
-# 1. Test connectivity
-curl -s http://100.83.192.30:8090/health | python3 -m json.tool
+# 1. Test connectivity & health (LiteLLM yêu cầu Bearer key khi master key active)
+curl -s http://100.83.192.30:8090/health -H "Authorization: Bearer sk-spark-secure-key-2026" | python3 -m json.tool
 
 # 2. List models
 curl -s http://100.83.192.30:8090/v1/models \
@@ -310,7 +316,7 @@ curl -s http://100.83.192.30:8090/v1/models \
 curl -s http://100.83.192.30:8090/v1/chat/completions \
   -H "Authorization: Bearer sk-spark-secure-key-2026" \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen3.5-35b","messages":[{"role":"user","content":"Say hello in Vietnamese"}],"max_tokens":50}' \
+  -d '{"model":"qwen-local-primary","messages":[{"role":"user","content":"Say hello in Vietnamese"}],"max_tokens":50}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['choices'][0]['message']['content'])"
 ```
 
@@ -325,7 +331,7 @@ curl -s http://100.83.192.30:8090/v1/chat/completions \
 | `Model not found` | Kiểm tra tên model chính xác bằng `/v1/models` |
 | `504 Gateway Timeout` | Model đang load, chờ 2-3 phút rồi thử lại |
 | `Rate limit` | Gateway tự retry + fallback, tăng `timeout` nếu cần |
-| Qwen 35B chậm | Giảm `max_tokens`, hoặc dùng `rag-light` (4B) cho task nhẹ |
+| Qwen 35B chậm | Giảm `max_tokens`, hoặc dùng `rag-light` (Qwen 3.5 9B / fallback routing) cho task nhẹ |
 
 ---
 

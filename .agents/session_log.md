@@ -40,6 +40,11 @@
 - [x] **Wayfinder Ticket #11 Resolved**: Added `extract_json()` and `extract_json_sync()` with regex fence parsing, schema validation, and auto-repair retry to `AIGatewayClient`, passed all 355 unit tests, and closed [[Ticket #11]](https://github.com/vvChu/dgx-spark-toolkit/issues/11).
 - [x] **Wayfinder Map #8 Fully Completed**: All 3 child tickets (#9, #10, #11) resolved and verified. Closed [[Wayfinder Map #8]](https://github.com/vvChu/dgx-spark-toolkit/issues/8). Destination reached!
 - [x] **Frontend StreamClient Deepened**: Refactored [`services/frontend/src/lib/streamClient.ts`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/src/lib/streamClient.ts) to return structured `StreamResult` metrics (`fallbackUsed`, `tokensReceived`, `thoughtsReceived`, `contextCount`) while keeping `ChatPanel.tsx` 100% focused on UI rendering. Passed Vite build in 2.50s (`2da0676`).
+- [x] **Wayfinder Map #13 Fully Completed**: All 4 child tickets (#14, #15, #16, #17) resolved and verified. Closed [[Wayfinder Map #13]](https://github.com/vvChu/dgx-spark-toolkit/issues/13). Destination reached!
+- [x] **Wayfinder Ticket #14 Resolved**: Created `LegalAnalysisEngine` & `InMemoryLegalAnalysisEngine` consolidating conflict analysis and compliance checking, updated `api/routers/analysis.py`, passed 355 unit tests, and closed [[Ticket #14]](https://github.com/vvChu/dgx-spark-toolkit/issues/14).
+- [x] **Wayfinder Ticket #15 Resolved**: Created `RAGEvaluator` & `MockRAGEvaluator` in `evaluation/evaluator.py`, updated `api/routers/evaluation.py`, passed 357 unit tests, and closed [[Ticket #15]](https://github.com/vvChu/dgx-spark-toolkit/issues/15).
+- [x] **Wayfinder Ticket #16 Resolved**: Deepened `SemanticCache` & `InMemorySemanticCache` in `retrieval/semantic_cache.py` with HyDE caching and hit metrics, passed 361 unit tests, and closed [[Ticket #16]](https://github.com/vvChu/dgx-spark-toolkit/issues/16).
+- [x] **Wayfinder Ticket #17 Resolved**: Created `LegalGraphManager` client seam in `services/frontend/src/lib/graphManager.ts`, updated `GraphPanel.tsx`, passed Vite build (2.28s), and closed [[Ticket #17]](https://github.com/vvChu/dgx-spark-toolkit/issues/17).
 
 ### Thực nghiệm / Công việc tiếp theo
 - [ ] Chạy live tracking RAG ingestion pipeline qua `/track-ingestion`
