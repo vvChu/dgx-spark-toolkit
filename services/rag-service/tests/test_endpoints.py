@@ -199,7 +199,31 @@ def test_analysis_endpoints(client):
         json={"project_profile": "tower", "focus_area": "BIM"},
     )
 
+    diagram_response = client.post(
+        "/analysis/generate-diagram",
+        json={"sop_title": "SOP PCCC 2026", "workflow_steps": ["Step 1", "Step 2"]},
+    )
+
     assert conflict_response.status_code == 200
     assert conflict_response.json()["status"] == "ok"
     assert compliance_response.status_code == 200
     assert compliance_response.json()["status"] == "ok"
+    assert diagram_response.status_code == 200
+    assert diagram_response.json()["model"] == "imagen-4-fast"
+    assert diagram_response.json()["daily_quota_limit"] == 25
+
+
+def test_admin_quota_status_endpoint(client):
+    _install_common_overrides()
+
+    response = client.get(
+        "/admin/quota-status",
+        headers={"X-Admin-Key": "test-admin-key-for-ci"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "free_tier_quota_summary" in data
+    assert data["free_tier_quota_summary"]["gemini-3.1-flash-lite"]["rpd"] == 500
+

@@ -61,3 +61,15 @@ services/rag-service/ingestion_state.json
 # Test data (large PDFs/docs)
 services/rag-service/data/legal_test/
 tests/*.pdf
+
+# Temporary Agent Scratch Folders
+.agents/auditor_*
+.agents/challenger_*
+.agents/explorer_*
+.agents/orchestrator/
+.agents/reviewer_*
+.agents/sentinel/
+.agents/victory_*
+.agents/worker_*
+.agents/ORIGINAL_REQUEST.md
+

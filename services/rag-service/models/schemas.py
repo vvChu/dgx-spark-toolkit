@@ -139,3 +139,20 @@ class SyncStatusResponse(BaseModel):
     doc_id: str
     new_status: str
     updates: Dict[str, str] = {}
+
+
+class DiagramGenerationRequest(BaseModel):
+    """Request for generating visual SOP/QCVN workflow diagrams via Imagen 4 Fast."""
+    sop_title: str
+    workflow_steps: List[str]
+    style: Optional[str] = "technical_flowchart"
+
+
+class DiagramGenerationResponse(BaseModel):
+    """Response containing generated diagram metadata and image prompt."""
+    status: str
+    sop_title: str
+    image_prompt: str
+    model: str = "imagen-4-fast"
+    daily_quota_limit: int = 25
+

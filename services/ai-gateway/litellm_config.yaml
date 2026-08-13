@@ -826,6 +826,12 @@ model_list:
       <<: *ocr-primary-base
       api_key: os.environ/GEMINI_API_KEY_11
 
+  # ── text-auto ──
+  - model_name: text-auto
+    litellm_params:
+      <<: *ocr-fallback-base
+      api_key: os.environ/GEMINI_API_KEY_1
+
   # ── text-gemma ──
   - model_name: text-gemma
     litellm_params:

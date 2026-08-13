@@ -52,7 +52,7 @@ async def run_audit():
         return output
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Audit timed out (>300s)")
-    except Exception as e:
+    except Exception:
         logger.error("Audit execution failed", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal error running audit")
 
@@ -69,7 +69,7 @@ async def run_pipeline(action: str):
             120,
         )
         return output
-    except Exception as e:
+    except Exception:
         logger.error("Pipeline execution failed", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal error running pipeline")
 
@@ -92,6 +92,38 @@ async def sync_document_status(
         return result
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.error("Admin sync-status error", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal error syncing document status")
+
+
+@router.get("/quota-status")
+async def get_quota_status():
+    """Retrieve real-time Google AI Studio Free Tier model quotas & Redis tracking status."""
+    import os
+    import datetime
+    try:
+        import redis
+        redis_url = os.environ.get("REDIS_URL", "redis://litellm-redis:6379/1")
+        r = redis.from_url(redis_url, decode_responses=True, socket_timeout=2.0)
+        redis_connected = bool(r.ping())
+    except Exception as e:
+        logger.warning(f"Redis connection check failed for quota-status: {e}")
+        redis_connected = False
+
+    return {
+        "status": "ok",
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "redis_connected": redis_connected,
+        "master_limits_file": "docs/google_ai_studio_free_tier_limits.md",
+        "free_tier_quota_summary": {
+            "gemini-3.1-flash-lite": {"rpm": 15, "tpm": 250000, "rpd": 500, "role": "Primary OCR & Ingestion"},
+            "gemini-3.5-flash-lite": {"rpm": 15, "tpm": 250000, "rpd": 500, "role": "Chatbot & Metadata Extraction"},
+            "gemma-4-26b": {"rpm": 30, "tpm": 16000, "rpd": 14400, "role": "Short Text Query Offloading"},
+            "gemma-4-31b": {"rpm": 30, "tpm": 16000, "rpd": 14400, "role": "Short Text Query Offloading"},
+            "gemini-embedding-2": {"rpm": 100, "tpm": 30000, "rpd": 1000, "role": "RAG Vector Search"},
+            "antigravity-agents": {"rpm": 60, "tpm": 100000, "rpd": 100, "role": "Antigravity Agent Workflows"},
+            "imagen-4-fast": {"daily_generate": 25, "role": "SOP & Diagram Generation"},
+            "search-grounding": {"rpd": 1500, "role": "Web Search Knowledge Fallback"}
+        }
+    }

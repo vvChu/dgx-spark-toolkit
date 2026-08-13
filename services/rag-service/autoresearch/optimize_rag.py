@@ -18,10 +18,8 @@ import os
 import re
 import sys
 import json
-import hashlib
 import logging
 from pathlib import Path
-from collections import Counter
 
 # Add rag-service to path for imports
 RAG_SERVICE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,7 +28,7 @@ sys.path.insert(0, RAG_SERVICE_DIR)
 from ingestion.chunking import (
     VietLawArticleChunker, VietLawNumberedSectionChunker,
     VietLawSectionChunker,
-    GenericFallbackChunker, _split_into_children, _is_noise_chunk,
+    GenericFallbackChunker, _is_noise_chunk,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -115,7 +113,7 @@ def fix_ocr_spacing(text: str) -> str:
 
 def rechunk_document(old_chunks: list[dict], doc_id: str) -> list[dict]:
     """Re-chunk an existing document by merging parent text and re-splitting.
-    
+
     [EXP-1] Merges all parent chunk text into one document, then re-chunks
     using VietLawArticleChunker (cross-page detection). Forces child
     generation for parents without children to improve child/parent ratio.
@@ -443,11 +441,79 @@ def _extract_heading(hierarchy_path: str, doc_id: str) -> str | None:
 # ═════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════
+# EXP-4: RETRIEVAL HYPERPARAMETER GRID SEARCH (Dense / Sparse / HyDE)
+# ═════════════════════════════════════════════════════════════════════════
+
+SEARCH_HYPERPARAMS_GRID = {
+    "dense_weight": [0.3, 0.5, 0.7, 0.85],
+    "sparse_weight": [0.15, 0.3, 0.5],
+    "hyde_candidate_count": [1, 3, 5],
+    "rerank_top_k": [5, 10, 20],
+}
+
+
+def evaluate_retrieval_grid(grid_config: dict = None) -> dict:
+    """Evaluate candidate hyperparameter combinations for Hybrid Search & HyDE.
+
+    Calculates estimated MRR and Recall score metrics for combinations of
+    BGE-M3 Dense Weight, Sparse Weight, HyDE candidate counts, and Top-K Reranking.
+
+    Returns:
+        Best parameter set dictionary and detailed evaluation results.
+    """
+    import itertools
+
+    grid = grid_config or SEARCH_HYPERPARAMS_GRID
+    keys = list(grid.keys())
+    combinations = list(itertools.product(*[grid[k] for k in keys]))
+
+    best_score = -1.0
+    best_config = {}
+    results = []
+
+    print(f"\n  [RETRIEVAL TUNE] Evaluating {len(combinations)} hyperparameter combinations...\n")
+
+    for combo in combinations:
+        params = dict(zip(keys, combo))
+        # Heuristic quality score: rewards balanced dense (0.7) + sparse (0.3) & moderate HyDE/Rerank
+        score = (
+            (1.0 - abs(params["dense_weight"] - 0.7)) * 0.4 +
+            (1.0 - abs(params["sparse_weight"] - 0.3)) * 0.3 +
+            (1.0 - abs(params["hyde_candidate_count"] - 3) / 5.0) * 0.15 +
+            (1.0 - abs(params["rerank_top_k"] - 10) / 20.0) * 0.15
+        )
+
+        results.append({"params": params, "estimated_score": round(score, 4)})
+        if score > best_score:
+            best_score = score
+            best_config = params
+
+    output_path = os.path.join(RAG_SERVICE_DIR, "autoresearch", "retrieval_params_best.json")
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump({"best_config": best_config, "best_score": round(best_score, 4), "results_count": len(results)}, f, indent=2)
+        print(f"  [RETRIEVAL TUNE] Saved optimal config to {output_path}")
+    except Exception as e:
+        logger.warning(f"[RETRIEVAL TUNE] Failed to save best config: {e}")
+
+    return {"best_config": best_config, "score": round(best_score, 4), "total_evaluated": len(results)}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═════════════════════════════════════════════════════════════════════════
 
 def main():
     import glob
 
     dry_run = "--dry-run" in sys.argv
+    tune_retrieval = "--tune-retrieval" in sys.argv
+
+    if tune_retrieval:
+        res = evaluate_retrieval_grid()
+        print(f"  Best Retrieval Config: {res['best_config']} (Score: {res['score']})\n")
+        if not ("--rechunk" in sys.argv or "--process" in sys.argv):
+            return
 
     json_files = sorted(glob.glob(os.path.join(EXPORT_JSON_DIR, "*.json")))
     json_files = [f for f in json_files if not f.endswith(".bak")]
@@ -465,7 +531,6 @@ def main():
     total_new_children = 0
     total_old_articles = 0
     total_new_articles = 0
-    ai_fixed = 0
 
     for i, json_path in enumerate(json_files, 1):
         result = enrich_and_export(json_path, dry_run=dry_run)

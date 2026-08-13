@@ -185,6 +185,7 @@ class VietLawSectionChunker(ChunkingStrategy):
             return chunks
         return []
 
+
 class VietLawNumberedSectionChunker(ChunkingStrategy):
     """Tier 1.5: Split QCVN/standard documents by numeric section headers.
 
@@ -692,23 +693,33 @@ class DocumentChunker:
         columns, and key data points. This improves RAG recall for general
         questions about tables without requiring full table retrieval.
 
-        Summary generation is synchronous but uses Gemini Flash (fast, free tier).
+        Summary generation uses ThreadPoolExecutor for concurrent batch calls
+        and Redis caching for MD5-hashed table contents.
         """
         import logging
+        from concurrent.futures import ThreadPoolExecutor
+
         logger = logging.getLogger(__name__)
         augmented = list(chunks)
 
+        table_tasks = []
         for chunk in chunks:
             if not chunk.get("is_table"):
                 continue
             text = chunk.get("text", "")
             if len(text) < self.TABLE_SUMMARY_MIN_CHARS:
                 continue
+            table_tasks.append((chunk, text))
 
+        if not table_tasks:
+            return augmented
+
+        def _process_one(item):
+            chunk, text = item
             try:
                 summary = _generate_table_summary(text, doc_id)
                 if summary and len(summary) > 30:
-                    augmented.append({
+                    return {
                         "text": f"[{doc_id}] [TABLE SUMMARY] {summary}"[:MAX_CHUNK_CHARS],
                         "source": source,
                         "page": page,
@@ -717,19 +728,42 @@ class DocumentChunker:
                         "parent_id": chunk.get("parent_id", f"{source}:{page}:table_sum"),
                         "hierarchy_path": chunk.get("hierarchy_path", "") + " -> [Summary]",
                         "bbox": chunk.get("bbox", [0, 0, 1000, 1000]),
-                    })
-                    logger.info(
-                        f"[TABLE-SUM] Generated {len(summary)} char summary for "
-                        f"{len(text)} char table on page {page}"
-                    )
+                    }
             except Exception as e:
                 logger.debug(f"[TABLE-SUM] Skipped table summary: {e}")
+            return None
+
+        # Execute table summarization concurrently across tables
+        max_workers = min(5, len(table_tasks))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            summaries = list(executor.map(_process_one, table_tasks))
+
+        for sum_chunk in summaries:
+            if sum_chunk:
+                augmented.append(sum_chunk)
 
         return augmented
 
 
+_redis_table_cache = None
+
+
+def _get_redis_cache():
+    global _redis_table_cache
+    if _redis_table_cache is not None:
+        return _redis_table_cache
+    try:
+        import os
+        import redis
+        url = os.environ.get("REDIS_URL", "redis://litellm-redis:6379/1")
+        _redis_table_cache = redis.from_url(url, decode_responses=True, socket_timeout=2.0)
+        return _redis_table_cache
+    except Exception:
+        return None
+
+
 def _generate_table_summary(table_text: str, doc_id: str) -> str:
-    """Generate a concise summary of a large table via LLM.
+    """Generate a concise summary of a large table via LLM with Redis caching.
 
     Uses the AI Gateway (Gemini Flash) for fast, cost-free summarization.
     Falls back gracefully if the gateway is unavailable.
@@ -739,7 +773,21 @@ def _generate_table_summary(table_text: str, doc_id: str) -> str:
     """
     import os
     import logging
+    import hashlib
     logger = logging.getLogger(__name__)
+
+    # Check Redis cache first
+    content_hash = hashlib.md5(table_text[:3000].encode("utf-8")).hexdigest()
+    cache_key = f"cache:table_summary:{content_hash}"
+    r = _get_redis_cache()
+    if r:
+        try:
+            cached = r.get(cache_key)
+            if cached:
+                logger.debug(f"[TABLE-SUM] Redis cache hit for table hash {content_hash[:8]}")
+                return cached
+        except Exception:
+            pass
 
     gateway_base = os.environ.get("VLLM_API_BASE", "http://ai-gateway:4000/v1")
     api_key = os.environ.get("LITELLM_MASTER_KEY", "")
@@ -776,6 +824,13 @@ def _generate_table_summary(table_text: str, doc_id: str) -> str:
             # Strip thinking tags if present (Qwen3.5 thinking mode)
             import re
             content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+
+            # Store in Redis cache (TTL: 7 days = 604800s)
+            if r and content:
+                try:
+                    r.setex(cache_key, 604800, content)
+                except Exception:
+                    pass
             return content
         else:
             logger.debug(f"[TABLE-SUM] Gateway returned {resp.status_code}")
@@ -783,4 +838,3 @@ def _generate_table_summary(table_text: str, doc_id: str) -> str:
     except Exception as e:
         logger.debug(f"[TABLE-SUM] LLM call failed: {e}")
         return ""
-

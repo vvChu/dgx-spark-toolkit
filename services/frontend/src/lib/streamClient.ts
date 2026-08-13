@@ -33,6 +33,8 @@ export interface StreamChatOptions {
   onThought?: (thought: string) => void;
   onError?: (error: string) => void;
   signal?: AbortSignal;
+  maxRetries?: number;
+  retryDelayMs?: number;
 }
 
 export interface StreamResult {
@@ -44,77 +46,109 @@ export interface StreamResult {
 
 export class StreamClient {
   /**
-   * Execute SSE streaming chat with automatic event parsing and REST fallback.
+   * Execute SSE streaming chat with automatic event parsing, exponential backoff reconnection,
+   * Last-Event-ID header tracking, and REST fallback.
    * Returns execution statistics (fallback status, token counts, context items).
    */
   static async streamChat(options: StreamChatOptions): Promise<StreamResult> {
     const { query, language, onContext, onToken, onThought, onError, signal } = options;
+    const maxRetries = options.maxRetries ?? 3;
+    const initialDelay = options.retryDelayMs ?? 500;
+
     let tokensReceived = 0;
     let thoughtsReceived = 0;
     let contextCount = 0;
     let fallbackUsed = false;
+    let lastEventId: string | null = null;
+    let attempt = 0;
 
-    try {
-      const response = await fetch(`${API_BASE}/chat/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, language }),
-        signal,
-      });
+    while (attempt < maxRetries) {
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (lastEventId) {
+          headers['Last-Event-ID'] = lastEventId;
+        }
 
-      if (!response.ok) {
-        throw new Error(`Stream request failed with status: ${response.status}`);
-      }
+        const response = await fetch(`${API_BASE}/chat/stream`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ query, language }),
+          signal,
+        });
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('ReadableStream not supported by browser environment.');
+        if (!response.ok) {
+          throw new Error(`Stream request failed with status: ${response.status}`);
+        }
 
-      const decoder = new TextDecoder();
-      let buffer = '';
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported by browser environment.');
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split('\n\n');
-        buffer = events.pop() || '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        for (const eventStr of events) {
-          if (!eventStr.startsWith('data: ')) continue;
-          const dataStr = eventStr.slice(6).trim();
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
 
-          if (dataStr === '[DONE]') {
-            return { fallbackUsed, tokensReceived, thoughtsReceived, contextCount };
-          }
-
-          try {
-            const parsed = JSON.parse(dataStr) as StreamEvent;
-            if (parsed.type === 'context' && onContext) {
-              const items = parsed.data as ContextItem[];
-              contextCount = items.length;
-              onContext(items);
-            } else if (parsed.type === 'token' && onToken) {
-              tokensReceived++;
-              onToken(parsed.data as string);
-            } else if (parsed.type === 'thought' && onThought) {
-              thoughtsReceived++;
-              onThought(parsed.data as string);
-            } else if (parsed.type === 'error' && onError) {
-              onError(parsed.data as string);
+          for (const eventStr of events) {
+            const lines = eventStr.split('\n');
+            let dataStr = '';
+            for (const line of lines) {
+              if (line.startsWith('id: ')) {
+                lastEventId = line.slice(4).trim();
+              } else if (line.startsWith('data: ')) {
+                dataStr = line.slice(6).trim();
+              }
             }
-          } catch {
-            // Ignore malformed JSON chunks
+
+            if (!dataStr) continue;
+
+            if (dataStr === '[DONE]') {
+              return { fallbackUsed, tokensReceived, thoughtsReceived, contextCount };
+            }
+
+            try {
+              const parsed = JSON.parse(dataStr) as StreamEvent;
+              if (parsed.type === 'context' && onContext) {
+                const items = parsed.data as ContextItem[];
+                contextCount = items.length;
+                onContext(items);
+              } else if (parsed.type === 'token' && onToken) {
+                tokensReceived++;
+                onToken(parsed.data as string);
+              } else if (parsed.type === 'thought' && onThought) {
+                thoughtsReceived++;
+                onThought(parsed.data as string);
+              } else if (parsed.type === 'error' && onError) {
+                onError(parsed.data as string);
+              }
+            } catch {
+              // Ignore malformed JSON chunks
+            }
           }
         }
+        return { fallbackUsed, tokensReceived, thoughtsReceived, contextCount };
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          throw err;
+        }
+        attempt++;
+        if (attempt < maxRetries) {
+          const delay = initialDelay * Math.pow(2, attempt - 1);
+          console.warn(`SSE stream connection attempt ${attempt}/${maxRetries} failed. Retrying in ${delay}ms...`, err);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
       }
-      return { fallbackUsed, tokensReceived, thoughtsReceived, contextCount };
-    } catch (err) {
-      if ((err as Error).name === 'AbortError') {
-        throw err;
-      }
+    }
+
+    // Transparent REST fallback after retries exhausted
+    try {
       fallbackUsed = true;
-      console.warn('SSE stream connection failed, executing transparent REST fallback:', err);
+      console.warn('SSE stream connection retries exhausted, executing transparent REST fallback.');
       const restData: ChatResponse = await sendChat(query, language);
       if (restData.context && onContext) {
         contextCount = restData.context.length;
@@ -127,6 +161,11 @@ export class StreamClient {
       if (restData.answer && onToken) {
         tokensReceived++;
         onToken(restData.answer);
+      }
+      return { fallbackUsed, tokensReceived, thoughtsReceived, contextCount };
+    } catch (restErr) {
+      if (onError) {
+        onError(`Chat request failed: ${(restErr as Error).message}`);
       }
       return { fallbackUsed, tokensReceived, thoughtsReceived, contextCount };
     }
