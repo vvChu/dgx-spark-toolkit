@@ -6,7 +6,7 @@ import httpx
 from repositories.milvus_repo import MilvusRepository
 from retrieval.graph_timeline_retriever import AdvancedGraphRAG
 from core.config import get_settings
-from core.llm_client import call_llm
+from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ async def _get_full_embeddings(query: str) -> dict:
     sparse path (BM25-like) rather than an empty sparse vector.
     """
     import asyncio
-    from services.retrieval_service import get_embedding_model
+    from retrieval.search_pipeline import get_embedding_model
     loop = asyncio.get_running_loop()
     model = get_embedding_model()
     # Run in executor to avoid blocking the event loop
@@ -29,11 +29,12 @@ async def _get_full_embeddings(query: str) -> dict:
 class LegalAnalysisEngine:
     """Deep domain module for legal conflict analysis, compliance checking, and validity verification."""
 
-    def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None):
+    def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None, ai_client: AIGatewayClient | None = None):
         self.milvus_repo = milvus_repo
         self.graph_rag = graph_rag
         self.settings = get_settings()
         self._http_client = http_client
+        self.ai_client = ai_client or get_ai_gateway_client(http_client)
 
     async def analyze_conflicts(self, doc_id: str, query: str, depth: int = 1) -> Dict[str, Any]:
         """Compare a document with its predecessors to identify regulatory changes or conflicts."""
@@ -123,9 +124,7 @@ Yêu cầu phân tích:
 Trình bày bằng tiếng Việt, có cấu trúc rõ ràng (sử dụng Header và Bullet points).
 """
         try:
-            client = self._http_client or await self.graph_rag._get_client()
-            return await call_llm(
-                client,
+            return await self.ai_client.complete(
                 [
                     {"role": "system", "content": "Bạn là chuyên gia phân tích xung đột pháp luật chuyên sâu."},
                     {"role": "user", "content": prompt}

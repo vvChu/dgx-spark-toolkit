@@ -3,7 +3,7 @@ import logging
 import httpx
 
 from core.config import get_settings
-from core.llm_client import call_llm
+from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +17,11 @@ Câu trả lời giả định:"""
 
 
 class HyDEGenerator:
-    def __init__(self, http_client: httpx.AsyncClient | None = None):
+    def __init__(self, http_client: httpx.AsyncClient | None = None, ai_client: AIGatewayClient | None = None):
         _s = get_settings()
         self.model = _s.VLLM_MODEL
         self._http_client = http_client
+        self.ai_client = ai_client or get_ai_gateway_client(http_client)
 
     async def generate_hypothetical_answer(self, query: str) -> str:
         """Generate a hypothetical document based on the query to improve embedding search."""
@@ -33,9 +34,7 @@ class HyDEGenerator:
         ]
 
         try:
-            client = self._http_client or httpx.AsyncClient(timeout=30.0)
-            content = await call_llm(
-                client,
+            content = await self.ai_client.complete(
                 messages,
                 model=self.model,
                 max_tokens=512,

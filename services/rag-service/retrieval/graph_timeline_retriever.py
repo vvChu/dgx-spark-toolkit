@@ -3,7 +3,7 @@ import logging
 from neo4j import AsyncDriver
 import httpx
 
-from core.llm_client import call_llm
+from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 
 logger = logging.getLogger(__name__)
 
@@ -14,12 +14,13 @@ class AdvancedGraphRAG:
     to build a historical timeline of a document.
     """
 
-    def __init__(self, driver: AsyncDriver, http_client: httpx.AsyncClient | None = None):
+    def __init__(self, driver: AsyncDriver, http_client: httpx.AsyncClient | None = None, ai_client: AIGatewayClient | None = None):
         self._driver = driver
         # Accept an injected shared client; fall back to creating one if not provided
         # (e.g. when called from the ingestion pipeline outside the FastAPI lifespan)
         self._http_client = http_client
         self._owns_client = http_client is None
+        self.ai_client = ai_client or get_ai_gateway_client(http_client)
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
@@ -89,9 +90,7 @@ class AdvancedGraphRAG:
         """
 
         try:
-            client = await self._get_client()
-            return await call_llm(
-                client,
+            return await self.ai_client.complete(
                 [
                     {"role": "system", "content": "Bạn là chuyên gia về pháp luật và đồ thị tri thức. Hãy tóm tắt timeline pháp lý một cách chính xác."},
                     {"role": "user", "content": prompt}

@@ -7,7 +7,7 @@ Provides:
     - System metrics: Latency P50/P95, Quota Efficiency
 
 Usage:
-    evaluator = LegalRAGEvaluator(retrieval_service, qa_dataset_path)
+    evaluator = LegalRAGEvaluator(search_pipeline.search, qa_dataset_path)
     report = await evaluator.run_full_evaluation()
     evaluator.print_report(report)
 

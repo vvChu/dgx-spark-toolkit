@@ -7,16 +7,17 @@ import httpx
 from repositories.milvus_repo import MilvusRepository
 from retrieval.graph_timeline_retriever import AdvancedGraphRAG
 from core.config import get_settings
-from core.llm_client import call_llm_json
+from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 
 logger = logging.getLogger(__name__)
 
 
 class ComplianceService:
-    def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None):
+    def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None, ai_client: AIGatewayClient | None = None):
         self.milvus_repo = milvus_repo
         self.graph_rag = graph_rag
         self._http_client = http_client
+        self.ai_client = ai_client or get_ai_gateway_client(http_client)
 
     async def check_compliance(self, project_profile: str, focus_area: str = "General") -> Dict[str, Any]:
         """
@@ -35,7 +36,7 @@ class ComplianceService:
         expr = "validity_status == 'ACTIVE'"
 
         # Get embeddings from the shard model
-        from services.retrieval_service import get_embedding_model
+        from retrieval.search_pipeline import get_embedding_model
         model = get_embedding_model()
         loop = asyncio.get_running_loop()
         embeddings = await loop.run_in_executor(None, model.embed_query, search_query)
@@ -76,9 +77,7 @@ class ComplianceService:
         Output ONLY a JSON list of strings.
         """
         try:
-            client = self._http_client or await self.graph_rag._get_client()
-            result = await call_llm_json(
-                client,
+            result = await self.ai_client.complete_json(
                 [{"role": "user", "content": prompt}],
                 max_tokens=100,
             )
@@ -110,9 +109,7 @@ class ComplianceService:
         """
 
         try:
-            client = self._http_client or await self.graph_rag._get_client()
-            return await call_llm_json(
-                client,
+            return await self.ai_client.complete_json(
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
             )

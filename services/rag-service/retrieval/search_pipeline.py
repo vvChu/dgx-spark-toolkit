@@ -21,6 +21,8 @@ from retrieval.query_tracer import QueryTracer
 from retrieval.reranker import get_reranker
 from retrieval.semantic_cache import SemanticCache
 
+from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
+
 logger = logging.getLogger(__name__)
 
 # Prometheus Metrics
@@ -91,6 +93,7 @@ class SearchContext:
     use_cache: bool = True
     session_id: Optional[str] = None
     tracer: Optional[QueryTracer] = None
+    ai_client: Optional[AIGatewayClient] = None
 
     # Pipeline processing state
     intent: Optional[QueryIntent] = None
@@ -106,14 +109,13 @@ class SearchContext:
     search_grounding_triggered: bool = False
 
 
-async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10) -> List[str]:
+async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10, ai_client: Optional[AIGatewayClient] = None) -> List[str]:
     """Stage 1: Fast batch filtering using Gemini 3.5 Flash Lite (250K TPM) with Gemma 4 fallback."""
     if len(docs) <= top_k:
         return docs
 
     try:
-        from core.ai_gateway_client import AIGatewayClient
-        client = AIGatewayClient()
+        client = ai_client or get_ai_gateway_client()
 
         doc_entries = [f"[{i+1}] {text[:250]}" for i, text in enumerate(docs[:30])]
         prompt = (
@@ -151,11 +153,12 @@ async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10)
 class SearchPipeline:
     """Deep search pipeline consolidating vector search, reranking, and Graph RAG."""
 
-    def __init__(self, milvus_repo: MilvusRepository, neo4j_repo: Neo4jRepository):
+    def __init__(self, milvus_repo: MilvusRepository, neo4j_repo: Neo4jRepository, ai_client: Optional[AIGatewayClient] = None):
         self.milvus = milvus_repo
         self.neo4j = neo4j_repo
+        self.ai_client = ai_client or get_ai_gateway_client()
         driver = getattr(neo4j_repo, "driver", None)
-        self.graph_timeline = AdvancedGraphRAG(driver) if driver is not None else None
+        self.graph_timeline = AdvancedGraphRAG(driver, ai_client=self.ai_client) if driver is not None else None
 
     async def search(
         self,
@@ -184,10 +187,13 @@ class SearchPipeline:
             use_cache=use_cache,
             session_id=session_id,
             tracer=tracer,
+            ai_client=self.ai_client,
         )
         return await self.execute(ctx)
 
     async def execute(self, ctx: SearchContext) -> Dict[str, Any]:
+        if ctx.ai_client is None:
+            ctx.ai_client = self.ai_client
         if ctx.tracer is None:
             ctx.tracer = QueryTracer(ctx.raw_query, session_id=ctx.session_id)
 
@@ -288,13 +294,14 @@ class SearchPipeline:
 
     async def _stage_rewrite_and_hyde(self, ctx: SearchContext):
         ctx.tracer.start_step("rewrite")
-        rewritten = await rewrite_query(ctx.raw_query)
+        rewritten = await rewrite_query(ctx.raw_query, ai_client=ctx.ai_client)
         ctx.search_query = rewritten
         ctx.tracer.end_step(original=ctx.raw_query[:100], rewritten=rewritten[:100])
 
         if ctx.use_hyde:
             ctx.tracer.start_step("hyde")
-            hyde_doc = await _hyde_gen.get().generate_hypothetical_answer(rewritten)
+            gen = HyDEGenerator(ai_client=ctx.ai_client)
+            hyde_doc = await gen.generate_hypothetical_answer(rewritten)
             if hyde_doc:
                 ctx.search_query = f"{rewritten}\n{hyde_doc}"
             ctx.tracer.end_step(generated=bool(hyde_doc))
@@ -326,7 +333,7 @@ class SearchPipeline:
             # Stage 1: Fast batch filtering using Flash Lite 250K TPM -> Gemma 4 fallback
             if len(docs) > ctx.limit:
                 candidate_docs = await stage1_fast_batch_rerank(
-                    ctx.raw_query, docs, top_k=min(ctx.limit * 2, len(docs))
+                    ctx.raw_query, docs, top_k=min(ctx.limit * 2, len(docs)), ai_client=ctx.ai_client
                 )
             else:
                 candidate_docs = docs

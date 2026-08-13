@@ -5,10 +5,10 @@ import httpx
 
 from repositories.milvus_repo import MilvusRepository
 from repositories.neo4j_repo import Neo4jRepository
-from services.retrieval_service import RetrievalService
+from retrieval.search_pipeline import SearchPipeline
 from retrieval.query_rewriter import rewrite_query
 from retrieval.query_tracer import QueryTracer
-from core.llm_client import call_llm
+from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 from core.prompts import get_system_prompt
 from core.config import get_settings
 
@@ -31,14 +31,16 @@ class ChatService:
         session_memory=None,
         trace_store=None,
         context_accumulator=None,
+        ai_client: AIGatewayClient | None = None,
     ):
         self.milvus_repo = milvus_repo
         self.neo4j_repo = neo4j_repo
         self.http_client = http_client
-        self.retrieval_service = RetrievalService(milvus_repo, neo4j_repo)
+        self.retrieval_service = SearchPipeline(milvus_repo, neo4j_repo)
         self.session_memory = session_memory
         self.trace_store = trace_store
         self.context_accumulator = context_accumulator
+        self.ai_client = ai_client or get_ai_gateway_client(http_client)
 
     async def generate_response(
         self,
@@ -197,8 +199,7 @@ class ChatService:
         enable_thinking = "35b" in target_model.lower() or "core" in target_model.lower()
         extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
 
-        answer = await call_llm(
-            self.http_client,
+        answer = await self.ai_client.complete(
             messages,
             model=target_model,
             max_tokens=8192,

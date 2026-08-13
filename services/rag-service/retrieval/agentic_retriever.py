@@ -61,9 +61,10 @@ class AgenticRetriever:
     MAX_HOPS = 3
     SUFFICIENCY_THRESHOLD = 0.70
 
-    def __init__(self, retrieval_service, http_client):
+    def __init__(self, retrieval_service, http_client=None, ai_client: AIGatewayClient | None = None):
         self.retrieval_service = retrieval_service
         self.http_client = http_client
+        self.ai_client = ai_client or get_ai_gateway_client(http_client)
 
     async def retrieve(
         self,
@@ -162,8 +163,7 @@ class AgenticRetriever:
                 {"role": "system", "content": "You are a JSON-only response bot."},
                 {"role": "user", "content": _PLAN_PROMPT.format(query=query)},
             ]
-            response = await call_llm(
-                self.http_client,
+            response = await self.ai_client.complete(
                 messages,
                 model=settings.DEFAULT_RAG_MODEL,
                 max_tokens=500,
@@ -187,8 +187,7 @@ class AgenticRetriever:
                 {"role": "system", "content": "You are a JSON-only response bot."},
                 {"role": "user", "content": _EVAL_PROMPT.format(query=query, context=context_str)},
             ]
-            response = await call_llm(
-                self.http_client,
+            response = await self.ai_client.complete(
                 messages,
                 model=settings.DEFAULT_RAG_MODEL,
                 max_tokens=300,

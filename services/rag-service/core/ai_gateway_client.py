@@ -240,3 +240,23 @@ class MockAIGatewayClient(AIGatewayClient):
     async def complete_vision(self, image_bytes_or_b64: Any, prompt: str = "", **kwargs) -> str:
         self.call_history.append({"prompt": prompt, "kwargs": kwargs})
         return f"OCR: {self.default_response}"
+
+
+_global_ai_gateway_client: Optional[AIGatewayClient] = None
+
+
+def get_ai_gateway_client(http_client: Optional[httpx.AsyncClient] = None) -> AIGatewayClient:
+    """Return shared stateful AIGatewayClient instance."""
+    global _global_ai_gateway_client
+    if _global_ai_gateway_client is None:
+        _global_ai_gateway_client = AIGatewayClient(http_client=http_client)
+    elif http_client is not None and _global_ai_gateway_client._http_client is None:
+        _global_ai_gateway_client._http_client = http_client
+    return _global_ai_gateway_client
+
+
+def set_ai_gateway_client(client: Optional[AIGatewayClient]) -> None:
+    """Set global AIGatewayClient instance (useful for unit testing)."""
+    global _global_ai_gateway_client
+    _global_ai_gateway_client = client
+

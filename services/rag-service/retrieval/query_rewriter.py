@@ -5,7 +5,7 @@ import logging
 import httpx
 
 from core.config import get_settings
-from core.llm_client import call_llm
+from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,11 @@ def _get_rewrite_lock() -> asyncio.Lock:
     return _query_rewrite_lock
 
 
-async def rewrite_query(original_query: str, http_client: httpx.AsyncClient | None = None) -> str:
+async def rewrite_query(
+    original_query: str,
+    http_client: httpx.AsyncClient | None = None,
+    ai_client: AIGatewayClient | None = None,
+) -> str:
     """Standardize legal terms and expand acronyms using LLM."""
     lock = _get_rewrite_lock()
     async with lock:
@@ -34,13 +38,9 @@ async def rewrite_query(original_query: str, http_client: httpx.AsyncClient | No
         from core.prompts import QUERY_REWRITE_PROMPT
 
         prompt = QUERY_REWRITE_PROMPT.format(original_query=original_query)
+        client = ai_client or get_ai_gateway_client(http_client)
 
-        # Use injected client if available, otherwise create a one-off
-        if http_client is None:
-            http_client = httpx.AsyncClient(timeout=30.0)
-
-        rewritten = await call_llm(
-            http_client,
+        rewritten = await client.complete(
             [{"role": "user", "content": prompt}],
             temperature=0.0,
             max_tokens=100,
