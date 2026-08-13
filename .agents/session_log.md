@@ -5,7 +5,39 @@
 
 ---
 
+## 🟢 Session: 2026-08-13 (vvc)
+
+### Trạng thái hệ thống (cuối session)
+
+| Service | Status |
+|---|---|
+| `ai-gateway` | ✅ Up (healthy) |
+| `rag-service` | ✅ Up (healthy) |
+| `qwen36b` (vLLM 35B) | ✅ Up (healthy) |
+| `milvus-standalone` | ✅ Up (healthy) |
+| `neo4j-graph` | ✅ Up (healthy) |
+| `litellm-postgres` | ✅ Up (healthy) |
+| `litellm-redis` | ✅ Up (healthy) |
+
+### Thay đổi đã thực hiện (2026-08-13)
+
+- [x] **PR #28 Automated Copilot Review & Merge Flow (`/pr-copilot-flow`)**: Tự động rà soát Copilot comments, cập nhật `.agents/rules/codebase-engineering-rules.md` (Rule 4), pass 100% CI checks, squash & merge PR #28 vào `master`.
+- [x] **AI Gateway Free Tier Model Routing**: Sửa route model `gemini-3.5-flash-lite` trong `services/ai-gateway/litellm_config.yaml` sử dụng trực tiếp dàn key Google AI Studio Free Tier (API Key 2 đến 11).
+- [x] **Wayfinder Map #39 Fully Completed**:
+  - **[Ticket #40]**: Triển khai `KeyCooldownManager` bắt lỗi HTTP 429 và tự động xoay vòng sang key khả dụng trong `custom_callbacks.py`.
+  - **[Ticket #41]**: Xây dựng 2-Stage Hybrid Reranker trong `search_pipeline.py` tận dụng 250K TPM của Flash Lite gom 20-30 chunks batching trong ~300ms với Gemma 4 fallback.
+  - **[Ticket #42]**: Tích hợp Multimodal Vision Table Auto-Correction trong `chunking.py` tự động khôi phục các bảng vỡ OCR thành Markdown Table chuẩn.
+  - **[Ticket #43]**: Tích hợp `QuotaTracker` & Zero-Cloud Local Fallback Middleware trong `rate_limiter.py` tự động điều hướng sang Local vLLM Qwen 35B khi tiệm cận 95% quota.
+- [x] **RAG Benchmark & Test Suite Verification**:
+  - Scorecard RAG Quality Score: **95/100** (Metadata 100/100, Legal Fidelity 100/100).
+  - Search & Retrieval Test Suite: **13/13 tests PASSED (100%)** trong 9.10s.
+  - Flake8 Linter: **Clean `code 0`**.
+- [x] **Git Cleanliness**: Đã commit (`431c80c`, `f14a055`) và push 100% lên `master`.
+
+---
+
 ## 🟢 Session: 2026-08-06 (vvc)
+
 
 ### Trạng thái hệ thống (cuối session)
 
