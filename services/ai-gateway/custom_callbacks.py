@@ -1,4 +1,6 @@
+import os
 import sys
+import time
 from litellm.integrations.custom_logger import CustomLogger
 
 
@@ -24,12 +26,68 @@ def _estimate_tokens_and_has_vision(messages):
     return total_chars // 4, has_vision
 
 
+class KeyCooldownManager:
+    """Manages API key cooldowns and rotation upon encountering HTTP 429 Rate Limits."""
+
+    def __init__(self, cooldown_seconds: int = 60):
+        self.cooldown_seconds = cooldown_seconds
+        self._cooldown_dict = {}  # In-memory fallback: api_key -> expiry_timestamp
+        self._refresh_pool()
+
+    def _refresh_pool(self):
+        self._keys_pool = [
+            os.getenv(f"GEMINI_API_KEY_{i}", "") for i in range(2, 12)
+        ]
+        self._keys_pool = [k for k in self._keys_pool if k]
+
+    def is_key_in_cooldown(self, api_key: str) -> bool:
+        if not api_key:
+            return False
+        expiry = self._cooldown_dict.get(api_key, 0)
+        if time.time() < expiry:
+            return True
+        elif api_key in self._cooldown_dict:
+            del self._cooldown_dict[api_key]
+        return False
+
+    def mark_key_cooldown(self, api_key: str):
+        if not api_key:
+            return
+        self._cooldown_dict[api_key] = time.time() + self.cooldown_seconds
+        short_key = f"...{api_key[-4:]}" if len(api_key) > 4 else api_key
+        sys.stdout.write(f"[KeyCooldownManager] Key '{short_key}' placed on {self.cooldown_seconds}s cooldown (HTTP 429)\n")
+        sys.stdout.flush()
+
+    def get_available_key(self, current_key: str = "") -> str:
+        self._refresh_pool()
+        if not self._keys_pool:
+            return current_key
+        for k in self._keys_pool:
+            if not self.is_key_in_cooldown(k):
+                return k
+        return self._keys_pool[0]
+
+
+key_cooldown_manager = KeyCooldownManager(cooldown_seconds=60)
+
+
 class GeminiParameterCorrector(CustomLogger):
     async def async_pre_call_hook(self, user_api_key_dict, data, *args, **kwargs):
         try:
             model = data.get("model", "")
 
-            # 0. Token-Length Tiered Routing for generic text-auto or short requests
+            # 0. Check API Key rotation if current key is in cooldown
+            current_api_key = data.get("api_key", "")
+            if current_api_key and key_cooldown_manager.is_key_in_cooldown(current_api_key):
+                available_key = key_cooldown_manager.get_available_key(current_api_key)
+                if available_key != current_api_key:
+                    data["api_key"] = available_key
+                    sys.stdout.write(
+                        f"[KeyRotation] Current key in cooldown -> Rotated to next available key (...{available_key[-4:]})\n"
+                    )
+                    sys.stdout.flush()
+
+            # Token-Length Tiered Routing for generic text-auto or short requests
             # If text-only and < 500 tokens, route to Gemma 4 (14.4K RPD quota pool)
             if model in ["text-auto", "auto", "text-light-auto"]:
                 est_tokens, has_vision = _estimate_tokens_and_has_vision(data.get("messages", []))
@@ -65,8 +123,6 @@ class GeminiParameterCorrector(CustomLogger):
             should_correct = (thinking_budget is not None) or (thinking_level is not None) or is_gemini_3_or_above
 
             # Explicitly exclude non-reasoning models from receiving default thinking parameters
-            # (e.g. gemini-2.5-flash-lite, gemini-embedding-2, etc.)
-            # Note: gemini-3.5-flash-lite supports thinking_level ("minimal" or "low")
             is_35_lite = ("gemini-3.5" in model.lower() or "gemini-3" in model.lower()) and "lite" in model.lower()
             if "embedding" in model.lower() or "embed" in model.lower() or ("lite" in model.lower() and not is_35_lite):
                 should_correct = False
@@ -101,7 +157,7 @@ class GeminiParameterCorrector(CustomLogger):
                         if isinstance(tc, dict):
                             tc.pop("thinking_budget", None)
 
-                # 2. Correct and map thinking_level if missing or if thinking_budget was provided
+                # Correct and map thinking_level if missing or if thinking_budget was provided
                 if not thinking_level and thinking_budget:
                     try:
                         tb = int(thinking_budget)
@@ -129,8 +185,7 @@ class GeminiParameterCorrector(CustomLogger):
                     else:
                         thinking_level = "medium"
 
-                # 3. Ensure the thinking_level is set in the correct place for Google API
-                # Google API expects it in generationConfig.thinking_config.thinking_level
+                # Ensure the thinking_level is set in the correct place for Google API
                 if "extra_body" not in data or not isinstance(data["extra_body"], dict):
                     data["extra_body"] = {}
 
@@ -145,8 +200,6 @@ class GeminiParameterCorrector(CustomLogger):
                 g_cfg["thinking_config"]["thinking_level"] = thinking_level
                 g_cfg["thinking_config"]["include_thoughts"] = True
 
-                # 4. Clean up temperature/top_p if they are default to avoid warnings
-                # In Gemini 3.x, sampling parameters are discouraged.
                 if "temperature" in data and data["temperature"] in [1.0, 0.0]:
                     del data["temperature"]
                 if "top_p" in data and data["top_p"] in [1.0]:
@@ -162,6 +215,19 @@ class GeminiParameterCorrector(CustomLogger):
             sys.stderr.flush()
 
         return data
+
+    async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
+        """Intercept 429 Rate Limits and trigger key cooldown."""
+        try:
+            status_code = kwargs.get("status_code") or getattr(response_obj, "status_code", None)
+            exception_str = str(kwargs.get("exception", "")).lower()
+            if status_code == 429 or "429" in exception_str or "resource_exhausted" in exception_str:
+                api_key = kwargs.get("api_key") or kwargs.get("litellm_params", {}).get("api_key", "")
+                if api_key:
+                    key_cooldown_manager.mark_key_cooldown(api_key)
+        except Exception as e:
+            sys.stderr.write(f"[KeyCooldownManager] Error in failure logging: {e}\n")
+            sys.stderr.flush()
 
 
 # Create single instance
