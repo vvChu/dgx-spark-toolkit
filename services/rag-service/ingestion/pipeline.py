@@ -35,6 +35,7 @@ from ingestion.vision import VisionExtractor
 from ingestion.chunking import DocumentChunker
 from ingestion.exporter import DataExporter
 from ingestion.text_normalizer import (
+    TextNormalizer, normalize_chunk_text,
     rejoin_paragraphs, detect_garbled_table,
     strip_document_boilerplate, strip_noi_nhan_block, strip_signer_block,
 )
@@ -93,8 +94,9 @@ class DocumentIngestionPipeline:
 
         self.vision = VisionExtractor()
         self.state_manager = state_manager or StateManager()
+        self.normalizer = TextNormalizer()
 
-        from services.retrieval_service import get_embedding_model
+        from retrieval.search_pipeline import get_embedding_model
         self.model = get_embedding_model()
         self.chunker = DocumentChunker()
         self.exporter = DataExporter(settings.EXPORT_DIR) if settings.EXPORT_PROCESSED_DATA else None
@@ -107,6 +109,10 @@ class DocumentIngestionPipeline:
         self.lifecycle_service = None
         self.collection = None
 
+        from repositories.document_store import DocumentStore, InMemoryDocumentStore
+
+        self.document_store = InMemoryDocumentStore() if isinstance(self.state_manager, InMemoryStateManager) else None
+
         if not isinstance(self.state_manager, InMemoryStateManager):
             try:
                 self.neo4j_driver = GraphDatabase.driver(
@@ -118,10 +124,18 @@ class DocumentIngestionPipeline:
                 self._async_neo4j = AsyncGraphDatabase.driver(
                     pipeline_config.NEO4J_URI, auth=(pipeline_config.NEO4J_USER, pipeline_config.NEO4J_PASS)
                 )
+                milvus_repo = MilvusRepository(self._async_milvus)
+                neo4j_repo = Neo4jRepository(self._async_neo4j)
+                self.document_store = DocumentStore(
+                    milvus_repo=milvus_repo,
+                    neo4j_repo=neo4j_repo,
+                    state_manager=self.state_manager,
+                )
                 self.lifecycle_service = LifecycleService(
                     self.state_manager,
-                    MilvusRepository(self._async_milvus),
-                    Neo4jRepository(self._async_neo4j),
+                    milvus_repo,
+                    neo4j_repo,
+                    document_store=self.document_store,
                 )
                 self.init_neo4j()
                 self.connect_milvus()
