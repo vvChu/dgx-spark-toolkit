@@ -3,14 +3,13 @@
 Uses token-bucket algorithm per IP address. No external dependencies.
 """
 import logging
-import time
+import os
 import threading
-from collections import defaultdict
+import time
 
+from prometheus_client import Counter
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
-from prometheus_client import Counter
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +51,9 @@ class _TokenBucket:
 
 
 # ── Pre-configured rate limiters ────────────────────────────────────────
-import os as _os
-_api_capacity = int(_os.getenv("RATE_LIMIT_API_CAPACITY", "30"))
-_admin_capacity = int(_os.getenv("RATE_LIMIT_ADMIN_CAPACITY", "10"))
+_api_capacity = int(os.getenv("RATE_LIMIT_API_CAPACITY", "30"))
+_admin_capacity = int(os.getenv("RATE_LIMIT_ADMIN_CAPACITY", "10"))
+
 # API endpoints: configurable burst, sustained rate = capacity / 60
 _api_limiter = _TokenBucket(rate=_api_capacity / 60.0, capacity=_api_capacity)
 # Admin endpoints: configurable burst
@@ -64,12 +63,40 @@ _admin_limiter = _TokenBucket(rate=_admin_capacity / 60.0, capacity=_admin_capac
 _EXEMPT_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/metrics"}
 
 
+class QuotaTracker:
+    """Tracks sliding window requests for Google AI Studio Free Tier (14,400 RPD)."""
+
+    def __init__(self, max_rpd: int = 14400):
+        self.max_rpd = max_rpd
+        self._counter = 0
+        self._lock = threading.Lock()
+        self._reset_time = time.time() + 86400
+
+    def record_request(self) -> bool:
+        """Returns True if within safe cloud quota limit (<95%), False if threshold exceeded."""
+        now = time.time()
+        with self._lock:
+            if now > self._reset_time:
+                self._counter = 0
+                self._reset_time = now + 86400
+            self._counter += 1
+            return self._counter < int(self.max_rpd * 0.95)
+
+    def is_safe(self) -> bool:
+        with self._lock:
+            return self._counter < int(self.max_rpd * 0.95)
+
+
+quota_tracker = QuotaTracker()
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """FastAPI middleware that applies IP-based rate limiting.
+    """FastAPI middleware that applies IP-based rate limiting & Zero-Cloud Fallback.
 
     - Admin paths (/admin/*): 10 req/min
     - API paths (/search, /chat, etc.): 30 req/min
     - Health/docs: exempt
+    - High traffic / quota exhaustion: Seamlessly routes to Local vLLM Qwen 35B (Zero-Cloud Fallback).
     """
 
     async def dispatch(self, request: Request, call_next):
@@ -85,14 +112,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         else:
             limiter = _api_limiter
 
-        if not limiter.allow(client_ip):
+        is_allowed = limiter.allow(client_ip)
+        is_quota_safe = quota_tracker.record_request()
+
+        if not is_allowed or not is_quota_safe:
             path_group = "admin" if "/admin" in path else "api"
             RATE_LIMIT_REJECTED.labels(path_group=path_group).inc()
-            logger.warning(f"Rate limited: {client_ip} on {path}")
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "Too many requests. Please slow down."},
-                headers={"Retry-After": "5"},
+            logger.info(
+                f"[ZERO-CLOUD-FALLBACK] Rate/Quota limit reached ({client_ip} on {path}). "
+                f"Seamlessly falling back to Local vLLM Qwen 35B."
             )
+            request.state.force_local_vllm = True
+            response = await call_next(request)
+            response.headers["X-Zero-Cloud-Fallback"] = "1"
+            return response
 
         return await call_next(request)

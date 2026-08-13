@@ -106,6 +106,48 @@ class SearchContext:
     search_grounding_triggered: bool = False
 
 
+async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10) -> List[str]:
+    """Stage 1: Fast batch filtering using Gemini 3.5 Flash Lite (250K TPM) with Gemma 4 fallback."""
+    if len(docs) <= top_k:
+        return docs
+
+    try:
+        from core.ai_gateway_client import AIGatewayClient
+        client = AIGatewayClient()
+
+        doc_entries = [f"[{i+1}] {text[:250]}" for i, text in enumerate(docs[:30])]
+        prompt = (
+            f"Query: {query}\n\n"
+            f"Evaluate and rank the following document chunks by legal relevance to the query.\n"
+            f"Return a JSON object with key 'top_indices' containing an array of 1-based integer indices of top {top_k} most relevant chunks.\n\n"
+            f"Chunks:\n" + "\n".join(doc_entries)
+        )
+        messages = [{"role": "user", "content": prompt}]
+        res_data = await client.complete_json(
+            messages,
+            model="gemini-3.5-flash-lite",
+            model_chain=["gemini-3.5-flash-lite", "openai/gemma-4-26b-a4b-it", "rag-core"],
+            timeout=8.0,
+        )
+        indices = res_data.get("top_indices", [])
+        filtered_docs = []
+        if isinstance(indices, list):
+            for idx in indices:
+                if isinstance(idx, int) and 1 <= idx <= len(docs):
+                    filtered_docs.append(docs[idx - 1])
+        if filtered_docs:
+            for d in docs:
+                if len(filtered_docs) >= top_k:
+                    break
+                if d not in filtered_docs:
+                    filtered_docs.append(d)
+            return filtered_docs[:top_k]
+    except Exception as e:
+        logger.warning(f"Stage 1 Fast Batch Rerank skipped ({e}). Using raw candidate set.")
+
+    return docs
+
+
 class SearchPipeline:
     """Deep search pipeline consolidating vector search, reranking, and Graph RAG."""
 
@@ -280,8 +322,18 @@ class SearchPipeline:
         if ctx.use_reranker:
             ctx.tracer.start_step("rerank")
             docs = [hit.entity.get("text") for hit in ctx.raw_hits]
+
+            # Stage 1: Fast batch filtering using Flash Lite 250K TPM -> Gemma 4 fallback
+            if len(docs) > ctx.limit:
+                candidate_docs = await stage1_fast_batch_rerank(
+                    ctx.raw_query, docs, top_k=min(ctx.limit * 2, len(docs))
+                )
+            else:
+                candidate_docs = docs
+
+            # Stage 2: Deep Local Reranking (CrossEncoder)
             reranker = get_reranker()
-            reranked = await reranker.rerank(ctx.raw_query, docs, top_k=ctx.limit)
+            reranked = await reranker.rerank(ctx.raw_query, candidate_docs, top_k=ctx.limit)
 
             hit_map = {}
             for hit in ctx.raw_hits:

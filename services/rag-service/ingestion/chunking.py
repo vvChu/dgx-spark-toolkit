@@ -1,8 +1,11 @@
 from abc import ABC, abstractmethod
 import os
 import re
+from typing import Optional
+
 
 # Configurable chunk size cap (bytes). Documents with very long articles
+
 # (e.g. QCVN specs with 20+ page annexes) need this safety cap.
 MAX_CHUNK_CHARS = int(os.environ.get("CHUNK_MAX_CHARS", "14500"))
 
@@ -653,12 +656,66 @@ def _is_noise_chunk(text: str) -> bool:
     return False
 
 
+def _is_broken_ocr_table(text: str) -> bool:
+    """Detect if a table text has broken OCR structure (misaligned columns, missing pipes, noise)."""
+    if not text:
+        return False
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    if len(lines) < 2:
+        return False
+    pipe_count = text.count("|")
+    if pipe_count > 2:
+        pipe_counts = [line.count("|") for line in lines]
+        if max(pipe_counts) != min(pipe_counts) and min(pipe_counts) == 0:
+            return True
+    if re.search(r'\.{4,}|\s{5,}\d+', text):
+        return True
+    return False
+
+
+def _correct_broken_table_with_vision(table_text: str, image_bytes: Optional[bytes] = None, doc_id: str = "") -> str:
+    """Auto-correct broken OCR tables using Multimodal Vision (Gemini 3.5 Flash Lite)."""
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        from core.ai_gateway_client import AIGatewayClient
+        client = AIGatewayClient()
+
+        prompt = (
+            "Dưới đây là nội dung một bảng biểu trong văn bản pháp luật bị lỗi OCR (mất cột, vỡ cấu trúc dòng).\n"
+            "Hãy dựng lại bảng này dưới dạng Markdown Table chuẩn hóa, giữ nguyên toàn bộ số liệu và văn bản chính xác.\n"
+            "Chỉ trả về Markdown Table, không kèm theo văn bản dẫn dắt khác.\n\n"
+            f"Dữ liệu bảng thô:\n{table_text[:3500]}"
+        )
+
+        if image_bytes:
+            reconstructed = client.complete_vision_sync(
+                image_bytes,
+                prompt=prompt,
+                model="gemini-3.5-flash-lite",
+            )
+        else:
+            reconstructed = client.complete_sync(
+                [{"role": "user", "content": prompt}],
+                model="gemini-3.5-flash-lite",
+                model_chain=["gemini-3.5-flash-lite", "openai/gemma-4-26b-a4b-it", "rag-core"],
+            )
+
+        if reconstructed and "|" in reconstructed and len(reconstructed) > 20:
+            return reconstructed.strip()
+    except Exception as e:
+        logger.debug(f"[TABLE-VISION-CORRECT] Vision table correction skipped: {e}")
+
+    return table_text
+
+
 class DocumentChunker:
     """Uses strategies sequentially until one succeeds."""
 
     # Minimum table size (chars) to trigger summarization
     TABLE_SUMMARY_MIN_CHARS = int(os.environ.get("TABLE_SUMMARY_MIN_CHARS", "2000"))
     TABLE_SUMMARY_ENABLED = os.environ.get("TABLE_SUMMARY_ENABLED", "1") == "1"
+    TABLE_CORRECT_ENABLED = os.environ.get("TABLE_CORRECT_ENABLED", "1") == "1"
 
     def __init__(self):
         self.strategies = [
@@ -677,6 +734,9 @@ class DocumentChunker:
                 # Filter out noise-only chunks
                 filtered = [c for c in chunks if not _is_noise_chunk(c.get("text", ""))]
                 result = filtered if filtered else chunks  # Safety: never return empty
+                # Auto-correct broken OCR tables using Multimodal Vision
+                if self.TABLE_CORRECT_ENABLED:
+                    result = self._correct_broken_tables(result, doc_id)
                 # Generate summaries for large table chunks
                 if self.TABLE_SUMMARY_ENABLED:
                     result = self._add_table_summaries(result, doc_id, source, page)
@@ -685,7 +745,21 @@ class DocumentChunker:
                 return result
         return []
 
+    def _correct_broken_tables(self, chunks: list[dict], doc_id: str) -> list[dict]:
+        """Iterate over table chunks and apply Multimodal Vision auto-correction for broken OCR tables."""
+        for chunk in chunks:
+            if chunk.get("is_table"):
+                text = chunk.get("text", "")
+                if _is_broken_ocr_table(text):
+                    img_bytes = chunk.get("image_bytes")
+                    corrected = _correct_broken_table_with_vision(text, image_bytes=img_bytes, doc_id=doc_id)
+                    if corrected and corrected != text:
+                        chunk["text"] = corrected
+                        chunk["table_auto_corrected"] = True
+        return chunks
+
     def _add_table_summaries(self, chunks: list[dict], doc_id: str, source: str, page: int) -> list[dict]:
+
         """Generate concise summary chunks for large tables.
 
         For each table chunk exceeding TABLE_SUMMARY_MIN_CHARS, creates an

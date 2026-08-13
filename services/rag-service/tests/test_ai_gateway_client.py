@@ -111,4 +111,36 @@ class TestAIGatewayClient:
         res_long = asyncio.run(corrector.async_pre_call_hook({}, req_data_long))
         assert res_long["model"] == "gemini/gemini-3.5-flash-lite"
 
+    def test_key_cooldown_manager_and_rotation(self):
+        import sys
+        import asyncio
+        from pathlib import Path
+        gateway_dir = str(Path(__file__).resolve().parents[2] / "ai-gateway")
+        if gateway_dir not in sys.path:
+            sys.path.insert(0, gateway_dir)
+
+        try:
+            from custom_callbacks import key_cooldown_manager, GeminiParameterCorrector
+        except ImportError:
+            pytest.skip("litellm environment not installed in current pytest runner")
+
+        # Test marking cooldown
+        key = "AIzaSyTestKey12345"
+        assert not key_cooldown_manager.is_key_in_cooldown(key)
+        key_cooldown_manager.mark_key_cooldown(key)
+        assert key_cooldown_manager.is_key_in_cooldown(key)
+
+        # Test failure event logging triggers cooldown
+        corrector = GeminiParameterCorrector()
+        asyncio.run(
+            corrector.async_log_failure_event(
+                {"status_code": 429, "api_key": "AIzaSy429Key67890"},
+                None,
+                0,
+                1,
+            )
+        )
+        assert key_cooldown_manager.is_key_in_cooldown("AIzaSy429Key67890")
+
+
 
