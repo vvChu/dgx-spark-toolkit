@@ -15,3 +15,8 @@ Tài liệu lưu trữ các quy tắc kỹ thuật cố định được rút ra
 ## 3. Kiểm tra Hợp lệ Nguyên tử cho Message Queue Payload
 - **Quy tắc**: Khi nhận item từ queue (`msg = queue.claim_next()`), luôn phải kiểm tra điều kiện nguyên tử `if msg_id and file_path:` trước khi đưa vào luồng `safe_process()`, `acknowledge()`, hay `nack()`.
 - **Chi tiết**: Ngăn ngừa tin nhắn không hợp lệ (corrupted/null payload) gây ra ngoại lệ dây chuyền (cascading failures).
+
+## 4. An Toàn API Key & Tránh Hardcode Master Key
+- **Quy tắc**: Tuyệt đối KHÔNG hardcode API Key / Master Key dự phòng (fallback strings như `sk-spark-...`) trong scripts verifier hay playbook markdown.
+- **Chi tiết**: Mọi script phải yêu cầu biến môi trường `$LITELLM_MASTER_KEY` từ hệ thống hoặc file `.env`, đồng thời báo lỗi / ngắt an toàn thay vì dùng giá trị bí mật mặc định.
+

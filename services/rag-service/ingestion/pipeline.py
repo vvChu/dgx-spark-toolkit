@@ -558,6 +558,11 @@ class DocumentIngestionPipeline:
                                 )
                             except Exception as e:
                                 queue.nack(msg_id, file_path=file_path, error=str(e))
+                        elif msg_id:
+                            logger.warning(f"Corrupt message payload (missing file_path) for msg_id: {msg_id}")
+                            queue.nack(msg_id, file_path=file_path or "", error="Missing file_path in message payload")
+                        else:
+                            logger.warning(f"Skipping corrupt unclaimed message: {msg}")
                 else:
                     time.sleep(1)
         except Exception as e:

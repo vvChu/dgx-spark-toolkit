@@ -102,8 +102,10 @@ def verify_integrity(project_root: Path) -> Tuple[bool, List[str]]:
     served_name = os.getenv("LOCAL_PRIMARY_SERVED_NAME") or env_vars.get(
         "LOCAL_PRIMARY_SERVED_NAME", "qwen-local-primary"
     )
-    gateway_url = os.getenv("AI_GATEWAY_URL") or "http://localhost:8090/v1"
-    api_key = os.getenv("LITELLM_MASTER_KEY") or "sk-spark-secure-key-2026"
+    gateway_url = os.getenv("AI_GATEWAY_URL") or env_vars.get("AI_GATEWAY_URL", "http://localhost:8090/v1")
+    api_key = os.getenv("LITELLM_MASTER_KEY") or env_vars.get("LITELLM_MASTER_KEY", "")
+    if not api_key:
+        logs.append("⚠️ LITELLM_MASTER_KEY is not set in environment or .env file.")
 
     logs.append(f"🔍 Target Model Directory: {model_dir}")
     logs.append(f"🔍 Expected Served Name:   {served_name}")
