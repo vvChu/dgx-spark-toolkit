@@ -292,6 +292,7 @@ class AIGatewayClient:
         image_bytes_or_b64: Any,
         prompt: str = "Trích xuất toàn bộ văn bản tiếng Việt từ ảnh pháp lý này.",
         *,
+        system_prompt: Optional[str] = None,
         model: Optional[str] = None,
         model_chain: Optional[List[str]] = None,
         max_tokens: int = 8192,
@@ -320,7 +321,10 @@ class AIGatewayClient:
             else:
                 data_uri = f"data:{mime_type};base64,{b64_str}"
 
-        messages = [
+        messages: List[Dict[str, Any]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append(
             {
                 "role": "user",
                 "content": [
@@ -328,7 +332,7 @@ class AIGatewayClient:
                     {"type": "image_url", "image_url": {"url": data_uri}}
                 ]
             }
-        ]
+        )
         target_model = model or getattr(self.settings, "PRIMARY_VISION_MODEL", "gemini-3-flash")
         chain = model_chain or [target_model, "ocr-primary", "ocr-fallback", "rag-core"]
         extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
@@ -362,8 +366,15 @@ class AIGatewayClient:
     def extract_json_sync(self, prompt_or_messages: Any, **kwargs) -> Any:
         return asyncio.run(self.extract_json(prompt_or_messages, **kwargs))
 
-    def complete_vision_sync(self, image_bytes_or_b64: Any, prompt: str = "Trích xuất văn bản.", **kwargs) -> str:
-        return asyncio.run(self.complete_vision(image_bytes_or_b64, prompt, **kwargs))
+    def complete_vision_sync(
+        self,
+        image_bytes_or_b64: Any,
+        prompt: str = "Trích xuất văn bản.",
+        *,
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> str:
+        return asyncio.run(self.complete_vision(image_bytes_or_b64, prompt, system_prompt=system_prompt, **kwargs))
 
 
 class MockAIGatewayClient(AIGatewayClient):
@@ -414,8 +425,8 @@ class MockAIGatewayClient(AIGatewayClient):
         messages = prompt_or_messages if isinstance(prompt_or_messages, list) else [{"role": "user", "content": prompt_or_messages}]
         return await self.complete_json(messages, schema=schema, **kwargs)
 
-    async def complete_vision(self, image_bytes_or_b64: Any, prompt: str = "", **kwargs) -> str:
-        self.call_history.append({"prompt": prompt, "kwargs": kwargs, "vision": True})
+    async def complete_vision(self, image_bytes_or_b64: Any, prompt: str = "", *, system_prompt: Optional[str] = None, **kwargs) -> str:
+        self.call_history.append({"prompt": prompt, "system_prompt": system_prompt, "kwargs": kwargs, "vision": True})
         if self._mock_vision_handler is not None:
             if callable(self._mock_vision_handler):
                 return self._mock_vision_handler(prompt, image_bytes_or_b64)

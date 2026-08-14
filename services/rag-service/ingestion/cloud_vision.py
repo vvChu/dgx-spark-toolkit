@@ -12,11 +12,10 @@ import logging
 import os
 import re
 import time
-
-import httpx
+from typing import Any, Dict, List, Optional
 
 from ingestion.cleaning_utils import clean_llm_text
-from core.circuit_breaker import get_circuit_breaker
+from core.ai_gateway_client import get_ai_gateway_client
 
 logger = logging.getLogger(__name__)
 
@@ -27,21 +26,13 @@ FALLBACK_MODEL = os.getenv("FALLBACK_VISION_MODEL", "ocr-fallback")
 GATEWAY_URL = os.getenv("VLLM_API_BASE", "http://ai-gateway:4000/v1")
 API_KEY = os.getenv("LITELLM_MASTER_KEY", "")
 
-# OCR fallback chain: flash-lite → flash → rag-core (gemma-3-27b REMOVED: verbose output, preamble issues)
-# GEMMA_OCR_MODEL intentionally disabled for vision tasks
-
 # Per-task model routing — lightweight tasks offloaded to fast remote models
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "text-gemma")
 METADATA_MODEL = os.getenv("METADATA_MODEL", "text-gemma")
-METADATA_FALLBACK = os.getenv("METADATA_FALLBACK", "rag-core")         # Text-only fallback (local GPU, no quota)
-
-_MAX_RETRIES = 3
-_INITIAL_BACKOFF = 2  # seconds
-
-from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
+METADATA_FALLBACK = os.getenv("METADATA_FALLBACK", "rag-core")  # Text-only fallback (local GPU, no quota)
 
 
-def _call_model(messages: list, model: str, max_tokens: int = 4096,
+def _call_model(messages: List[Dict[str, Any]], model: str, max_tokens: int = 4096,
                 temperature: float = 0.0, disable_thinking: bool = True) -> str:
     """Send a request to a specific model via AIGatewayClient."""
     client = get_ai_gateway_client()
@@ -113,13 +104,13 @@ def _strip_preamble(text: str) -> str:
     return '\n'.join(lines[start_idx:]).strip()
 
 
-def _call_llm(messages: list, max_tokens: int = 4096,
+def _call_llm(messages: List[Dict[str, Any]], max_tokens: int = 4096,
               temperature: float = 0.0, task: str = "extract",
-              primary_model: str | None = None,
-              fallback_model: str | None = None,
+              primary_model: Optional[str] = None,
+              fallback_model: Optional[str] = None,
               is_vision: bool = False) -> str:
-    """Call LLM via gateway; if primary fails, automatically tries fallback_model.
-    
+    """Call LLM via AIGatewayClient with fallback cascade.
+
     Args:
         messages: Chat messages
         max_tokens: Maximum response tokens
@@ -127,35 +118,32 @@ def _call_llm(messages: list, max_tokens: int = 4096,
         task: Task label for logging
         primary_model: Override primary model (if provided).
         fallback_model: Fallback model to try if primary returns empty.
+        is_vision: Flag indicating if call contains image payload.
     """
+    client = get_ai_gateway_client()
     p_model = primary_model or PRIMARY_MODEL
+    chain = [p_model]
+    if fallback_model and fallback_model != p_model:
+        chain.append(fallback_model)
+    if "rag-core" not in chain:
+        chain.append("rag-core")
 
     t0 = time.time()
-    result = _call_model(messages, p_model, max_tokens, temperature,
-                         disable_thinking=("rag" in p_model or "qwen" in p_model.lower()))
+    try:
+        raw = client.complete_sync(
+            messages,
+            model=p_model,
+            model_chain=chain,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        if raw:
+            raw = _strip_preamble(raw)
+            logger.info(f"  LLM [{task}] → {p_model} OK ({time.time()-t0:.1f}s, {len(raw)} chars)")
+            return raw
+    except Exception as e:
+        logger.warning(f"  LLM [{task}] call failed across chain {chain}: {e}")
 
-    if result:
-        # Post-process LLM output to strip verbose preamble
-        result = _strip_preamble(result)
-        if not result:
-            logger.warning(f"  LLM Vision [{task}] → {p_model}: preamble stripped left empty")
-        else:
-            logger.info(f"  LLM Vision [{task}] → {p_model} OK ({time.time()-t0:.1f}s, {len(result)} chars)")
-            return result
-
-    # Primary failed or empty — try explicit fallback_model if provided
-    if fallback_model and fallback_model != p_model:
-        logger.warning(f"  LLM Vision [{task}] → {p_model} failed. Trying fallback: {fallback_model}")
-        t1 = time.time()
-        f_result = _call_model(messages, fallback_model, max_tokens, temperature,
-                               disable_thinking=("rag" in fallback_model or "qwen" in fallback_model.lower()))
-        if f_result:
-            f_result = _strip_preamble(f_result)
-            if f_result:
-                logger.info(f"  LLM Vision [{task}] → {fallback_model} OK (fallback, {time.time()-t1:.1f}s, {len(f_result)} chars)")
-                return f_result
-
-    logger.error(f"  LLM Vision [{task}] → all models failed (primary={p_model}, fallback={fallback_model})")
     return ""
 
 
@@ -180,38 +168,47 @@ BỎ QUA HOÀN TOÀN (KHÔNG trích xuất):
 - Số trang đứng đơn lẻ."""
 
 
-
 def llm_extract_page(img_bytes: bytes, page_num: int = 0,
-                     digital_text: str = "", model_override: str | None = None) -> dict:
+                     digital_text: str = "", model_override: Optional[str] = None) -> dict:
     """Extract text from a scanned PDF page image using LLM Vision.
 
     Args:
         img_bytes: JPEG bytes of the page image
         page_num: 1-indexed page number
         digital_text: Any digital text already extracted by fitz (for reference)
+        model_override: Optional model override.
 
     Returns:
         dict with keys: text, is_table, layout, source
     """
-    b64 = base64.b64encode(img_bytes).decode("utf-8")
-
+    client = get_ai_gateway_client()
+    target_model = model_override or PRIMARY_MODEL
     user_prompt = "Hãy bắt đầu bóc tách (OCR) cấu trúc Văn bản này:"
 
-    messages = [
-        {"role": "system", "content": _EXTRACT_SYSTEM},
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": user_prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            ],
-        },
-    ]
+    t0 = time.time()
+    try:
+        raw = client.complete_vision_sync(
+            img_bytes,
+            prompt=user_prompt,
+            system_prompt=_EXTRACT_SYSTEM,
+            model=target_model,
+            model_chain=[target_model, FALLBACK_MODEL, "rag-core"],
+            max_tokens=8192,
+            temperature=0.0,
+        )
+    except Exception as e:
+        logger.error(f"  LLM Vision [ocr_p{page_num}] → all models failed: {e}")
+        return {"text": "", "is_table": False, "layout": [], "source": "llm_failed"}
 
-    raw = _call_llm(messages, max_tokens=8192, temperature=0.0, task=f"ocr_p{page_num}", is_vision=True, primary_model=model_override)
     if not raw:
         return {"text": "", "is_table": False, "layout": [], "source": "llm_failed"}
 
+    raw = _strip_preamble(raw)
+    if not raw:
+        logger.warning(f"  LLM Vision [ocr_p{page_num}] → {target_model}: preamble stripped left empty")
+        return {"text": "", "is_table": False, "layout": [], "source": "llm_failed"}
+
+    logger.info(f"  LLM Vision [ocr_p{page_num}] → {target_model} OK ({time.time()-t0:.1f}s, {len(raw)} chars)")
     text = clean_llm_text(raw)
 
     # Detect table presence
@@ -275,7 +272,7 @@ Trả về JSON THUẦN TÚY (không markdown, không giải thích) với các 
 Nếu không tìm thấy → để trống "". KHÔNG đoán. CHỈ JSON."""
 
 
-def _extract_json_from_llm(raw: str) -> dict | None:
+def _extract_json_from_llm(raw: str) -> Optional[dict]:
     """Robustly extract a JSON object from LLM output.
 
     Handles common failure modes:

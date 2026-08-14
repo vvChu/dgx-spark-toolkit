@@ -35,6 +35,17 @@ class TestAIGatewayClient:
         assert "Extracted OCR Text" in res
         assert len(mock_client.call_history) == 1
 
+    def test_mock_client_complete_vision_with_system_prompt(self):
+        mock_client = MockAIGatewayClient(default_response="Extracted Table OCR")
+        res = mock_client.complete_vision_sync(
+            b"fake_image_bytes",
+            prompt="Extract OCR",
+            system_prompt="Custom Legal OCR System Prompt",
+        )
+        assert "Extracted Table OCR" in res
+        assert len(mock_client.call_history) == 1
+        assert mock_client.call_history[0]["system_prompt"] == "Custom Legal OCR System Prompt"
+
     def test_complete_json_markdown_stripping(self):
         client = AIGatewayClient()
         raw = "```json\n{\"title\": \"Sample\", \"category\": \"Legal\"}\n```"
