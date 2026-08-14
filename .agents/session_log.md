@@ -22,20 +22,29 @@
 
 ### Thay đổi đã thực hiện (2026-08-14)
 
-- [x] **RAG Codebase Architecture Deepening (Candidates 01 - 04)**:
-  - **Candidate 01 — LLM Streaming Seam**: Thêm dataclass `StreamChunk(text, is_thought, finish_reason)` và phương thức `AIGatewayClient.stream()` phân tách luồng suy nghĩ tư duy (CoT reasoning) và token câu trả lời. Refactor `ChatService.stream_response()` tiêu thụ trực tiếp seam này.
-  - **Candidate 02 — Unified DocumentStore Persistence Seam**: Mở rộng `MilvusRepository.insert_chunks()` và `Neo4jRepository.create_document_node()`. Hoàn thiện `DocumentStore` bao bọc nguyên tử Milvus, Neo4j, StateManager với cả async & sync helpers; xóa bỏ hoàn toàn các điểm bypass DB thô trong `ingestion/pipeline.py`.
-  - **Candidate 03 — Deep SearchPipeline & Domain Service Consolidation**: Bổ sung `InMemorySearchPipeline` test adapter; refactor `ComplianceService` và `LegalAnalysisEngine` thống nhất truy hồi qua `SearchPipeline`.
-  - **Candidate 04 — Frontend Facade Collapse**: Xóa bỏ wrapper mỏng thừa `streamApi.ts`, quy chuẩn 100% SSE streaming về `StreamClient`.
-- [x] **PR #44 Automated Copilot Review & Merge Flow (`/pr-copilot-flow`)**:
-  - Xử lý triệt để 6 góp ý kiến trúc từ Copilot Code Reviewer: chuyển `_run_async` sang fail-fast an toàn, chuẩn hóa & gán bù toàn diện document identity và `sparse_vector` cho chunks trước khi insert Milvus, sửa `split('/', 1)` bảo toàn số hiệu văn bản pháp luật, giữ `InMemorySearchPipeline` 100% hermetic offline.
-  - Cập nhật **Rule 5, 6, 7** vào `.agents/rules/codebase-engineering-rules.md`.
-  - 100% GitHub Actions CI checks vượt qua thành công: `CI/Backend Tests` (4m9s), `CI/Frontend Build` (37s), `CI/Python Lint` (15s).
-  - Đã Squash & Merge PR #44 vào `master` ([commit 7a89d66](https://github.com/vvChu/dgx-spark-toolkit/commit/7a89d66)), xóa branch feature trên local & remote.
+- [x] **RAG Codebase Architecture Deepening Round 2 (PR #45)**:
+  - **Candidate 01 — Deep `DocumentReader` Seam**: Hợp nhất 4 format parsers (PDF, DOCX/DOC, XLSX/XLS, Image) và phân tầng OCR (Native Text ➡️ Surya OCR ➡️ Vision LLM) vào `ingestion/document_reader.py`. Bổ sung `InMemoryDocumentReader` test adapter hermetic cho offline test.
+  - **Candidate 02 — Vision `AIGatewayClient` Seam**: Chuẩn hóa 100% điểm gọi OCR/Vision trong `cloud_vision.py`, `vision.py`, `figure_extractor.py`, `chunking.py` qua `complete_vision()` / `complete_vision_sync()`. Tận dụng cooldown Google AI Studio và chuỗi 3-tier fallback.
+  - **Candidate 03 — Multi-Hop Agentic Retrieval in `SearchPipeline`**: Tích hợp chu trình phân rã câu hỏi Plan-Retrieve-Reflect trực tiếp vào `SearchPipeline`. Tự động kích hoạt khi `QueryIntent.COMPLEX`, xóa circular dependency và biến `AgenticRetriever` thành facade mỏng.
+  - **Candidate 04 — Unified Graph Relations & Lifecycle in `DocumentStore`**: Thêm `add_relation()` và `notify_version_update()` vào `DocumentStore`, đơn giản hóa `LifecycleService` về 1 dependency duy nhất, chuẩn hóa `/admin/sync-status` với `get_document_store` dependency injection.
+- [x] **PR #45 Automated Copilot Review & Merge Flow (`/pr-copilot-flow`)**:
+  - Xử lý triệt để 2 góp ý từ Copilot Review: trả về explicit `unsupported_relation` khi Neo4j repo không hỗ trợ quan hệ, dọn dẹp triệt để thư mục cha tạm thời (`shutil.rmtree`) khi convert `.doc` sang `.docx` bằng LibreOffice.
+  - Cập nhật **Rule 8, 9, 10** vào `.agents/rules/codebase-engineering-rules.md`.
+  - 100% GitHub Actions CI checks vượt qua thành công: `CI/Backend Tests` (3m58s), `CI/Frontend Build` (36s), `CI/Python Lint` (13s).
+  - Đã Squash & Merge PR #45 vào `master`, xóa branch feature an toàn.
 - [x] **Full Backend & Frontend Test Suite**:
-  - Backend: **369/369 unit tests PASSED (100%)**
+  - Backend: **389/389 unit tests PASSED (100%)**
   - Flake8: **0 lint errors (code 0)**
   - Frontend: **ESLint + Vite production build passed (0 errors)**
+- [x] **Background Task Polling Optimization**:
+  - Nghiên cứu cơ chế Reactive Wakeup trong Antigravity CLI.
+  - Bổ sung **Rule 10** (Strict Yielding & Reactive Wakeup) và cập nhật workflow `pr-copilot-flow.md` để loại bỏ hoàn toàn tình trạng loop `ManageTask(status)`.
+
+- [x] **RAG Codebase Architecture Deepening Round 1 (PR #44)**:
+  - **Candidate 01 — LLM Streaming Seam**: Thêm dataclass `StreamChunk(text, is_thought, finish_reason)` và phương thức `AIGatewayClient.stream()`.
+  - **Candidate 02 — Unified DocumentStore Persistence Seam**: Mở rộng `MilvusRepository.insert_chunks()` và `Neo4jRepository.create_document_node()`.
+  - **Candidate 03 — Deep SearchPipeline & Domain Service Consolidation**: Bổ sung `InMemorySearchPipeline` test adapter.
+  - **Candidate 04 — Frontend Facade Collapse**: Xóa bỏ wrapper mỏng thừa `streamApi.ts`.
 
 ### Thực nghiệm / Công việc tiếp theo
 - [ ] Khởi động lại hoặc deploy RAG container trên DGX Spark (`/start-all` hoặc `/rag-only`) để chạy code mới nhất.
