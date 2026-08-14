@@ -20,7 +20,16 @@
 | `litellm-postgres` | ✅ Up (healthy) | 27 hours |
 | `litellm-redis` | ✅ Up (healthy) | 27 hours |
 
-### Thay đổi đã thực hiện (2026-08-14)
+- [x] **RAG Codebase Architecture Deepening Round 3 (PR #50)**:
+  - **Candidate #1 — Deep Domain Analysis & Compliance Seam**: Chuyển đổi `LegalAnalysisEngine` và `ComplianceService` sang tiêu thụ trực tiếp `SearchPipeline` seam. Xóa bỏ hoàn toàn code fallback DB thô và sinh embedding thủ công. Bổ sung `get_legal_timeline(doc_id)` vào `SearchPipeline` và `InMemorySearchPipeline`.
+  - **Candidate #2 — Deep Multi-Modal Extraction Seam in `DocumentReader`**: Đóng gói hoàn toàn module trích xuất bảng (`table_extraction.extract_and_merge_tables`) và mô tả hình vẽ kỹ thuật bằng Vision AI (`figure_extractor.describe_page_figures`) vào luồng Native PDF của `DocumentReader`.
+  - **Candidate #3 — Collapse Shallow Retrieval Facade `AgenticRetriever`**: Xóa bỏ hoàn toàn file `retrieval/agentic_retriever.py` (vượt qua *Deletion Test*), chuẩn hóa toàn bộ caller/test trực tiếp trên `SearchPipeline.search(use_agentic=True)`.
+  - **Candidate #4 — Unify Ingestion Persistence Seam in `DocumentStore`**: Xóa hơn 40 dòng mã tự build entity và chèn Milvus thô trùng lặp trong `DocumentIngestionPipeline._stage_indexing`. Tự động fallback `InMemoryDocumentStore` khi offline, đảm bảo locality 100%.
+  - **PR #50 Automated Copilot Review & Merge Flow (`/pr-copilot-flow`)**:
+    - Xử lý triệt để góp ý từ Copilot Review: bảo toàn số thứ tự văn bản khi phân tách namespace (chỉ tách khi tiền tố là chuỗi phi số như `VBPL/`). Bổ sung `test_fetch_doc_context_parsing`.
+    - Cập nhật **Rule 5** vào `.agents/rules/codebase-engineering-rules.md`.
+    - 100% GitHub Actions CI checks vượt qua thành công: `CI/Backend Tests` (3m32s), `CI/Frontend Build` (38s), `CI/Python Lint` (18s).
+    - Đã Squash & Merge PR #50 vào `master`, xóa branch feature an toàn. Toàn bộ **394/394 unit tests PASSED (100%)**.
 
 - [x] **AI Gateway & Client Seam Architecture Deepening (Wayfinder Map #49)**:
   - **Candidate #1 & Ticket #46 — Purge Orphan Migration Scripts**: Xóa bỏ hoàn toàn các file script tạm một lần (`fix_yaml.py`, `refactor_yaml.py`, `new_config.yaml`), bảo đảm tính toàn vẹn và nguồn cấu hình duy nhất của `litellm_config.yaml`.
