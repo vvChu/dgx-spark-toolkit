@@ -182,3 +182,15 @@ class TestAIGatewayClient:
             assert received[2].text == "Theo quy định tại Điều 5"
 
         asyncio.run(_test())
+
+    def test_mock_client_set_mock_vision_response_string(self):
+        mock_client = MockAIGatewayClient()
+        mock_client.set_mock_vision_response("| Cột 1 | Cột 2 |\n|---|---|\n| A | B |")
+        res = mock_client.complete_vision_sync(b"fake_table_png", prompt="Convert table")
+        assert "| Cột 1 | Cột 2 |" in res
+
+    def test_mock_client_set_mock_vision_response_callable(self):
+        mock_client = MockAIGatewayClient()
+        mock_client.set_mock_vision_response(lambda prompt, img: f"Dynamically handled prompt: {prompt}")
+        res = mock_client.complete_vision_sync(b"image_bytes", prompt="Extract Điều 1")
+        assert res == "Dynamically handled prompt: Extract Điều 1"

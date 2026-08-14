@@ -55,6 +55,7 @@ from repositories.milvus_repo import MilvusRepository
 from repositories.neo4j_repo import Neo4jRepository
 from services.lifecycle_service import LifecycleService
 from ingestion.models import ProcessedDocument, DocumentIdentity, DocumentMetadata
+from ingestion.document_reader import DocumentReader, InMemoryDocumentReader
 
 # Prometheus Metrics
 INGESTION_WORKERS_ACTIVE = Gauge('ingestion_workers_active', 'Number of active ingestion workers')
@@ -88,13 +89,25 @@ _LEGAL_SHORT_PATTERNS = re.compile(
 class DocumentIngestionPipeline:
     """Unified deep module for Vietnamese legal document ingestion."""
 
-    def __init__(self, state_manager: StateManager | None = None, settings: Any | None = None):
+    def __init__(
+        self,
+        state_manager: StateManager | None = None,
+        settings: Any | None = None,
+        document_reader: DocumentReader | None = None,
+    ):
         pipeline_config._load()
         settings = settings or get_settings()
 
         self.vision = VisionExtractor()
         self.state_manager = state_manager or StateManager()
         self.normalizer = TextNormalizer()
+
+        if document_reader is not None:
+            self.document_reader = document_reader
+        elif isinstance(self.state_manager, InMemoryStateManager):
+            self.document_reader = InMemoryDocumentReader()
+        else:
+            self.document_reader = DocumentReader(vision_extractor=self.vision)
 
         from retrieval.search_pipeline import get_embedding_model
         self.model = get_embedding_model()
@@ -340,17 +353,10 @@ class DocumentIngestionPipeline:
         return doc
 
     def _stage_ocr(self, doc: ProcessedDocument) -> ProcessedDocument:
-        ext = os.path.splitext(doc.file_path)[1].lower()
-        if ext == '.pdf':
-            doc.pages = self._extract_pdf_pages(doc.file_path)
-        elif ext in ('.docx', '.doc'):
-            text = self._extract_docx_text(doc.file_path)
-            doc.pages = [{"page": 1, "text": text, "route": "docx", "is_table": False, "bbox": ""}]
-        elif ext in ('.jpg', '.jpeg', '.png'):
-            text = _llm_extract_page(doc.file_path, page_num=1)
-            doc.pages = [{"page": 1, "text": text, "route": "image_ocr", "is_table": False, "bbox": ""}]
-        else:
-            doc.pages = []
+        extracted = self.document_reader.extract(doc.file_path)
+        if extracted.error:
+            logger.warning(f"Document extraction warning for {doc.file_path}: {extracted.error}")
+        doc.pages = extracted.to_pages_dict()
         return doc
 
     def _stage_metadata(self, doc: ProcessedDocument) -> ProcessedDocument:
@@ -470,31 +476,12 @@ class DocumentIngestionPipeline:
     # ── Helper Extractors & Parsers ───────────────────────────────────
 
     def _extract_pdf_pages(self, file_path: str) -> list[dict]:
-        pages = []
-        try:
-            doc = fitz.open(file_path)
-            for idx, page in enumerate(doc):
-                text = page.get_text("text") or ""
-                pages.append({
-                    "page": idx + 1,
-                    "text": text,
-                    "route": "digital" if text.strip() else "ocr",
-                    "is_table": False,
-                    "bbox": "",
-                })
-            doc.close()
-        except Exception as e:
-            logger.error(f"Error extracting PDF pages from {file_path}: {e}")
-        return pages
+        extracted = self.document_reader.extract(file_path)
+        return extracted.to_pages_dict()
 
     def _extract_docx_text(self, file_path: str) -> str:
-        try:
-            import docx
-            doc = docx.Document(file_path)
-            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-        except Exception as e:
-            logger.error(f"Error reading docx {file_path}: {e}")
-            return ""
+        extracted = self.document_reader.extract(file_path)
+        return extracted.full_text
 
     def _parse_metadata(self, filename: str) -> dict:
         meta = {"date": "unknown", "type": "unknown", "authority": "unknown", "doc_number": ""}

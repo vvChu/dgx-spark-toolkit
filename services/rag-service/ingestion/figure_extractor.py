@@ -77,7 +77,7 @@ def _get_client() -> httpx.Client:
 
 
 def _describe_figure(img_bytes: bytes, hint_label: str = "", page_num: int = 0) -> str:
-    """Call the vision LLM to describe a figure image.
+    """Call the vision LLM to describe a figure image via AIGatewayClient.
 
     Uses gemini-3-flash (fast remote) by default, falls back to rag-core
     (local 35B) if the remote model fails.
@@ -90,13 +90,7 @@ def _describe_figure(img_bytes: bytes, hint_label: str = "", page_num: int = 0) 
     Returns:
         A short description string (≤ _MAX_DESC_CHARS chars), or "" on failure.
     """
-    gateway_url = os.environ.get("VLLM_API_BASE", "http://ai-gateway:4000/v1")
-    api_key = os.environ.get("LITELLM_MASTER_KEY", "")
-    if not api_key:
-        logger.warning("[FIGURE] LITELLM_MASTER_KEY not set — skipping figure description")
-        return ""
-
-    b64 = base64.b64encode(img_bytes).decode()
+    from core.ai_gateway_client import get_ai_gateway_client
     hint = f"Nhãn hình: {hint_label}\n" if hint_label else ""
     prompt = (
         f"{hint}"
@@ -106,54 +100,27 @@ def _describe_figure(img_bytes: bytes, hint_label: str = "", page_num: int = 0) 
         "KHÔNG giải thích thêm. Tối đa 50 từ."
     )
 
-    # Try preferred model first, then fallback chain
     models_to_try = [_FIGURE_MODEL] + [
         m for m in _FIGURE_FALLBACK_CHAIN if m != _FIGURE_MODEL
     ]
 
-    for model in models_to_try:
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
-                    ]
-                }
-            ],
-            "max_tokens": 120,
-            "temperature": 0.1,
-        }
-        # Only add extra_body for local vLLM models (Qwen thinking mode)
-        if model in ("rag-core", "qwen3.5-35b"):
-            payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
-
-        for attempt in range(2):
-            try:
-                t0 = time.time()
-                resp = _get_client().post(
-                    f"{gateway_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json=payload,
-                )
-                if resp.status_code == 429:
-                    wait = 2 ** attempt
-                    logger.debug(f"[FIGURE] 429 rate limit ({model}) page {page_num+1}, retry in {wait}s")
-                    time.sleep(wait)
-                    continue
-                resp.raise_for_status()
-                content = (resp.json()["choices"][0]["message"].get("content") or "").strip()
-                elapsed = time.time() - t0
-                logger.info(f"  LLM Vision [ocr_p{page_num+1}] → {model} OK ({elapsed:.1f}s, {len(content)} chars)")
-                return content[:_MAX_DESC_CHARS]
-            except Exception as e:
-                if attempt < 1:
-                    time.sleep(1)
-                else:
-                    logger.warning(f"[FIGURE] {model} failed on page {page_num+1}: {e}")
-                    break  # Try next model
+    client = get_ai_gateway_client()
+    try:
+        t0 = time.time()
+        content = client.complete_vision_sync(
+            img_bytes,
+            prompt=prompt,
+            model=_FIGURE_MODEL,
+            model_chain=models_to_try,
+            max_tokens=120,
+            temperature=0.1,
+        )
+        elapsed = time.time() - t0
+        if content:
+            logger.info(f"  LLM Vision [figure_p{page_num+1}] OK ({elapsed:.1f}s, {len(content)} chars)")
+            return content[:_MAX_DESC_CHARS]
+    except Exception as e:
+        logger.warning(f"[FIGURE] Vision description failed on page {page_num+1}: {e}")
 
     return ""
 

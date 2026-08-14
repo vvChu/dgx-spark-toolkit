@@ -196,6 +196,20 @@ async def get_state_manager(request: Request) -> PostgresStateManager:
     return request.app.state.state_manager
 
 
+async def get_document_store(
+    state_manager: PostgresStateManager = Depends(get_state_manager),
+    milvus_repo: MilvusRepository = Depends(get_milvus_repo),
+    neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
+):
+    """Dependency to inject the unified DocumentStore."""
+    from repositories.document_store import DocumentStore
+    return DocumentStore(
+        milvus_repo=milvus_repo,
+        neo4j_repo=neo4j_repo,
+        state_manager=state_manager,
+    )
+
+
 async def get_http_client(request: Request) -> httpx.AsyncClient:
     """Dependency to inject the shared HTTP client."""
     return request.app.state.http_client
