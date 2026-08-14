@@ -206,6 +206,20 @@ class StateManager:
             logger.error(f"Error getting status for {file_path}: {e}")
             return None
 
+    def get_file_state(self, file_path: str) -> dict | None:
+        """Get the full state record of a file."""
+        if not self.engine:
+            return None
+        try:
+            with self.engine.connect() as conn:
+                row = conn.execute(text(
+                    "SELECT * FROM ingestion_state WHERE file_path = :file_path"
+                ), {"file_path": file_path}).mappings().fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Error getting file state for {file_path}: {e}")
+            return None
+
     def get_all_state(self):
         """Retrieve the entire state (for backward compatibility/UI)."""
         if not self.engine:
@@ -364,6 +378,9 @@ class InMemoryStateManager:
     def get_status(self, file_path: str):
         record = self._states.get(file_path)
         return record["status"] if record else None
+
+    def get_file_state(self, file_path: str) -> dict | None:
+        return self._states.get(file_path)
 
     def get_all_state(self):
         return {k: {"status": v.get("status"), "doc_id": v.get("doc_id") or "unknown"} for k, v in self._states.items()}

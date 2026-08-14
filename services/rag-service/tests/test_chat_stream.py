@@ -99,3 +99,63 @@ class TestChatStream:
             assert "text/event-stream" in response.headers.get("content-type", "")
             assert response.headers.get("cache-control") == "no-cache"
             assert response.headers.get("x-accel-buffering") == "no"
+
+    def test_chat_service_stream_response_with_mock_ai_gateway(self):
+        """Test ChatService.stream_response directly with MockAIGatewayClient."""
+        import asyncio
+        import json
+        from core.ai_gateway_client import MockAIGatewayClient, StreamChunk
+        from services.chat_service import ChatService
+
+        async def _test():
+            mock_milvus = MagicMock()
+            mock_neo4j = MagicMock()
+            mock_neo4j.driver = None
+            mock_http = AsyncMock()
+
+            custom_chunks = [
+                StreamChunk(text="Phân tích câu hỏi...", is_thought=True),
+                StreamChunk(text="Căn cứ Điều 10...", is_thought=False),
+            ]
+            mock_ai_client = MockAIGatewayClient()
+
+            # Patch retrieval search to return dummy hit
+            chat_service = ChatService(
+                milvus_repo=mock_milvus,
+                neo4j_repo=mock_neo4j,
+                http_client=mock_http,
+                ai_client=mock_ai_client,
+            )
+
+            with patch.object(chat_service.retrieval_service, "search", new_callable=AsyncMock) as mock_search:
+                mock_search.return_value = {
+                    "results": [{"doc_number": "QCVN 06:2022", "page": 1, "text": "Quy định an toàn cháy", "score": 0.95}],
+                    "trace": {},
+                }
+                with patch.object(mock_ai_client, "stream") as mock_stream:
+                    async def _stream_gen(*args, **kwargs):
+                        for chunk in custom_chunks:
+                            yield chunk
+
+                    mock_stream.side_effect = _stream_gen
+
+                    events = []
+                    async for sse_line in chat_service.stream_response(query="Quy định an toàn cháy?", language="vi"):
+                        events.append(sse_line)
+
+                    # Verify events emitted
+                    assert len(events) >= 4  # context event, thought event, token event, trace event, [DONE]
+                    event_types = []
+                    for ev in events:
+                        if ev.startswith("data: ") and not ev.startswith("data: [DONE]"):
+                            data_str = ev[6:].strip()
+                            parsed = json.loads(data_str)
+                            event_types.append(parsed.get("type"))
+
+                    assert "context" in event_types
+                    assert "thought" in event_types
+                    assert "token" in event_types
+                    assert "trace" in event_types
+
+        asyncio.run(_test())
+

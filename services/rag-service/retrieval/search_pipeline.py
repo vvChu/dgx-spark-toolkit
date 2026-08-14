@@ -408,3 +408,48 @@ class SearchPipeline:
                     r["text"] = f"[LEGAL TIMELINE]: {summary}\n\n[CONTENT]: {r['text']}"
                     timeline_count += 1
         ctx.tracer.end_step(timelines_generated=timeline_count)
+
+
+class InMemorySearchPipeline(SearchPipeline):
+    """In-memory test adapter for SearchPipeline offline testing."""
+
+    def __init__(self, custom_results: Optional[List[Dict[str, Any]]] = None, ai_client: Optional[AIGatewayClient] = None):
+        self.custom_results = custom_results or [
+            {
+                "text": "Điều 1. Phạm vi điều chỉnh",
+                "source": "01_2024_TT-BXD.pdf",
+                "page": 1,
+                "summary": "Quy định chung",
+                "doc_date": "2024-01-01",
+                "doc_type": "TT",
+                "authority": "BXD",
+                "doc_number": "01/2024/TT-BXD",
+                "is_table": False,
+                "chunk_type": "parent",
+                "parent_id": "VBPL/01_2024_TT-BXD",
+                "bbox": [0, 0, 1000, 1000],
+                "validity_status": "ACTIVE",
+                "project_code": "GENERIC",
+                "discipline": "UNKNOWN",
+                "hierarchy_path": "",
+                "doc_status": "ACTIVE",
+                "revision": 0,
+                "score": 0.95,
+            }
+        ]
+        self.ai_client = ai_client or get_ai_gateway_client()
+        self.call_history: List[Dict[str, Any]] = []
+
+    async def search(self, query: str, limit: int = 10, **kwargs) -> Dict[str, Any]:
+        self.call_history.append({"query": query, "limit": limit, "kwargs": kwargs})
+        results = self.custom_results[:limit]
+        return {
+            "results": results,
+            "cached": False,
+            "trace": {"query": query, "steps": [], "total_time": 0.01},
+            "query_intent": "GENERAL",
+            "search_grounding_triggered": False,
+        }
+
+    async def execute(self, ctx: SearchContext) -> Dict[str, Any]:
+        return await self.search(ctx.raw_query, limit=ctx.limit)
