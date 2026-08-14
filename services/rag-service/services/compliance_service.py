@@ -1,23 +1,39 @@
 import asyncio
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import httpx
 
 from repositories.milvus_repo import MilvusRepository
+from repositories.neo4j_repo import Neo4jRepository
 from retrieval.graph_timeline_retriever import AdvancedGraphRAG
-from core.config import get_settings
+from retrieval.search_pipeline import SearchPipeline
 from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 
 logger = logging.getLogger(__name__)
 
 
 class ComplianceService:
-    def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None, ai_client: AIGatewayClient | None = None):
+    def __init__(
+        self,
+        milvus_repo: MilvusRepository,
+        graph_rag: AdvancedGraphRAG,
+        http_client: httpx.AsyncClient | None = None,
+        ai_client: AIGatewayClient | None = None,
+        search_pipeline: Optional[SearchPipeline] = None,
+    ):
         self.milvus_repo = milvus_repo
         self.graph_rag = graph_rag
         self._http_client = http_client
         self.ai_client = ai_client or get_ai_gateway_client(http_client)
+        if search_pipeline is not None:
+            self.search_pipeline = search_pipeline
+        elif milvus_repo is not None:
+            driver = getattr(graph_rag, "driver", None)
+            neo4j = Neo4jRepository(driver) if driver else None
+            self.search_pipeline = SearchPipeline(milvus_repo, neo4j, ai_client=self.ai_client)
+        else:
+            self.search_pipeline = None
 
     async def check_compliance(self, project_profile: str, focus_area: str = "General") -> Dict[str, Any]:
         """
@@ -30,31 +46,43 @@ class ComplianceService:
         logger.info(f"Extracted compliance keywords: {keywords}")
 
         # 2. Retrieval: Search for ACTIVE mandates and regulations
-        # We search specifically for prohibition/requirement keywords + project keywords
         search_query = f"Quy định, bắt buộc, nghiêm cấm về {', '.join(keywords)}"
-        # Filter for ACTIVE documents only
-        expr = "validity_status == 'ACTIVE'"
-
-        # Get embeddings from the shard model
-        from retrieval.search_pipeline import get_embedding_model
-        model = get_embedding_model()
-        loop = asyncio.get_running_loop()
-        embeddings = await loop.run_in_executor(None, model.embed_query, search_query)
-
-        retrieved_chunks = await self.milvus_repo.hybrid_search(
-            query_vector=embeddings["dense"],
-            sparse_vector=embeddings["sparse"],
-            limit=15,
-            expr=expr
-        )
-
         context = []
-        for res in retrieved_chunks[0]:
-            context.append({
-                "text": res.entity.get("text"),
-                "source": res.entity.get("doc_number") or res.entity.get("source"),
-                "page": res.entity.get("page")
-            })
+
+        if self.search_pipeline:
+            try:
+                search_res = await self.search_pipeline.search(
+                    query=search_query,
+                    limit=15,
+                    use_cache=True,
+                )
+                for res in search_res.get("results", []):
+                    context.append({
+                        "text": res.get("text", ""),
+                        "source": res.get("doc_number") or res.get("source", ""),
+                        "page": res.get("page", 1),
+                    })
+            except Exception as e:
+                logger.warning(f"SearchPipeline compliance retrieval fallback: {e}")
+
+        if not context and self.milvus_repo and hasattr(self.milvus_repo, "hybrid_search"):
+            from retrieval.search_pipeline import get_embedding_model
+            model = get_embedding_model()
+            loop = asyncio.get_running_loop()
+            embeddings = await loop.run_in_executor(None, model.embed_query, search_query)
+
+            retrieved_chunks = await self.milvus_repo.hybrid_search(
+                query_vector=embeddings.get("dense", []),
+                sparse_vector=embeddings.get("sparse", {}),
+                limit=15,
+                expr="validity_status == 'ACTIVE'",
+            )
+            for res in (retrieved_chunks[0] if retrieved_chunks else []):
+                context.append({
+                    "text": res.entity.get("text"),
+                    "source": res.entity.get("doc_number") or res.entity.get("source"),
+                    "page": res.entity.get("page", 1),
+                })
 
         # 3. LLM Analysis: Compare profile vs context
         report = await self._generate_compliance_report(project_profile, context, focus_area)

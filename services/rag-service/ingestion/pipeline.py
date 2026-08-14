@@ -111,7 +111,7 @@ class DocumentIngestionPipeline:
 
         from repositories.document_store import DocumentStore, InMemoryDocumentStore
 
-        self.document_store = InMemoryDocumentStore() if isinstance(self.state_manager, InMemoryStateManager) else None
+        self.document_store = InMemoryDocumentStore(state_manager=self.state_manager) if isinstance(self.state_manager, InMemoryStateManager) else None
 
         if not isinstance(self.state_manager, InMemoryStateManager):
             try:
@@ -323,12 +323,19 @@ class DocumentIngestionPipeline:
         file_hash = self.get_file_hash(doc.file_path)
         doc.identity.content_hash = file_hash
 
-        with self._processed_cache_lock:
-            if doc.identity.rel_path in self.processed_cache:
+        if self.document_store:
+            if self.document_store.is_document_processed(doc.identity.rel_path):
                 return None
+            worker_id = os.getenv("HOSTNAME", f"worker-{os.getpid()}")
+            if not self.document_store.claim_document(doc.identity.rel_path, content_hash=file_hash, worker_id=worker_id):
+                return None
+        else:
+            with self._processed_cache_lock:
+                if doc.identity.rel_path in self.processed_cache:
+                    return None
 
-        if not self.claim_file(file_hash, doc.identity.rel_path):
-            return None
+            if not self.claim_file(file_hash, doc.identity.rel_path):
+                return None
 
         return doc
 
@@ -398,7 +405,12 @@ class DocumentIngestionPipeline:
         return doc
 
     def _stage_indexing(self, doc: ProcessedDocument) -> ProcessedDocument:
-        if self.collection and doc.raw_chunks:
+        if self.document_store:
+            try:
+                self.document_store.index_document_sync(doc)
+            except Exception as e:
+                logger.warning(f"DocumentStore indexing skipped or failed for {doc.identity.doc_id}: {e}")
+        elif self.collection and doc.raw_chunks:
             try:
                 entities = []
                 for chunk in doc.raw_chunks:
@@ -434,14 +446,15 @@ class DocumentIngestionPipeline:
                     self.collection.insert(entities)
                     self.collection.flush()
             except Exception as e:
-                logger.warning(f"Milvus indexing skipped: {e}")
+                logger.warning(f"Milvus indexing fallback skipped: {e}")
 
-        self.state_manager.update_status(
-            doc.identity.rel_path,
-            'COMPLETED',
-            doc_id=doc.identity.doc_id,
-            metadata={"pages": len(doc.pages), "chunks": len(doc.raw_chunks)}
-        )
+            self.state_manager.update_status(
+                doc.identity.rel_path,
+                'COMPLETED',
+                doc_id=doc.identity.doc_id,
+                metadata={"pages": len(doc.pages), "chunks": len(doc.raw_chunks)}
+            )
+
         with self._processed_cache_lock:
             self.processed_cache.add(doc.identity.rel_path)
         return doc

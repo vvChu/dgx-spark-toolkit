@@ -24,3 +24,15 @@ class TestSearchPipeline:
         assert "trace" in res
         assert "query_intent" in res
         assert milvus.hybrid_search.called
+
+    def test_in_memory_search_pipeline(self):
+        import asyncio
+        from retrieval.search_pipeline import InMemorySearchPipeline
+
+        pipeline = InMemorySearchPipeline()
+        res = asyncio.run(pipeline.search("Quy chuẩn xây dựng", limit=3))
+        assert isinstance(res, dict)
+        assert len(res["results"]) == 1
+        assert res["results"][0]["doc_number"] == "01/2024/TT-BXD"
+        assert res["query_intent"] == "GENERAL"
+        assert len(pipeline.call_history) == 1

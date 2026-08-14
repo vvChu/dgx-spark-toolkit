@@ -1,10 +1,12 @@
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import httpx
 
 from repositories.milvus_repo import MilvusRepository
+from repositories.neo4j_repo import Neo4jRepository
 from retrieval.graph_timeline_retriever import AdvancedGraphRAG
+from retrieval.search_pipeline import SearchPipeline
 from core.config import get_settings
 from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 
@@ -12,29 +14,74 @@ logger = logging.getLogger(__name__)
 
 
 async def _get_full_embeddings(query: str) -> dict:
-    """Return both dense and sparse embeddings for a query.
-
-    This shared helper ensures hybrid search uses the full BGE-M3
-    sparse path (BM25-like) rather than an empty sparse vector.
-    """
+    """Return both dense and sparse embeddings for a query."""
     import asyncio
     from retrieval.search_pipeline import get_embedding_model
     loop = asyncio.get_running_loop()
     model = get_embedding_model()
-    # Run in executor to avoid blocking the event loop
     embeddings = await loop.run_in_executor(None, model.embed_query, query)
-    return embeddings  # {"dense": [...], "sparse": {...}}
+    return embeddings
 
 
 class LegalAnalysisEngine:
     """Deep domain module for legal conflict analysis, compliance checking, and validity verification."""
 
-    def __init__(self, milvus_repo: MilvusRepository, graph_rag: AdvancedGraphRAG, http_client: httpx.AsyncClient | None = None, ai_client: AIGatewayClient | None = None):
+    def __init__(
+        self,
+        milvus_repo: MilvusRepository,
+        graph_rag: AdvancedGraphRAG,
+        http_client: httpx.AsyncClient | None = None,
+        ai_client: AIGatewayClient | None = None,
+        search_pipeline: Optional[SearchPipeline] = None,
+    ):
         self.milvus_repo = milvus_repo
         self.graph_rag = graph_rag
         self.settings = get_settings()
         self._http_client = http_client
         self.ai_client = ai_client or get_ai_gateway_client(http_client)
+        if search_pipeline is not None:
+            self.search_pipeline = search_pipeline
+        elif milvus_repo is not None:
+            driver = getattr(graph_rag, "driver", None)
+            neo4j = Neo4jRepository(driver) if driver else None
+            self.search_pipeline = SearchPipeline(milvus_repo, neo4j, ai_client=self.ai_client)
+        else:
+            self.search_pipeline = None
+
+    async def _fetch_doc_context(self, doc_number_or_id: str, query: str) -> str:
+        """Fetch relevant chunk texts for a document using search pipeline or fallback."""
+        if '/' in doc_number_or_id:
+            parts = doc_number_or_id.split('/', 1)
+            num = parts[1] if parts[0].isalnum() or '_' in parts[0] else doc_number_or_id
+        else:
+            num = doc_number_or_id
+
+        if self.search_pipeline:
+            try:
+                res = await self.search_pipeline.search(
+                    query=query,
+                    limit=5,
+                    doc_number=num,
+                    use_cache=True,
+                )
+                texts = [r.get("text", "") for r in res.get("results", []) if r.get("text")]
+                if texts:
+                    return "\n".join(texts)
+            except Exception as e:
+                logger.warning(f"SearchPipeline fetch context error for {num}: {e}")
+
+        if self.milvus_repo and hasattr(self.milvus_repo, "hybrid_search"):
+            _emb = await _get_full_embeddings(query)
+            results = await self.milvus_repo.hybrid_search(
+                query_vector=_emb.get("dense", []),
+                sparse_vector=_emb.get("sparse", {}),
+                limit=5,
+                expr=f"doc_number == '{num}'",
+            )
+            if results and results[0]:
+                return "\n".join([hit.entity.get("text") for hit in results[0]])
+
+        return "No content found."
 
     async def analyze_conflicts(self, doc_id: str, query: str, depth: int = 1) -> Dict[str, Any]:
         """Compare a document with its predecessors to identify regulatory changes or conflicts."""
@@ -45,7 +92,7 @@ class LegalAnalysisEngine:
             return {
                 "status": "no_predecessors",
                 "message": f"No previous versions or related documents found for {doc_id}.",
-                "timeline": timeline
+                "timeline": timeline,
             }
 
         predecessors = []
@@ -58,42 +105,25 @@ class LegalAnalysisEngine:
         if not predecessors:
             return {"status": "no_predecessors", "timeline": timeline}
 
-        _emb_new = await _get_full_embeddings(query)
-        new_results = await self.milvus_repo.hybrid_search(
-            query_vector=_emb_new.get("dense", []),
-            sparse_vector=_emb_new.get("sparse", {}),
-            limit=5,
-            expr=f"doc_number == '{doc_id.split('/')[-1]}'"
-        )
-
-        new_context = "\n".join([hit.entity.get("text") for hit in new_results[0]]) if new_results else "No content found."
+        new_context = await self._fetch_doc_context(doc_id, query)
 
         predecessor_analyses = []
         for pred in predecessors:
             pred_id = pred["id"]
-            pred_num = pred_id.split('/')[-1] if '/' in pred_id else pred_id
-
-            _emb_pred = await _get_full_embeddings(query)
-            pred_results = await self.milvus_repo.hybrid_search(
-                query_vector=_emb_pred.get("dense", []),
-                sparse_vector=_emb_pred.get("sparse", {}),
-                limit=5,
-                expr=f"doc_number == '{pred_num}'"
-            )
-            pred_context = "\n".join([hit.entity.get("text") for hit in pred_results[0]]) if pred_results else "No content found."
+            pred_context = await self._fetch_doc_context(pred_id, query)
 
             analysis = await self._generate_delta_analysis(doc_id, pred_id, query, new_context, pred_context)
             predecessor_analyses.append({
                 "predecessor_id": pred_id,
                 "relation": pred.get("relation_to_next"),
-                "analysis": analysis
+                "analysis": analysis,
             })
 
         return {
             "status": "success",
             "doc_id": doc_id,
             "query": query,
-            "comparisons": predecessor_analyses
+            "comparisons": predecessor_analyses,
         }
 
     async def _get_query_embedding(self, query: str) -> List[float]:

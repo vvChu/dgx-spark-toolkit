@@ -142,5 +142,43 @@ class TestAIGatewayClient:
         )
         assert key_cooldown_manager.is_key_in_cooldown("AIzaSy429Key67890")
 
+    def test_mock_client_stream_default(self):
+        import asyncio
+        from core.ai_gateway_client import StreamChunk
 
+        async def _test():
+            mock_client = MockAIGatewayClient(default_response="Xin chào Việt Nam")
+            tokens = []
+            async for chunk in mock_client.stream([{"role": "user", "content": "Hi"}]):
+                assert isinstance(chunk, StreamChunk)
+                assert chunk.is_thought is False
+                tokens.append(chunk.text)
 
+            assert "".join(tokens) == "Xin chào Việt Nam"
+            assert len(mock_client.call_history) == 1
+            assert mock_client.call_history[0]["stream"] is True
+
+        asyncio.run(_test())
+
+    def test_mock_client_stream_custom_chunks_with_thought(self):
+        import asyncio
+        from core.ai_gateway_client import StreamChunk
+
+        async def _test():
+            mock_client = MockAIGatewayClient()
+            custom = [
+                StreamChunk(text="Phân tích Điều 5...", is_thought=True),
+                StreamChunk(text=" ", is_thought=True),
+                StreamChunk(text="Theo quy định tại Điều 5", is_thought=False),
+            ]
+            received = []
+            async for chunk in mock_client.stream([{"role": "user", "content": "Query"}], custom_chunks=custom):
+                received.append(chunk)
+
+            assert len(received) == 3
+            assert received[0].is_thought is True
+            assert received[0].text == "Phân tích Điều 5..."
+            assert received[2].is_thought is False
+            assert received[2].text == "Theo quy định tại Điều 5"
+
+        asyncio.run(_test())

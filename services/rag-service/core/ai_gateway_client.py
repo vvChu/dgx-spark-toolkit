@@ -9,13 +9,22 @@ import logging
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional, Type
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Type, AsyncIterator
 import httpx
 from pydantic import BaseModel
 
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StreamChunk:
+    """Represents a streaming token chunk from the AI Gateway."""
+    text: str
+    is_thought: bool = False
+    finish_reason: Optional[str] = None
 
 
 class AIGatewayClient:
@@ -31,6 +40,111 @@ class AIGatewayClient:
         if self._http_client is None:
             self._http_client = httpx.AsyncClient(timeout=300.0)
         return self._http_client
+
+    async def stream(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 8192,
+        stop: Optional[List[str]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
+        timeout: Optional[float] = 120.0,
+        model_chain: Optional[List[str]] = None,
+    ) -> AsyncIterator[StreamChunk]:
+        """Stream chat completion tokens from AI Gateway with fallback chain resilience.
+
+        Yields StreamChunk objects differentiating final content tokens from reasoning/thought tokens.
+        """
+        chain = model_chain or [model or self.settings.VLLM_MODEL, "rag-core", "rag-light"]
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        client = self._get_client()
+
+        last_error = None
+        started_yielding = False
+
+        for target_model in chain:
+            enable_thinking = "35b" in target_model.lower() or "core" in target_model.lower()
+            model_extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
+            if extra_body:
+                model_extra.update(extra_body)
+
+            payload: Dict[str, Any] = {
+                "model": target_model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": True,
+            }
+            if stop:
+                payload["stop"] = stop
+            if model_extra:
+                payload.update(model_extra)
+
+            try:
+                async with client.stream(
+                    "POST",
+                    self.gateway_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=timeout or 120.0,
+                ) as resp:
+                    if resp.status_code == 429 and not started_yielding:
+                        logger.warning(f"AIGatewayClient stream got 429 on model {target_model}, attempting fallback...")
+                        await asyncio.sleep(1)
+                        continue
+
+                    resp.raise_for_status()
+
+                    in_thought_block = False
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:].strip()
+                        if not data_str:
+                            continue
+                        if data_str == "[DONE]":
+                            return
+
+                        try:
+                            chunk_json = json.loads(data_str)
+                            choice = chunk_json.get("choices", [{}])[0]
+                            delta = choice.get("delta", {})
+                            finish_reason = choice.get("finish_reason")
+
+                            # 1. Check reasoning / thought field (vLLM / LiteLLM / DeepSeek format)
+                            reasoning_content = delta.get("reasoning_content") or delta.get("thought")
+                            if reasoning_content:
+                                started_yielding = True
+                                yield StreamChunk(text=reasoning_content, is_thought=True, finish_reason=finish_reason)
+
+                            # 2. Check standard content field
+                            content = delta.get("content", "")
+                            if content:
+                                # Handle embedded <think>...</think> tags if present in content
+                                if "<think>" in content:
+                                    in_thought_block = True
+                                    content = content.replace("<think>", "")
+                                if "</think>" in content:
+                                    in_thought_block = False
+                                    content = content.replace("</think>", "")
+
+                                if content:
+                                    started_yielding = True
+                                    yield StreamChunk(text=content, is_thought=in_thought_block, finish_reason=finish_reason)
+                        except (json.JSONDecodeError, IndexError):
+                            continue
+                return
+            except Exception as e:
+                last_error = e
+                logger.warning(f"AIGatewayClient stream error on model {target_model}: {e}")
+                if started_yielding:
+                    raise
+                await asyncio.sleep(0.5)
+
+        if not started_yielding:
+            raise RuntimeError(f"AIGatewayClient streaming failed all model fallbacks in chain {chain}: {last_error}") from last_error
 
     async def complete(
         self,
@@ -223,6 +337,26 @@ class MockAIGatewayClient(AIGatewayClient):
     async def complete(self, messages: List[Dict[str, Any]], **kwargs) -> str:
         self.call_history.append({"messages": messages, "kwargs": kwargs})
         return self.default_response
+
+    async def stream(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        model: Optional[str] = None,
+        custom_chunks: Optional[List[StreamChunk]] = None,
+        **kwargs,
+    ) -> AsyncIterator[StreamChunk]:
+        """Mock stream generator for offline unit testing."""
+        self.call_history.append({"messages": messages, "model": model, "kwargs": kwargs, "stream": True})
+        if custom_chunks:
+            for chunk in custom_chunks:
+                yield chunk
+            return
+
+        words = self.default_response.split(" ")
+        for i, word in enumerate(words):
+            token = word if i == 0 else " " + word
+            yield StreamChunk(text=token, is_thought=False)
 
     async def complete_json(self, messages: List[Dict[str, Any]], schema: Optional[Type[BaseModel]] = None, **kwargs) -> Any:
         self.call_history.append({"messages": messages, "schema": schema, "kwargs": kwargs})

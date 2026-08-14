@@ -114,6 +114,52 @@ class MilvusRepository:
             logger.error(f"Failed to update doc validity in Milvus: {e}")
             raise
 
+    async def insert_chunks(self, chunks: list) -> int:
+        """Insert a batch of document chunks into Milvus collection."""
+        if not chunks:
+            return 0
+        entities = []
+        for c in chunks:
+            chunk_dict = c.to_dict() if hasattr(c, "to_dict") else dict(c)
+            entities.append({
+                "text": str(chunk_dict.get("text", ""))[:14000],
+                "source": str(chunk_dict.get("source", "")),
+                "page": int(chunk_dict.get("page", 1)),
+                "summary": str(chunk_dict.get("summary", ""))[:2048],
+                "doc_date": str(chunk_dict.get("doc_date", "unknown")),
+                "doc_type": str(chunk_dict.get("doc_type", "unknown")),
+                "authority": str(chunk_dict.get("authority", "unknown")),
+                "file_hash": str(chunk_dict.get("file_hash", "")),
+                "is_table": bool(chunk_dict.get("is_table", False)),
+                "chunk_type": str(chunk_dict.get("chunk_type", "parent")),
+                "parent_id": str(chunk_dict.get("parent_id", "")),
+                "doc_number": str(chunk_dict.get("doc_number", "")),
+                "doc_id": str(chunk_dict.get("doc_id", "")),
+                "chunk_id": str(chunk_dict.get("chunk_id", "")),
+                "bbox": str(chunk_dict.get("bbox", "")),
+                "validity_status": str(chunk_dict.get("validity_status", "ACTIVE")),
+                "legal_level": str(chunk_dict.get("legal_level", "UNKNOWN")),
+                "hierarchy_path": str(chunk_dict.get("hierarchy_path", "")),
+                "citation_count": int(chunk_dict.get("citation_count", 0)),
+                "project_code": str(chunk_dict.get("project_code", "GENERIC")),
+                "discipline": str(chunk_dict.get("discipline", "UNKNOWN")),
+                "doc_status": str(chunk_dict.get("doc_status", "ACTIVE")),
+                "revision": int(chunk_dict.get("revision", 0)),
+                "synthetic_queries": str(chunk_dict.get("synthetic_queries", "")),
+                "source_category": str(chunk_dict.get("source_category", "KHAC")),
+                "vector": chunk_dict.get("vector", [0.0] * 1024),
+                "sparse_vector": chunk_dict.get("sparse_vector", {}),
+            })
+        if entities:
+            await self.client.insert(collection_name=self.collection_name, data=entities)
+        return len(entities)
+
+    async def delete_by_doc_id(self, doc_id: str) -> None:
+        """Delete all chunks belonging to a document from Milvus."""
+        safe_doc_id = _sanitize_pid(doc_id)
+        filter_expr = f"doc_id == '{safe_doc_id}' or doc_number == '{safe_doc_id}'"
+        await self.client.delete(collection_name=self.collection_name, filter=filter_expr)
+
     async def get_collection_stats(self, collection: str | None = None) -> dict:
         """Return collection statistics (row_count, etc.) without exposing the raw client."""
         target = collection or self.collection_name

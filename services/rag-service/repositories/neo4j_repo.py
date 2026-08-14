@@ -180,3 +180,83 @@ class Neo4jRepository:
         except Exception as e:
             logger.error(f"Neo4j get_superseded_by failed for {doc_id}: {e}")
             return []
+
+    async def create_document_node(self, processed_doc) -> None:
+        """Create or update a Document node and its relationships in Neo4j."""
+        identity = processed_doc.identity
+        metadata = processed_doc.metadata
+        doc_id = identity.doc_id
+        doc_number = identity.doc_number
+        file_name = identity.file_name
+        rel_path = identity.rel_path
+
+        doc_type = getattr(metadata, "doc_type", "UNKNOWN")
+        authority = getattr(metadata, "authority", "UNKNOWN")
+        doc_date = getattr(metadata, "date", "UNKNOWN")
+        validity = getattr(metadata, "validity_status", "ACTIVE")
+
+        query = """
+        MERGE (d:Document {id: $doc_id})
+        SET d.doc_number = $doc_number,
+            d.file_name = $file_name,
+            d.rel_path = $rel_path,
+            d.doc_type = $doc_type,
+            d.authority = $authority,
+            d.doc_date = $doc_date,
+            d.status = $validity
+        """
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    query,
+                    doc_id=doc_id,
+                    doc_number=doc_number,
+                    file_name=file_name,
+                    rel_path=rel_path,
+                    doc_type=doc_type,
+                    authority=authority,
+                    doc_date=doc_date,
+                    validity=validity,
+                )
+
+                relationships = getattr(processed_doc, "relationships", None)
+                if relationships:
+                    rel_dict = relationships.to_dict() if hasattr(relationships, "to_dict") else dict(relationships)
+                    for replaced in rel_dict.get("replaces", []):
+                        if replaced:
+                            await session.run("""
+                                MERGE (target:Document {id: $target_id})
+                                MERGE (source:Document {id: $source_id})
+                                MERGE (source)-[:REPLACES]->(target)
+                                SET target.status = 'SUPERSEDED'
+                            """, source_id=doc_id, target_id=replaced)
+
+                    for amended in rel_dict.get("amends", []):
+                        if amended:
+                            await session.run("""
+                                MERGE (target:Document {id: $target_id})
+                                MERGE (source:Document {id: $source_id})
+                                MERGE (source)-[:AMENDS]->(target)
+                                SET target.status = 'OUTDATED'
+                            """, source_id=doc_id, target_id=amended)
+
+                    for referenced in rel_dict.get("references", []):
+                        if referenced:
+                            await session.run("""
+                                MERGE (target:Document {id: $target_id})
+                                MERGE (source:Document {id: $source_id})
+                                MERGE (source)-[:REFERENCES]->(target)
+                            """, source_id=doc_id, target_id=referenced)
+        except Exception as e:
+            logger.error(f"Failed to create Document node in Neo4j for {doc_id}: {e}")
+            raise
+
+    async def delete_document_node(self, doc_id: str) -> None:
+        """Detach and delete a Document node by id."""
+        query = "MATCH (d:Document) WHERE d.id = $doc_id or d.doc_number = $doc_id DETACH DELETE d"
+        try:
+            async with self._driver.session() as session:
+                await session.run(query, doc_id=doc_id)
+        except Exception as e:
+            logger.error(f"Failed to delete Document node in Neo4j for {doc_id}: {e}")
+            raise

@@ -270,61 +270,43 @@ class ChatService:
                 "content": self._format_context(all_context),
             })
 
-            # 5. Stream tokens from LLM via AIGatewayClient
+            # 5. Stream tokens from LLM via AIGatewayClient seam
             tracer.start_step("generate_stream")
-            enable_thinking = "35b" in target_model.lower() or "core" in target_model.lower()
-            extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
-
-            payload = {
-                "model": target_model,
-                "messages": messages,
-                "temperature": 0.1,
-                "max_tokens": 8192,
-                "stream": True,
-                "stop": ["\nUser:", "\nObservation:", "</s>"],
-                "repetition_penalty": 1.1,
-                "presence_penalty": 0.1,
-                **extra,
-            }
-
             full_answer = []
-            async with self.http_client.stream(
-                "POST",
-                f"{settings.VLLM_API_BASE}/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {settings.LITELLM_MASTER_KEY.get_secret_value()}"},
+            full_thought = []
+
+            async for chunk in self.ai_client.stream(
+                messages,
+                model=target_model,
+                temperature=0.1,
+                max_tokens=8192,
+                stop=["\nUser:", "\nObservation:", "</s>"],
+                extra_body={
+                    "repetition_penalty": 1.1,
+                    "presence_penalty": 0.1,
+                },
                 timeout=120.0,
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str.strip() == "[DONE]":
-                        answer_text = "".join(full_answer)
-                        tracer.end_step(model=target_model, answer_length=len(answer_text))
+            ):
+                if chunk.is_thought:
+                    full_thought.append(chunk.text)
+                    yield f"data: {json.dumps({'type': 'thought', 'data': chunk.text}, ensure_ascii=False)}\n\n"
+                else:
+                    full_answer.append(chunk.text)
+                    yield f"data: {json.dumps({'type': 'token', 'data': chunk.text}, ensure_ascii=False)}\n\n"
 
-                        trace_data = await self._store_turn(
-                            session_id, query, answer_text, all_context, target_model, tracer
-                        )
+            answer_text = "".join(full_answer)
+            tracer.end_step(model=target_model, answer_length=len(answer_text))
 
-                        yield f"data: {json.dumps({'type': 'trace', 'data': trace_data}, ensure_ascii=False, default=str)}\n\n"
-                        yield "data: [DONE]\n\n"
-                        return
+            trace_data = await self._store_turn(
+                session_id, query, answer_text, all_context, target_model, tracer
+            )
 
-                    try:
-                        chunk = json.loads(data_str)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            full_answer.append(content)
-                            yield f"data: {json.dumps({'type': 'token', 'data': content}, ensure_ascii=False)}\n\n"
-                    except json.JSONDecodeError:
-                        continue
+            yield f"data: {json.dumps({'type': 'trace', 'data': trace_data}, ensure_ascii=False, default=str)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
         except Exception as e:
             logger.error("Streaming chat error: %s", e, exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
-
-        yield "data: [DONE]\n\n"
+            yield "data: [DONE]\n\n"
 
