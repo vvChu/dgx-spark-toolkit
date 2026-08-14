@@ -124,9 +124,9 @@ class DocumentIngestionPipeline:
 
         from repositories.document_store import DocumentStore, InMemoryDocumentStore
 
-        self.document_store = InMemoryDocumentStore(state_manager=self.state_manager) if isinstance(self.state_manager, InMemoryStateManager) else None
-
-        if not isinstance(self.state_manager, InMemoryStateManager):
+        if isinstance(self.state_manager, InMemoryStateManager):
+            self.document_store = InMemoryDocumentStore(state_manager=self.state_manager)
+        else:
             try:
                 self.neo4j_driver = GraphDatabase.driver(
                     pipeline_config.NEO4J_URI, auth=(pipeline_config.NEO4J_USER, pipeline_config.NEO4J_PASS)
@@ -155,6 +155,7 @@ class DocumentIngestionPipeline:
                 self.collection = self.setup_collection()
             except Exception as e:
                 logger.warning(f"Database setup incomplete for pipeline: {e}")
+                self.document_store = InMemoryDocumentStore(state_manager=self.state_manager)
 
         self.processed_cache: set = set()
         self._processed_cache_lock = threading.Lock()
@@ -416,50 +417,8 @@ class DocumentIngestionPipeline:
                 self.document_store.index_document_sync(doc)
             except Exception as e:
                 logger.warning(f"DocumentStore indexing skipped or failed for {doc.identity.doc_id}: {e}")
-        elif self.collection and doc.raw_chunks:
-            try:
-                entities = []
-                for chunk in doc.raw_chunks:
-                    entities.append({
-                        "text": chunk.get("text", "")[:14000],
-                        "source": doc.identity.rel_path,
-                        "page": chunk.get("page", 1),
-                        "summary": chunk.get("summary", "")[:2000],
-                        "doc_date": doc.metadata.date,
-                        "doc_type": doc.metadata.doc_type,
-                        "authority": doc.metadata.authority,
-                        "file_hash": doc.identity.content_hash,
-                        "is_table": chunk.get("is_table", False),
-                        "chunk_type": chunk.get("chunk_type", "TEXT"),
-                        "parent_id": doc.identity.doc_id,
-                        "doc_number": doc.identity.doc_number,
-                        "doc_id": doc.identity.doc_id,
-                        "chunk_id": f"{doc.identity.doc_id}::p{chunk.get('page', 1)}",
-                        "bbox": "",
-                        "validity_status": "ACTIVE",
-                        "legal_level": "UNKNOWN",
-                        "hierarchy_path": "",
-                        "citation_count": 0,
-                        "project_code": "GENERIC",
-                        "discipline": "UNKNOWN",
-                        "doc_status": "ACTIVE",
-                        "revision": 0,
-                        "synthetic_queries": "",
-                        "source_category": doc.metadata.source_category,
-                        "vector": chunk.get("vector", [0.0] * 1024),
-                    })
-                if entities:
-                    self.collection.insert(entities)
-                    self.collection.flush()
-            except Exception as e:
-                logger.warning(f"Milvus indexing fallback skipped: {e}")
-
-            self.state_manager.update_status(
-                doc.identity.rel_path,
-                'COMPLETED',
-                doc_id=doc.identity.doc_id,
-                metadata={"pages": len(doc.pages), "chunks": len(doc.raw_chunks)}
-            )
+        else:
+            logger.warning(f"No DocumentStore attached to pipeline; skipped indexing for {doc.identity.doc_id}")
 
         with self._processed_cache_lock:
             self.processed_cache.add(doc.identity.rel_path)

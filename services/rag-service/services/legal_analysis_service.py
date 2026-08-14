@@ -13,25 +13,15 @@ from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 logger = logging.getLogger(__name__)
 
 
-async def _get_full_embeddings(query: str) -> dict:
-    """Return both dense and sparse embeddings for a query."""
-    import asyncio
-    from retrieval.search_pipeline import get_embedding_model
-    loop = asyncio.get_running_loop()
-    model = get_embedding_model()
-    embeddings = await loop.run_in_executor(None, model.embed_query, query)
-    return embeddings
-
-
 class LegalAnalysisEngine:
     """Deep domain module for legal conflict analysis, compliance checking, and validity verification."""
 
     def __init__(
         self,
-        milvus_repo: MilvusRepository,
-        graph_rag: AdvancedGraphRAG,
-        http_client: httpx.AsyncClient | None = None,
-        ai_client: AIGatewayClient | None = None,
+        milvus_repo: Optional[MilvusRepository] = None,
+        graph_rag: Optional[AdvancedGraphRAG] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
+        ai_client: Optional[AIGatewayClient] = None,
         search_pipeline: Optional[SearchPipeline] = None,
     ):
         self.milvus_repo = milvus_repo
@@ -49,10 +39,13 @@ class LegalAnalysisEngine:
             self.search_pipeline = None
 
     async def _fetch_doc_context(self, doc_number_or_id: str, query: str) -> str:
-        """Fetch relevant chunk texts for a document using search pipeline or fallback."""
+        """Fetch relevant chunk texts for a document using search pipeline."""
         if '/' in doc_number_or_id:
             parts = doc_number_or_id.split('/', 1)
-            num = parts[1] if parts[0].isalnum() or '_' in parts[0] else doc_number_or_id
+            if not parts[0].isdigit() and not any(c.isdigit() for c in parts[0]):
+                num = parts[1]
+            else:
+                num = doc_number_or_id
         else:
             num = doc_number_or_id
 
@@ -70,24 +63,18 @@ class LegalAnalysisEngine:
             except Exception as e:
                 logger.warning(f"SearchPipeline fetch context error for {num}: {e}")
 
-        if self.milvus_repo and hasattr(self.milvus_repo, "hybrid_search"):
-            _emb = await _get_full_embeddings(query)
-            results = await self.milvus_repo.hybrid_search(
-                query_vector=_emb.get("dense", []),
-                sparse_vector=_emb.get("sparse", {}),
-                limit=5,
-                expr=f"doc_number == '{num}'",
-            )
-            if results and results[0]:
-                return "\n".join([hit.entity.get("text") for hit in results[0]])
-
         return "No content found."
 
     async def analyze_conflicts(self, doc_id: str, query: str, depth: int = 1) -> Dict[str, Any]:
         """Compare a document with its predecessors to identify regulatory changes or conflicts."""
         logger.info(f"Analyzing conflicts for {doc_id} with query: '{query}' (depth={depth})")
 
-        timeline = await self.graph_rag.get_legal_timeline(doc_id)
+        timeline = []
+        if self.search_pipeline and hasattr(self.search_pipeline, "get_legal_timeline"):
+            timeline = await self.search_pipeline.get_legal_timeline(doc_id)
+        elif self.graph_rag and hasattr(self.graph_rag, "get_legal_timeline"):
+            timeline = await self.graph_rag.get_legal_timeline(doc_id)
+
         if not timeline or len(timeline) < 2:
             return {
                 "status": "no_predecessors",
@@ -125,13 +112,6 @@ class LegalAnalysisEngine:
             "query": query,
             "comparisons": predecessor_analyses,
         }
-
-    async def _get_query_embedding(self, query: str) -> List[float]:
-        """Return dense embedding vector."""
-        embeddings = await _get_full_embeddings(query)
-        if isinstance(embeddings, dict):
-            return embeddings.get("dense", [])
-        return embeddings
 
     async def _generate_delta_analysis(self, doc_new: str, doc_old: str, query: str, context_new: str, context_old: str) -> str:
         prompt = f"""Bạn là một chuyên gia pháp lý cao cấp. Hãy so sánh sự thay đổi giữa văn bản MỚI và văn bản CŨ dựa trên nội dung được trích xuất dưới đây cho chủ đề: "{query}".

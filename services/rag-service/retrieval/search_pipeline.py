@@ -197,6 +197,12 @@ class SearchPipeline:
         driver = getattr(neo4j_repo, "driver", None)
         self.graph_timeline = AdvancedGraphRAG(driver, ai_client=self.ai_client) if driver is not None else None
 
+    async def get_legal_timeline(self, doc_number_or_id: str) -> list[dict]:
+        """Fetch legal timeline for a document node via Graph RAG."""
+        if self.graph_timeline:
+            return await self.graph_timeline.get_legal_timeline(doc_number_or_id)
+        return []
+
     async def search(
         self,
         query: str,
@@ -602,3 +608,9 @@ class InMemorySearchPipeline(SearchPipeline):
 
     async def execute(self, ctx: SearchContext) -> Dict[str, Any]:
         return await self.search(ctx.raw_query, limit=ctx.limit, use_agentic=ctx.use_agentic)
+
+    async def get_legal_timeline(self, doc_number_or_id: str) -> list[dict]:
+        return [
+            {"id": doc_number_or_id, "title": f"Document {doc_number_or_id}", "date": "2024-01-01", "relation_to_next": "REPLACES"},
+            {"id": f"{doc_number_or_id}_pred", "title": "Predecessor Document", "date": "2020-01-01", "relation_to_next": None},
+        ]

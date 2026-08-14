@@ -12,6 +12,7 @@ from ingestion.document_reader import (
 from ingestion.pipeline import DocumentIngestionPipeline
 from ingestion.state_manager import InMemoryStateManager
 from ingestion.models import ProcessedDocument, DocumentIdentity
+from ingestion.pdf_classifier import PdfType
 
 
 class TestPageContentAndExtractedDocument:
@@ -168,6 +169,26 @@ class TestDocumentReader:
             assert extracted.total_pages == 1
             assert extracted.pages[0].text == "OCR từ ảnh"
             assert extracted.pages[0].route == "image_ocr"
+
+    def test_extract_pdf_native_with_tables_and_figures(self, tmp_path):
+        import fitz
+        pdf_file = tmp_path / "test_doc.pdf"
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((50, 50), "Bảng 1: Thông số kỹ thuật\nCột A | Cột B\n10 | 20")
+        doc.save(str(pdf_file))
+        doc.close()
+
+        reader = DocumentReader()
+        with patch("ingestion.pdf_classifier.classify_page", return_value=PdfType.NATIVE), \
+             patch("ingestion.table_extraction.extract_and_merge_tables", return_value="| Cột A | Cột B |\n|---|---|\n| 10 | 20 |"), \
+             patch("ingestion.figure_extractor.describe_page_figures", return_value="| Cột A | Cột B |\n|---|---|\n| 10 | 20 |\n\n[Hình 1: Sơ đồ cấu tạo]"):
+            extracted = reader.extract(str(pdf_file))
+            assert extracted.format_type == "pdf"
+            assert extracted.total_pages == 1
+            assert "[Hình 1: Sơ đồ cấu tạo]" in extracted.pages[0].text
+            assert extracted.pages[0].is_table is True
+            assert extracted.pages[0].route == "native"
 
 
 class TestDocumentIngestionPipelineWithDocumentReader:
