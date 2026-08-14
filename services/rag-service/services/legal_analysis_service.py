@@ -50,7 +50,12 @@ class LegalAnalysisEngine:
 
     async def _fetch_doc_context(self, doc_number_or_id: str, query: str) -> str:
         """Fetch relevant chunk texts for a document using search pipeline or fallback."""
-        num = doc_number_or_id.split('/')[-1] if '/' in doc_number_or_id else doc_number_or_id
+        if '/' in doc_number_or_id:
+            parts = doc_number_or_id.split('/', 1)
+            num = parts[1] if parts[0].isalnum() or '_' in parts[0] else doc_number_or_id
+        else:
+            num = doc_number_or_id
+
         if self.search_pipeline:
             try:
                 res = await self.search_pipeline.search(

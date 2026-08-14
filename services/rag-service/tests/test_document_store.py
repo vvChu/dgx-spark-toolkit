@@ -1,5 +1,4 @@
 """Unit tests for the deep DocumentStore module and InMemoryDocumentStore adapter."""
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from ingestion.models import ProcessedDocument, DocumentIdentity, DocumentMetadata, Chunk
@@ -89,6 +88,13 @@ class TestDocumentStore:
             res = await store.index_document(doc)
             assert res["status"] == "success"
             assert mock_milvus.insert_chunks.call_count == 1
+            inserted_chunks = mock_milvus.insert_chunks.call_args[0][0]
+            assert len(inserted_chunks) == 1
+            assert inserted_chunks[0]["doc_id"] == "VBPL/02/2024/ND-CP"
+            assert inserted_chunks[0]["doc_number"] == "02/2024/ND-CP"
+            assert inserted_chunks[0]["file_hash"] == "hash456"
+            assert inserted_chunks[0]["doc_type"] == "ND"
+            assert inserted_chunks[0]["authority"] == "CP"
             assert mock_neo4j.create_document_node.call_count == 1
             assert mock_state.update_status.call_count == 2  # PROCESSING then COMPLETED
 

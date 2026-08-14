@@ -148,6 +148,7 @@ class MilvusRepository:
                 "synthetic_queries": str(chunk_dict.get("synthetic_queries", "")),
                 "source_category": str(chunk_dict.get("source_category", "KHAC")),
                 "vector": chunk_dict.get("vector", [0.0] * 1024),
+                "sparse_vector": chunk_dict.get("sparse_vector", {}),
             })
         if entities:
             await self.client.insert(collection_name=self.collection_name, data=entities)

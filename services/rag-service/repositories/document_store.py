@@ -23,12 +23,11 @@ def _run_async(coro):
         loop = None
 
     if loop and loop.is_running():
-        # Running inside an active event loop: create new task or use executor
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
-    else:
-        return asyncio.run(coro)
+        raise RuntimeError(
+            "Calling sync methods on DocumentStore from inside an active async event loop is not supported; "
+            "please use await store.index_document(...) instead."
+        )
+    return asyncio.run(coro)
 
 
 class DocumentStore:
@@ -104,6 +103,13 @@ class DocumentStore:
         identity = getattr(processed_doc, "identity", None)
         doc_id = identity.doc_id if identity else getattr(processed_doc, "doc_id", "")
         rel_path = identity.rel_path if identity else getattr(processed_doc, "file_path", "")
+        metadata = getattr(processed_doc, "metadata", None)
+        doc_date = getattr(metadata, "date", "unknown") if metadata else "unknown"
+        doc_type = getattr(metadata, "doc_type", "unknown") if metadata else "unknown"
+        authority = getattr(metadata, "authority", "unknown") if metadata else "unknown"
+        doc_number = identity.doc_number if identity else getattr(metadata, "doc_number", "")
+        content_hash = identity.content_hash if identity else ""
+        source_category = getattr(metadata, "source_category", "KHAC") if metadata else "KHAC"
         logger.info(f"Indexing document {doc_id} into DocumentStore...")
 
         # Record state: PROCESSING
@@ -118,10 +124,32 @@ class DocumentStore:
         chunks = getattr(processed_doc, "chunks", None) or getattr(processed_doc, "raw_chunks", [])
         pages = getattr(processed_doc, "pages", None) or getattr(processed_doc, "raw_pages", [])
 
+        # Enrich and normalize chunks with document identity before Milvus insert
+        enriched_chunks = []
+        for c in chunks:
+            cdict = c.to_dict() if hasattr(c, "to_dict") else dict(c)
+            if not cdict.get("doc_id"):
+                cdict["doc_id"] = doc_id
+            if not cdict.get("doc_number"):
+                cdict["doc_number"] = doc_number
+            if not cdict.get("file_hash"):
+                cdict["file_hash"] = content_hash
+            if not cdict.get("source"):
+                cdict["source"] = rel_path
+            if not cdict.get("doc_date") or cdict.get("doc_date") == "unknown":
+                cdict["doc_date"] = doc_date
+            if not cdict.get("doc_type") or cdict.get("doc_type") == "unknown":
+                cdict["doc_type"] = doc_type
+            if not cdict.get("authority") or cdict.get("authority") == "unknown":
+                cdict["authority"] = authority
+            if not cdict.get("source_category") or cdict.get("source_category") == "KHAC":
+                cdict["source_category"] = source_category
+            enriched_chunks.append(cdict)
+
         # Milvus Insert
-        if self.milvus_repo and chunks:
+        if self.milvus_repo and enriched_chunks:
             try:
-                await self.milvus_repo.insert_chunks(chunks)
+                await self.milvus_repo.insert_chunks(enriched_chunks)
             except Exception as e:
                 logger.error(f"Milvus insertion failed for {doc_id}: {e}")
                 milvus_ok = False
@@ -192,11 +220,14 @@ class InMemoryDocumentStore(DocumentStore):
     def claim_document(self, rel_path: str, content_hash: str = "", worker_id: str = "") -> bool:
         return self.state_manager.claim_file(rel_path, worker_id, content_hash=content_hash)
 
-    async def sync_status(self, doc_id: str, new_status: str) -> Dict[str, Any]:
+    def sync_status_sync(self, doc_id: str, new_status: str) -> Dict[str, Any]:
         self.document_statuses[doc_id] = new_status
         return {"status": "success", "doc_id": doc_id, "new_status": new_status}
 
-    async def index_document(self, processed_doc: ProcessedDocument) -> Dict[str, Any]:
+    async def sync_status(self, doc_id: str, new_status: str) -> Dict[str, Any]:
+        return self.sync_status_sync(doc_id, new_status)
+
+    def index_document_sync(self, processed_doc: ProcessedDocument) -> Dict[str, Any]:
         identity = getattr(processed_doc, "identity", None)
         doc_id = identity.doc_id if identity else getattr(processed_doc, "doc_id", "test_doc")
         rel_path = identity.rel_path if identity else getattr(processed_doc, "file_path", "test.pdf")
@@ -206,7 +237,13 @@ class InMemoryDocumentStore(DocumentStore):
         self.state_manager.update_status(rel_path, "COMPLETED", doc_id=doc_id)
         return {"status": "success", "doc_id": doc_id}
 
-    async def delete_document(self, doc_id: str) -> Dict[str, Any]:
+    async def index_document(self, processed_doc: ProcessedDocument) -> Dict[str, Any]:
+        return self.index_document_sync(processed_doc)
+
+    def delete_document_sync(self, doc_id: str) -> Dict[str, Any]:
         self.indexed_documents.pop(doc_id, None)
         self.document_statuses.pop(doc_id, None)
         return {"status": "success", "doc_id": doc_id}
+
+    async def delete_document(self, doc_id: str) -> Dict[str, Any]:
+        return self.delete_document_sync(doc_id)

@@ -437,7 +437,7 @@ class InMemorySearchPipeline(SearchPipeline):
                 "score": 0.95,
             }
         ]
-        self.ai_client = ai_client or get_ai_gateway_client()
+        self.ai_client = ai_client
         self.call_history: List[Dict[str, Any]] = []
 
     async def search(self, query: str, limit: int = 10, **kwargs) -> Dict[str, Any]:
