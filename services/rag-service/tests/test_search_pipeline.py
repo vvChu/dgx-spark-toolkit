@@ -49,14 +49,12 @@ class TestSearchPipeline:
         assert len(res["sub_queries"]) == 2
         assert "Mock in-memory agentic plan" in res["reasoning"]
 
-    def test_agentic_retriever_facade(self):
+    def test_in_memory_search_pipeline_timeline(self):
         import asyncio
-        from retrieval.agentic_retriever import AgenticRetriever
         from retrieval.search_pipeline import InMemorySearchPipeline
 
         pipeline = InMemorySearchPipeline()
-        retriever = AgenticRetriever(retrieval_service=pipeline)
-        res = asyncio.run(retriever.retrieve("So sánh quy định"))
-        assert len(res.results) == 1
-        assert res.hops == 2
-        assert len(res.sub_queries) == 2
+        timeline = asyncio.run(pipeline.get_legal_timeline("01/2024/TT-BXD"))
+        assert isinstance(timeline, list)
+        assert len(timeline) >= 1
+        assert timeline[0]["id"] == "01/2024/TT-BXD"

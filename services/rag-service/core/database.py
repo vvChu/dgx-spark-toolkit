@@ -225,17 +225,32 @@ async def get_rag_evaluator(
     return RAGEvaluator(ai_gateway_client=gateway_client)
 
 
-async def get_legal_analysis_engine(
+async def get_search_pipeline(
     milvus_repo: MilvusRepository = Depends(get_milvus_repo),
     neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
-    http_client: httpx.AsyncClient = Depends(get_http_client)
+    http_client: httpx.AsyncClient = Depends(get_http_client),
+):
+    """Dependency to inject deep SearchPipeline."""
+    from retrieval.search_pipeline import SearchPipeline
+    from core.ai_gateway_client import get_ai_gateway_client
+    ai_client = get_ai_gateway_client(http_client)
+    return SearchPipeline(milvus_repo, neo4j_repo, ai_client=ai_client)
+
+
+async def get_retrieval_service(
+    pipeline=Depends(get_search_pipeline),
+):
+    """Dependency alias for backward compatibility."""
+    return pipeline
+
+
+async def get_legal_analysis_engine(
+    search_pipeline=Depends(get_search_pipeline),
+    http_client: httpx.AsyncClient = Depends(get_http_client),
 ):
     """Dependency to inject deep LegalAnalysisEngine."""
     from services.legal_analysis_service import LegalAnalysisEngine
-    from retrieval.graph_timeline_retriever import AdvancedGraphRAG
-
-    graph_rag = AdvancedGraphRAG(neo4j_repo.driver, http_client)
-    return LegalAnalysisEngine(milvus_repo, graph_rag, http_client)
+    return LegalAnalysisEngine(search_pipeline=search_pipeline, http_client=http_client)
 
 
 async def get_legal_analysis_service(
@@ -246,32 +261,12 @@ async def get_legal_analysis_service(
 
 
 async def get_compliance_service(
-    milvus_repo: MilvusRepository = Depends(get_milvus_repo),
-    neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
-    http_client: httpx.AsyncClient = Depends(get_http_client)
-) -> "ComplianceService":
+    search_pipeline=Depends(get_search_pipeline),
+    http_client: httpx.AsyncClient = Depends(get_http_client),
+):
     """Dependency to inject the ComplianceService."""
     from services.compliance_service import ComplianceService
-    from retrieval.graph_timeline_retriever import AdvancedGraphRAG
-
-    graph_rag = AdvancedGraphRAG(neo4j_repo.driver, http_client)
-    return ComplianceService(milvus_repo, graph_rag, http_client)
-
-
-async def get_search_pipeline(
-    milvus_repo: MilvusRepository = Depends(get_milvus_repo),
-    neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
-):
-    """Dependency to inject deep SearchPipeline."""
-    from retrieval.search_pipeline import SearchPipeline
-    return SearchPipeline(milvus_repo, neo4j_repo)
-
-
-async def get_retrieval_service(
-    pipeline=Depends(get_search_pipeline),
-):
-    """Dependency alias for backward compatibility."""
-    return pipeline
+    return ComplianceService(search_pipeline=search_pipeline, http_client=http_client)
 
 
 async def get_chat_service(

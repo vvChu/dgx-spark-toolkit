@@ -137,12 +137,47 @@ class DocumentReader:
                 page_type = classify_page(page, page_idx)
 
                 if page_type == PdfType.NATIVE:
-                    text = page.get_text().strip()
+                    raw_text = page.get_text().strip()
+                    page_height = getattr(page.rect, "height", 842.0)
+                    is_table_page = False
+
+                    # 1. Structure & Table Extraction via pdfplumber
+                    try:
+                        from ingestion.table_extraction import extract_and_merge_tables
+                        table_merged_text = extract_and_merge_tables(
+                            pdf_path=file_path,
+                            page_num=page_idx,
+                            fitz_text=raw_text,
+                            page_height=page_height,
+                        )
+                        if table_merged_text and table_merged_text != raw_text:
+                            text = table_merged_text
+                            is_table_page = True
+                        else:
+                            text = raw_text
+                    except Exception as te:
+                        logger.debug(f"[DocumentReader] Table extraction skipped for page {page_num}: {te}")
+                        text = raw_text
+
+                    # 2. Figure Vision AI Captioning
+                    try:
+                        from ingestion.figure_extractor import describe_page_figures
+                        figure_enhanced_text = describe_page_figures(
+                            doc=doc,
+                            page_num=page_idx,
+                            page_text=text,
+                            pdf_path=file_path,
+                        )
+                        if figure_enhanced_text:
+                            text = figure_enhanced_text
+                    except Exception as fe:
+                        logger.debug(f"[DocumentReader] Figure extraction skipped for page {page_num}: {fe}")
+
                     pages.append(PageContent(
                         page=page_num,
                         text=text,
                         route="native",
-                        is_table=False,
+                        is_table=is_table_page,
                         bbox=[0, 0, 1000, 1000],
                         layout=[],
                     ))

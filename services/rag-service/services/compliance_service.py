@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 class ComplianceService:
     def __init__(
         self,
-        milvus_repo: MilvusRepository,
-        graph_rag: AdvancedGraphRAG,
-        http_client: httpx.AsyncClient | None = None,
-        ai_client: AIGatewayClient | None = None,
+        milvus_repo: Optional[MilvusRepository] = None,
+        graph_rag: Optional[AdvancedGraphRAG] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
+        ai_client: Optional[AIGatewayClient] = None,
         search_pipeline: Optional[SearchPipeline] = None,
     ):
         self.milvus_repo = milvus_repo
@@ -36,9 +36,7 @@ class ComplianceService:
             self.search_pipeline = None
 
     async def check_compliance(self, project_profile: str, focus_area: str = "General") -> Dict[str, Any]:
-        """
-        Analyze a project profile against active regulations.
-        """
+        """Analyze a project profile against active regulations."""
         logger.info(f"Starting compliance check for focus area: {focus_area}")
 
         # 1. Extraction: Use LLM to identify key keywords and disciplines from the profile
@@ -65,25 +63,6 @@ class ComplianceService:
             except Exception as e:
                 logger.warning(f"SearchPipeline compliance retrieval fallback: {e}")
 
-        if not context and self.milvus_repo and hasattr(self.milvus_repo, "hybrid_search"):
-            from retrieval.search_pipeline import get_embedding_model
-            model = get_embedding_model()
-            loop = asyncio.get_running_loop()
-            embeddings = await loop.run_in_executor(None, model.embed_query, search_query)
-
-            retrieved_chunks = await self.milvus_repo.hybrid_search(
-                query_vector=embeddings.get("dense", []),
-                sparse_vector=embeddings.get("sparse", {}),
-                limit=15,
-                expr="validity_status == 'ACTIVE'",
-            )
-            for res in (retrieved_chunks[0] if retrieved_chunks else []):
-                context.append({
-                    "text": res.entity.get("text"),
-                    "source": res.entity.get("doc_number") or res.entity.get("source"),
-                    "page": res.entity.get("page", 1),
-                })
-
         # 3. LLM Analysis: Compare profile vs context
         report = await self._generate_compliance_report(project_profile, context, focus_area)
 
@@ -91,7 +70,7 @@ class ComplianceService:
             "focus_area": focus_area,
             "keywords_analyzed": keywords,
             "report": report,
-            "sources": list(set([c["source"] for c in context]))
+            "sources": list(set([c["source"] for c in context if c.get("source")]))
         }
 
     async def _extract_compliance_keywords(self, profile: str, focus: str) -> List[str]:

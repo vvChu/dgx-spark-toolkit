@@ -60,6 +60,20 @@ _Avoid_: Query context, search state
 The iterative plan-retrieve-reflect loop within `SearchPipeline` that decomposes complex legal queries into sub-queries and evaluates contextual sufficiency across multiple hops.
 _Avoid_: Agentic search loop, multi-step searcher
 
+## Legal Analysis & Compliance Domain
+
+**LegalAnalysisEngine**:
+The domain analysis module evaluating legal conflicts, version deltas, and predecessor relationships across document revisions via `SearchPipeline`.
+_Avoid_: Conflict checker, diff engine
+
+**InMemoryLegalAnalysisEngine**:
+An in-memory test adapter for `LegalAnalysisEngine` providing deterministic conflict and predecessor comparisons for offline testing.
+_Avoid_: Mock analysis engine, fake conflict checker
+
+**ComplianceService**:
+The domain audit module analyzing project specifications and profiles against active legal regulations and mandatory standards via `SearchPipeline`.
+_Avoid_: Rule validator, compliance checker
+
 ## Frontend Stream Domain
 
 **StreamClient**:
