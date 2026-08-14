@@ -63,15 +63,17 @@ class TestAIGatewayClient:
         if gateway_dir not in sys.path:
             sys.path.insert(0, gateway_dir)
 
-        try:
-            from custom_callbacks import _estimate_tokens_and_has_vision
-        except ImportError:
-            pytest.skip("litellm environment not installed in current pytest runner")
+        from custom_callbacks import ParameterNormalizer, _estimate_tokens_and_has_vision
 
         text_messages = [{"role": "user", "content": "Hello world " * 50}]
         tokens, has_vision = _estimate_tokens_and_has_vision(text_messages)
         assert tokens > 0
         assert has_vision is False
+
+        # Verify ParameterNormalizer class method directly
+        tokens_direct, has_vision_direct = ParameterNormalizer.estimate_tokens_and_has_vision(text_messages)
+        assert tokens_direct == tokens
+        assert has_vision_direct is False
 
         vision_messages = [
             {"role": "user", "content": [{"type": "text", "text": "OCR"}, {"type": "image_url", "image_url": "data:image/png"}]}
@@ -87,18 +89,18 @@ class TestAIGatewayClient:
         if gateway_dir not in sys.path:
             sys.path.insert(0, gateway_dir)
 
-        try:
-            from custom_callbacks import GeminiParameterCorrector
-        except ImportError:
-            pytest.skip("litellm environment not installed in current pytest runner")
+        from custom_callbacks import GeminiParameterCorrector, ParameterNormalizer
 
-        corrector = GeminiParameterCorrector()
-
-        # Short text prompt -> Should route to Gemma 4
+        # Test ParameterNormalizer pure function directly
         req_data = {
             "model": "text-auto",
             "messages": [{"role": "user", "content": "Short query"}]
         }
+        res_pure = ParameterNormalizer.normalize_request(req_data)
+        assert res_pure["model"] == "openai/gemma-4-26b-a4b-it"
+
+        # Test adapter async hook
+        corrector = GeminiParameterCorrector()
         res = asyncio.run(corrector.async_pre_call_hook({}, req_data))
         assert res["model"] == "openai/gemma-4-26b-a4b-it"
 
@@ -119,16 +121,15 @@ class TestAIGatewayClient:
         if gateway_dir not in sys.path:
             sys.path.insert(0, gateway_dir)
 
-        try:
-            from custom_callbacks import key_cooldown_manager, GeminiParameterCorrector
-        except ImportError:
-            pytest.skip("litellm environment not installed in current pytest runner")
+        from custom_callbacks import KeyCooldownManager, GeminiParameterCorrector
+
+        local_cooldown_mgr = KeyCooldownManager(cooldown_seconds=60)
 
         # Test marking cooldown
         key = "AIzaSyTestKey12345"
-        assert not key_cooldown_manager.is_key_in_cooldown(key)
-        key_cooldown_manager.mark_key_cooldown(key)
-        assert key_cooldown_manager.is_key_in_cooldown(key)
+        assert not local_cooldown_mgr.is_key_in_cooldown(key)
+        local_cooldown_mgr.mark_key_cooldown(key)
+        assert local_cooldown_mgr.is_key_in_cooldown(key)
 
         # Test failure event logging triggers cooldown
         corrector = GeminiParameterCorrector()
@@ -140,6 +141,7 @@ class TestAIGatewayClient:
                 1,
             )
         )
+        from custom_callbacks import key_cooldown_manager
         assert key_cooldown_manager.is_key_in_cooldown("AIzaSy429Key67890")
 
     def test_mock_client_stream_default(self):

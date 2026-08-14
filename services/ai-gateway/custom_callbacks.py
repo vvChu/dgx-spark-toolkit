@@ -1,40 +1,36 @@
+"""Custom callbacks and parameter normalization for LiteLLM Gateway.
+
+Provides request parameter correction, thinking budget mapping, token-length tiered routing,
+and API key cooldown management for Google Gemini & Gemma models.
+"""
 import os
 import sys
 import time
-from litellm.integrations.custom_logger import CustomLogger
+from typing import Any, Dict, List, Optional, Tuple
+
+try:
+    from litellm.integrations.custom_logger import CustomLogger
+except ImportError:
+    class CustomLogger:  # type: ignore[no-redef]
+        """Fallback base class when litellm is not installed in the local test runner."""
+        pass
 
 
-def _estimate_tokens_and_has_vision(messages):
+def _estimate_tokens_and_has_vision(messages: Any) -> Tuple[int, bool]:
     """Estimate token count and check for vision payloads in request messages."""
-    total_chars = 0
-    has_vision = False
-    if not isinstance(messages, list):
-        return 0, False
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        content = msg.get("content")
-        if isinstance(content, str):
-            total_chars += len(content)
-        elif isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict):
-                    if part.get("type") in ["image_url", "image", "inline_data"]:
-                        has_vision = True
-                    text = part.get("text", "")
-                    total_chars += len(text)
-    return total_chars // 4, has_vision
+    return ParameterNormalizer.estimate_tokens_and_has_vision(messages)
 
 
 class KeyCooldownManager:
     """Manages API key cooldowns and rotation upon encountering HTTP 429 Rate Limits."""
 
-    def __init__(self, cooldown_seconds: int = 60):
+    def __init__(self, cooldown_seconds: int = 60) -> None:
         self.cooldown_seconds = cooldown_seconds
-        self._cooldown_dict = {}  # In-memory fallback: api_key -> expiry_timestamp
+        self._cooldown_dict: Dict[str, float] = {}  # In-memory fallback: api_key -> expiry_timestamp
+        self._keys_pool: List[str] = []
         self._refresh_pool()
 
-    def _refresh_pool(self):
+    def _refresh_pool(self) -> None:
         self._keys_pool = [
             os.getenv(f"GEMINI_API_KEY_{i}", "") for i in range(2, 12)
         ]
@@ -43,14 +39,14 @@ class KeyCooldownManager:
     def is_key_in_cooldown(self, api_key: str) -> bool:
         if not api_key:
             return False
-        expiry = self._cooldown_dict.get(api_key, 0)
+        expiry = self._cooldown_dict.get(api_key, 0.0)
         if time.time() < expiry:
             return True
         elif api_key in self._cooldown_dict:
             del self._cooldown_dict[api_key]
         return False
 
-    def mark_key_cooldown(self, api_key: str):
+    def mark_key_cooldown(self, api_key: str) -> None:
         if not api_key:
             return
         self._cooldown_dict[api_key] = time.time() + self.cooldown_seconds
@@ -71,26 +67,52 @@ class KeyCooldownManager:
 key_cooldown_manager = KeyCooldownManager(cooldown_seconds=60)
 
 
-class GeminiParameterCorrector(CustomLogger):
-    async def async_pre_call_hook(self, user_api_key_dict, data, *args, **kwargs):
+class ParameterNormalizer:
+    """Pure domain module for request parameter correction and tiered routing."""
+
+    @staticmethod
+    def estimate_tokens_and_has_vision(messages: Any) -> Tuple[int, bool]:
+        """Estimate token count (~4 chars/token) and detect image/vision payload parts."""
+        total_chars = 0
+        has_vision = False
+        if not isinstance(messages, list):
+            return 0, False
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                total_chars += len(content)
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") in ["image_url", "image", "inline_data"]:
+                            has_vision = True
+                        text = part.get("text", "")
+                        total_chars += len(text)
+        return total_chars // 4, has_vision
+
+    @classmethod
+    def normalize_request(cls, data: Dict[str, Any], cooldown_manager: Optional[KeyCooldownManager] = None) -> Dict[str, Any]:
+        """Normalize model parameters, thinking configurations, and apply tiered routing."""
         try:
             model = data.get("model", "")
 
             # 0. Check API Key rotation if current key is in cooldown
-            current_api_key = data.get("api_key", "")
-            if current_api_key and key_cooldown_manager.is_key_in_cooldown(current_api_key):
-                available_key = key_cooldown_manager.get_available_key(current_api_key)
-                if available_key != current_api_key:
-                    data["api_key"] = available_key
-                    sys.stdout.write(
-                        f"[KeyRotation] Current key in cooldown -> Rotated to next available key (...{available_key[-4:]})\n"
-                    )
-                    sys.stdout.flush()
+            if cooldown_manager is not None:
+                current_api_key = data.get("api_key", "")
+                if current_api_key and cooldown_manager.is_key_in_cooldown(current_api_key):
+                    available_key = cooldown_manager.get_available_key(current_api_key)
+                    if available_key != current_api_key:
+                        data["api_key"] = available_key
+                        sys.stdout.write(
+                            f"[KeyRotation] Current key in cooldown -> Rotated to next available key (...{available_key[-4:]})\n"
+                        )
+                        sys.stdout.flush()
 
-            # Token-Length Tiered Routing for generic text-auto or short requests
-            # If text-only and < 500 tokens, route to Gemma 4 (14.4K RPD quota pool)
+            # 1. Token-Length Tiered Routing for generic text-auto or short requests
             if model in ["text-auto", "auto", "text-light-auto"]:
-                est_tokens, has_vision = _estimate_tokens_and_has_vision(data.get("messages", []))
+                est_tokens, has_vision = cls.estimate_tokens_and_has_vision(data.get("messages", []))
                 if not has_vision and est_tokens < 500:
                     data["model"] = "openai/gemma-4-26b-a4b-it"
                     sys.stdout.write(
@@ -105,8 +127,8 @@ class GeminiParameterCorrector(CustomLogger):
                     sys.stdout.flush()
                 model = data.get("model", "")
 
-            # We target Gemini 3.x, 3.5+ models, and specific Gemini 2.5 reasoning models
-            is_gemini_3_or_above = any(x in model for x in ["gemini-3.5", "gemini-3", "gemini-3.1"])
+            # 2. Target Gemini 3.x, 3.5+ models, and specific Gemini 2.5 reasoning models
+            is_gemini_3_or_above = any(x in model for x in ["gemini-3.7", "gemini-3.6", "gemini-3.5", "gemini-3", "gemini-3.1"])
 
             # Retrieve client's parameters
             thinking_budget = data.get("thinking_budget") or data.get("extra_body", {}).get("thinking_budget")
@@ -216,7 +238,15 @@ class GeminiParameterCorrector(CustomLogger):
 
         return data
 
-    async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
+
+class GeminiParameterCorrector(CustomLogger):
+    """LiteLLM custom logger adapter delegating to ParameterNormalizer and KeyCooldownManager."""
+
+    async def async_pre_call_hook(self, user_api_key_dict: Any, data: Dict[str, Any], *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        """Pre-call hook invoked by LiteLLM before forwarding request to upstream LLM."""
+        return ParameterNormalizer.normalize_request(data, cooldown_manager=key_cooldown_manager)
+
+    async def async_log_failure_event(self, kwargs: Dict[str, Any], response_obj: Any, start_time: Any, end_time: Any) -> None:
         """Intercept 429 Rate Limits and trigger key cooldown."""
         try:
             status_code = kwargs.get("status_code") or getattr(response_obj, "status_code", None)
@@ -230,5 +260,5 @@ class GeminiParameterCorrector(CustomLogger):
             sys.stderr.flush()
 
 
-# Create single instance
+# Create single instance for LiteLLM callback registry
 gemini_corrector_instance = GeminiParameterCorrector()
