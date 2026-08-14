@@ -550,4 +550,57 @@ portainer                         Up 7 hours                   7 weeks ago
 | `scripts/fix_quota_routing_regex_2026.py` | Quota re-mapping script (updated fallback references) |
 | `test_gemini_embed.py` | Standalone embedding model test |
 
+---
+
+## 🟢 Session: 2026-08-13 (vvc)
+
+### Trạng thái hệ thống (cuối session)
+
+| Service | Status | Uptime |
+|---|---|---|
+| `ai-gateway` | ✅ Up (healthy) | Up 56 minutes |
+| `qwen36b` (vLLM 35B) | ✅ Up (healthy) | Up 25 hours |
+| `rag-service` | ✅ Up (healthy) | Up 25 hours |
+| `rag-frontend` | ✅ Up (healthy) | Up 25 hours |
+| `milvus-standalone` | ✅ Up (healthy) | Up 25 hours |
+| `neo4j-graph` | ✅ Up (healthy) | Up 25 hours |
+| `litellm-postgres` | ✅ Up (healthy) | Up 25 hours |
+| `litellm-redis` | ✅ Up (healthy) | Up 25 hours |
+| `whisper-local` | ✅ Up | Up 25 hours |
+| `smart-watchdog` | ✅ Up | Up 25 hours |
+
+### Thay đổi đã thực hiện (2026-08-13)
+
+**Model Auto-Updater, Gemini 3.7 Integration & Client Contract**:
+- [x] **Nâng cấp `model_auto_updater.py`**:
+  - Hỗ trợ đầy đủ cờ CLI: `--force` (cưỡng chế quét & patch), `--audit` (xem trước chênh lệch model), `--dry-run`.
+  - Quét đồng thời cả 2 nguồn: Google AI Studio Direct API (50 models) và Centralized API Proxy `100.83.192.30:8045` (86 models).
+  - Tích hợp kiểm thử liên thông HTTP sau khi restart và gửi thông báo Telegram.
+- [x] **Tích hợp Gemini 3.7 Flash vào AI Gateway**:
+  - Khai báo 4 templates: `gemini37-flash-base`, `gemini37-flash-low-base`, `gemini37-flash-medium-base`, `gemini37-flash-high-base`.
+  - Cấu hình 4 model aliases: `gemini-3.7-flash`, `gemini-3.7-flash-low`, `gemini-3.7-flash-medium`, `gemini-3.7-flash-high` phân tải qua 10 Google API keys và 1 Proxy fallback.
+  - Phân bổ quota budget bảo vệ (`1,000 RPD` cho mỗi nhóm model).
+  - Thiết lập chuỗi Fallback Cascade: `gemini-3.7-flash-high` ➡️ `gemini-3.7-flash-medium` ➡️ `gemini-3.6-flash-high` ➡️ `gemini-3.5-flash-high` ➡️ `ocr-tier4` ➡️ `rag-core`.
+  - Tối ưu hóa timeout upstream xuống `25s` để failover nhanh khi Google quá tải.
+- [x] **Tạo Cẩm nang Tích hợp Client (`CLIENT_INTEGRATION_GUIDE.md`)**:
+  - Định nghĩa 4 Model Archetypes chuẩn (OCR/Vision Ingestion, Standard General/Coding, Deep Reasoning, Local Zero-Cost).
+  - Quy định hợp đồng HTTP Timeout (30s – 60s) và cơ chế Zero-Config thinking parameters.
+  - Cung cấp code mẫu chuẩn cho Python `ccba-ai`, `openai` SDK, TypeScript `fetch`, và bash `curl`.
+- [x] **Đồng bộ Workflow & Skill & Quota Limits**:
+  - Cập nhật workflow `.agents/workflows/ccba-update-models.md` với bước `--audit` và test đa model.
+  - Cập nhật skill definition `.agents/skills/model-updater/SKILL.md`.
+  - Cập nhật tài liệu định mức `services/ai-gateway/FREE_TIER_LIMITS.md`.
+
+### Files quan trọng (updated / created)
+
+| File | Mô tả |
+|---|---|
+| `scripts/model_auto_updater.py` | Kịch bản tự động cập nhật model và self-healing cho AI Gateway |
+| `services/ai-gateway/litellm_config.yaml` | Cấu hình AI Gateway (thêm Gemini 3.7 series, load balancing & fallbacks) |
+| `services/ai-gateway/CLIENT_INTEGRATION_GUIDE.md` | Hướng dẫn tích hợp chuẩn cho toàn bộ các clients |
+| `services/ai-gateway/FREE_TIER_LIMITS.md` | Bảng định mức Free Tier cập nhật (Gemini 3.7, Gemma 4) |
+| `.agents/skills/model-updater/SKILL.md` | Skill definition cho AI Agent |
+| `.agents/workflows/ccba-update-models.md` | Workflow cập nhật và kiểm thử model |
+
+
 

@@ -129,6 +129,42 @@ x-templates:
         thinking_config:
           thinking_level: "high"
 
+  gemini37-flash-base: &gemini37-flash-base
+    model: gemini/gemini-3.7-flash
+    rpm: 5
+    tpm: 250000
+    timeout: 25
+
+  gemini37-flash-low-base: &gemini37-flash-low-base
+    model: gemini/gemini-3.7-flash
+    rpm: 5
+    tpm: 250000
+    timeout: 25
+    extra_body:
+      generationConfig:
+        thinking_config:
+          thinking_level: "low"
+
+  gemini37-flash-medium-base: &gemini37-flash-medium-base
+    model: gemini/gemini-3.7-flash
+    rpm: 5
+    tpm: 250000
+    timeout: 25
+    extra_body:
+      generationConfig:
+        thinking_config:
+          thinking_level: "medium"
+
+  gemini37-flash-high-base: &gemini37-flash-high-base
+    model: gemini/gemini-3.7-flash
+    rpm: 5
+    tpm: 250000
+    timeout: 25
+    extra_body:
+      generationConfig:
+        thinking_config:
+          thinking_level: "high"
+
 model_list:
 
   # =====================================================================
@@ -608,6 +644,202 @@ model_list:
   - model_name: gemini-3.6-flash-high
     litellm_params:
       model: openai/gemini-3.6-flash-high
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+  # ── gemini-3.7-flash (default alias) ──
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      <<: *gemini37-flash-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      <<: *gemini37-flash-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      <<: *gemini37-flash-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      <<: *gemini37-flash-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      <<: *gemini37-flash-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      <<: *gemini37-flash-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      <<: *gemini37-flash-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      <<: *gemini37-flash-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      <<: *gemini37-flash-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      <<: *gemini37-flash-base
+      api_key: os.environ/GEMINI_API_KEY_11
+  - model_name: gemini-3.7-flash
+    litellm_params:
+      model: openai/gemini-3.7-flash-tiered
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+  # ── gemini-3.7-flash-low ──
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      <<: *gemini37-flash-low-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      <<: *gemini37-flash-low-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      <<: *gemini37-flash-low-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      <<: *gemini37-flash-low-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      <<: *gemini37-flash-low-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      <<: *gemini37-flash-low-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      <<: *gemini37-flash-low-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      <<: *gemini37-flash-low-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      <<: *gemini37-flash-low-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      <<: *gemini37-flash-low-base
+      api_key: os.environ/GEMINI_API_KEY_11
+  - model_name: gemini-3.7-flash-low
+    litellm_params:
+      model: openai/gemini-3.7-flash-low
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+  # ── gemini-3.7-flash-medium ──
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      <<: *gemini37-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      <<: *gemini37-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      <<: *gemini37-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      <<: *gemini37-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      <<: *gemini37-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      <<: *gemini37-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      <<: *gemini37-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      <<: *gemini37-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      <<: *gemini37-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      <<: *gemini37-flash-medium-base
+      api_key: os.environ/GEMINI_API_KEY_11
+  - model_name: gemini-3.7-flash-medium
+    litellm_params:
+      model: openai/gemini-3.7-flash-medium
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+  # ── gemini-3.7-flash-high ──
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      <<: *gemini37-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_2
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      <<: *gemini37-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_3
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      <<: *gemini37-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_4
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      <<: *gemini37-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_5
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      <<: *gemini37-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_6
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      <<: *gemini37-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_7
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      <<: *gemini37-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_8
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      <<: *gemini37-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_9
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      <<: *gemini37-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_10
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      <<: *gemini37-flash-high-base
+      api_key: os.environ/GEMINI_API_KEY_11
+  - model_name: gemini-3.7-flash-high
+    litellm_params:
+      model: openai/gemini-3.7-flash-high
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
       drop_params: true
@@ -1172,6 +1404,18 @@ router_settings:
     gemini-3.6-flash-high:
       max_budget: 1000  # 10 keys x 100 RPD = 1000
       budget_duration: 1d
+    gemini-3.7-flash:
+      max_budget: 1000  # 10 keys x 100 RPD = 1000
+      budget_duration: 1d
+    gemini-3.7-flash-low:
+      max_budget: 1000  # 10 keys x 100 RPD = 1000
+      budget_duration: 1d
+    gemini-3.7-flash-medium:
+      max_budget: 1000  # 10 keys x 100 RPD = 1000
+      budget_duration: 1d
+    gemini-3.7-flash-high:
+      max_budget: 1000  # 10 keys x 100 RPD = 1000
+      budget_duration: 1d
 
     text-gemma:         # gemma-3-27b-it, 10 keys × 14,400 RPD = 144,000
       max_budget: 144000
@@ -1190,6 +1434,10 @@ router_settings:
       budget_duration: 1d
 
   fallbacks:
+    - {"gemini-3.7-flash": ["gemini-3.7-flash-high", "gemini-3.6-flash-high", "gemini-3.5-flash-high", "ocr-tier4", "rag-core"]}
+    - {"gemini-3.7-flash-high": ["gemini-3.7-flash-medium", "gemini-3.6-flash-high", "gemini-3.5-flash-high", "ocr-tier4", "rag-core"]}
+    - {"gemini-3.7-flash-medium": ["gemini-3.7-flash-low", "gemini-3.6-flash-medium", "gemini-3.5-flash-medium", "ocr-tier4", "rag-core"]}
+    - {"gemini-3.7-flash-low": ["gemini-3.6-flash-low", "gemini-3.5-flash-low", "ocr-tier4", "rag-core"]}
     - {"claude-opus-4-6-thinking": ["claude-opus-4-5-thinking", "claude-sonnet-4-6-thinking",
         "gemini-3.1-pro-high", "rag-core"]}
     - {"claude-opus-4-5-thinking": ["claude-sonnet-4-6-thinking", "claude-sonnet-4-5-thinking",

@@ -12,14 +12,36 @@ This skill provides full automation for auditing live models from Google AI Stud
 Run the slash command:
 `/ccba-update-models`
 
-Or run the underlying Python script directly:
+Or run the underlying Python script directly with flags:
 ```bash
+# 1. Audit only (inspect upstream differences without modifying files)
+python3 /home/vvc/Codebase/dgx-spark-toolkit/scripts/model_auto_updater.py --audit
+
+# 2. Dry-run (show patches that would be applied)
+python3 /home/vvc/Codebase/dgx-spark-toolkit/scripts/model_auto_updater.py --dry-run
+
+# 3. Force update & restart
 python3 /home/vvc/Codebase/dgx-spark-toolkit/scripts/model_auto_updater.py --force
 ```
 
 ## Key Responsibilities
 
-1. **Query Live Models**: Fetches available models from Google API (`https://generativelanguage.googleapis.com/v1beta/models?key=...`).
-2. **Auto-Patching**: Scans `services/ai-gateway/litellm_config.yaml` for deprecated model names and replaces them with active equivalents.
-3. **Container Restart**: Restarts the `ai-gateway` container cleanly.
+1. **Query Live Models**: Fetches available models from Google API (`https://generativelanguage.googleapis.com/v1beta/models?key=...`) and Centralized Proxy (`GATEWAY_PROXY_URL/models`).
+2. **Auto-Patching**: Scans `services/ai-gateway/litellm_config.yaml` for deprecated model names (such as Gemma/Gemini variants) and replaces them with active equivalents.
+3. **Container Restart & Verification**: Restarts the `ai-gateway` container cleanly and runs live HTTP endpoint health checks.
 4. **Notifications**: Sends a summary report via Telegram if `TELEGRAM_BOT_TOKEN` is configured in `.env`.
+
+## Domain Model Archetypes (Standard Roles)
+
+| Archetype | Model Aliases | Target Backend |
+| :--- | :--- | :--- |
+| **OCR / Vision Ingestion** | `ocr-primary`, `ocr-fallback`, `ocr-tier4` | Google AI Studio Direct (10 keys) |
+| **Standard / Coding** | `gemini-3.7-flash` (medium / low), `text-gemma` | Google API + Centralized Proxy |
+| **Deep Reasoning** | `gemini-3.7-flash-high`, `claude-sonnet-4-6-thinking` | Google API + Proxy |
+| **Local Private / Zero-Cost** | `rag-core`, `qwen-local-primary` | Local vLLM Qwen 35B FP8 |
+
+## Client Integration Guidelines
+
+- **Timeout**: Set client HTTP timeout to **30s – 60s** to allow Gateway to complete fallback cascade if upstream experiences temporary 503 errors.
+- **Thinking Parameters**: Zero-config on client side — `custom_callbacks.gemini_corrector` normalizes thinking levels automatically.
+- **Reference Doc**: Detailed guide available at [`services/ai-gateway/CLIENT_INTEGRATION_GUIDE.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/ai-gateway/CLIENT_INTEGRATION_GUIDE.md).
