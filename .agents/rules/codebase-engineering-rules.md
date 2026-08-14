@@ -40,5 +40,10 @@ Tài liệu lưu trữ các quy tắc kỹ thuật cố định được rút ra
 - **Quy tắc**: Khi chuyển đổi tài liệu qua subprocess (như LibreOffice headless chuyển `.doc` sang `.docx` trong thư mục tạm `mkdtemp`), khối `finally` không chỉ xóa file tạm đơn lẻ mà PHẢI dọn dẹp sạch sẽ toàn bộ thư mục cha tạm thời (`shutil.rmtree(parent_dir, ignore_errors=True)`).
 - **Chi tiết**: Ngăn chặn rò rỉ dung lượng ổ đĩa (disk space leak) trong các worker tiến trình ingestion chạy liên tục trong thời gian dài.
 
+## 10. Nguyên tắc Strict Yielding & Reactive Wakeup cho Background Tasks
+- **Quy tắc**: Tuyệt đối **CẤM** gọi `manage_task(status)` theo vòng lặp (busy-polling) khi một lệnh được đẩy xuống chạy nền (`task-xxx`). Khi nhận thông báo `Tool is running as a background task`, Agent **PHẢI** lập tức dừng gọi công cụ (end turn) và xuất thông điệp ngắn cho người dùng.
+- **Chi tiết**: Antigravity runtime là kiến trúc Reactive Event-Driven. Khi task nền chạy xong, runtime sẽ tự động phát `<SYSTEM_MESSAGE>` và resume lượt của Agent kèm toàn bộ output và exit code. Việc gọi loop poll `manage_task(status)` làm lãng phí hàng chục nghìn tokens, gây tắc nghẽn UI và tăng chi phí API không cần thiết.
+
+
 
 

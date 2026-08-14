@@ -64,7 +64,10 @@ git commit -m "fix(copilot-review): address copilot feedback and update persiste
 git push origin HEAD
 ```
 
-## Bước 5 — Chờ CI Status Check Xanh (Watch CI)
+## Bước 5 — Chờ CI Status Check Xanh (Watch CI & Reactive Wakeup)
+
+> [!IMPORTANT]
+> **Quy tắc Strict Yielding cho Agent**: Khi chạy `gh pr checks ${PR_ID} --watch`, nếu lệnh chuyển thành Background Task (`task-xxx`), Agent **BẮT BUỘC** dừng gọi công cụ (end turn) và xuất thông báo cho người dùng. Tuyệt đối **KHÔNG** gọi `manage_task(status)` theo vòng lặp. Runtime hệ thống sẽ tự động phát `<SYSTEM_MESSAGE>` đánh thức Agent khi CI hoàn thành.
 
 ```bash
 PR_ID="${1:-$(gh pr view --json number -q .number)}"
