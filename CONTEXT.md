@@ -1,61 +1,65 @@
-# Domain Context & Glossary
+# DGX Spark Vietnamese Legal RAG System
 
-Ubiquitous language and domain model definitions for the `dgx-spark-toolkit` Vietnamese Legal Document RAG System.
+The core domain model, ubiquitous language, and canonical entity definitions for the Vietnamese Legal Document RAG System.
 
 ## Ingestion Domain
 
-### `DocumentIngestionPipeline`
-The single, deep entry-point module responsible for orchestrating the complete document processing pipeline: file intake, OCR text extraction, legal metadata parsing, identity normalization, structured chunking, BGE-M3 embedding, vector/graph indexing, and document export.
+**DocumentIngestionPipeline**:
+The single entry-point module orchestrating multi-stage legal document extraction, normalization, embedding, and indexing.
+_Avoid_: Ingestor, ingestion script, pipeline runner
 
-### `IngestionState`
-The status lifecycle of a document within the processing queue and state database:
-- `PENDING`: Enqueued in Redis/Database, awaiting worker claim.
-- `CLAIMED`: Claimed by a worker process.
-- `PROCESSING`: Active extraction/embedding/indexing in progress.
-- `COMPLETED`: Successfully ingested into Milvus and Neo4j.
-- `FAILED`: Ingestion halted due to unrecoverable error.
+**IngestionState**:
+The status lifecycle of a document within the processing queue and database (`PENDING`, `CLAIMED`, `PROCESSING`, `COMPLETED`, `FAILED`).
+_Avoid_: Document status, job progress
 
-### `IngestionResult`
-The structured output returned after running `DocumentIngestionPipeline.ingest_file()`, containing document metadata, page counts, chunk metrics, index status, and execution duration.
+**IngestionResult**:
+The structured summary returned upon completion of document ingestion containing metrics, chunk counts, and execution duration.
+_Avoid_: Ingestion response, pipeline output
 
-### `StateManager`
-The database adapter responsible for persisting and querying `IngestionState` across processing workers. Supports both production PostgreSQL storage and an in-memory test adapter for offline unit testing.
+**StateManager**:
+The database adapter responsible for persisting and querying document `IngestionState` across processing workers.
+_Avoid_: State tracker, queue state handler
 
-### `TextNormalizer`
-The single, deep text normalization engine responsible for orchestrating multi-pass legal OCR text cleanups: OCR typo correction, boilerplate header/footer stripping, paragraph rejoining, legal structure formatting, and table data recovery behind a clean `clean_chunk()` and `clean_document()` seam.
+**TextNormalizer**:
+The text normalization engine responsible for legal OCR typo correction, header/footer stripping, structure formatting, and table recovery.
+_Avoid_: Text cleaner, string sanitizer
 
-### `DocumentStore`
-The unified deep persistence module responsible for orchestrating vector indexing (Milvus), Knowledge Graph relationships (Neo4j), and `IngestionState` tracking across document processing. Supports both production multi-database persistence and an `InMemoryDocumentStore` test adapter for fast offline testing.
+**DocumentStore**:
+The unified persistence module orchestrating vector indexing (Milvus), knowledge graph relationships (Neo4j), and state tracking.
+_Avoid_: Database manager, storage layer
 
 ## AI Gateway & LLM Domain
 
-### `AIGatewayClient`
-The single, deep client module providing unified access to all AI Gateway models (LLM text completions, JSON structured extractions, and Vision OCR). Encapsulates model fallback chains, rate-limit retries, circuit breakers, and markdown-fence JSON parsing behind a clean seam.
+**AIGatewayClient**:
+The unified client interface providing standardized access, fallback chains, retry policies, and structured schema parsing via LiteLLM proxy.
+_Avoid_: LLM client, proxy connector
 
-### `MockAIGatewayClient`
-An in-memory test adapter for `AIGatewayClient` allowing fast, deterministic unit testing of LLM-dependent services without requiring external network calls.
+**MockAIGatewayClient**:
+An in-memory test adapter for `AIGatewayClient` providing deterministic LLM completions for offline testing.
+_Avoid_: Fake LLM, dummy client
 
 ## Retrieval & Search Domain
 
-### `SearchPipeline`
-The deep execution module for legal search, encapsulating query intent classification, semantic caching, query rewriting, HyDE generation, Milvus hybrid vector search, BGE reranking, Neo4j document validity status checks, and Graph RAG timeline enrichment behind a single seam.
+**SearchPipeline**:
+The search execution engine combining hybrid vector retrieval, knowledge graph traversal, and reranking behind a single query interface.
+_Avoid_: Query engine, search executor
 
-### `SearchContext`
-The type-safe state container passed across `SearchPipeline` stages, encapsulating raw query parameters, generated embeddings, candidate hits, reranked results, and execution traces.
+**SearchContext**:
+The type-safe state container holding query parameters, candidate hits, reranked results, and execution traces across search stages.
+_Avoid_: Query context, search state
 
 ## Frontend Stream Domain
 
-### `StreamClient`
-The deep client module managing Server-Sent Events (SSE) streaming connections (`POST /chat/stream`), providing automatic reconnection, buffer decoding, discriminated union event parsing, and transparent fallback to REST API.
+**StreamClient**:
+The frontend client module managing Server-Sent Events (SSE) streaming connections with automatic reconnection and REST fallback.
+_Avoid_: EventSource wrapper, stream handler
 
 ## Agent & Skill Infrastructure Domain
 
-### `SkillState`
-The status lifecycle matrix of an agent skill within the system manifest (`manifest.json`):
-- `installed`: Active, verified skill available for agent invocation.
-- `errored`: Skill installation or runtime execution failed; requires diagnosis and repair.
-- `repairing`: Transitive state while source files are being patched and validated.
-- `disabled`: Intentionally deactivated skill by user or environment policy.
+**SkillState**:
+The status lifecycle of an agent skill within the system manifest (`installed`, `errored`, `repairing`, `disabled`).
+_Avoid_: Skill status
 
-### `SkillRepairAssistant`
-The agent skill procedure responsible for diagnosing failed skill installations, editing source files at `Source Path`, synchronizing fixes to `Installed Path`, validating YAML frontmatter and code syntax, and atomically updating `manifest.json`.
+**SkillRepairAssistant**:
+The agent skill procedure responsible for diagnosing, patching, validating, and synchronizing agent skill sources.
+_Avoid_: Skill fixer, skill debugger
