@@ -209,18 +209,33 @@ class DocumentStore:
             return {"status": "no_graph_repo", "from": from_doc_id, "to": to_doc_id, "relation": rel}
 
         try:
+            executed = False
             if rel in ("SUPERSEDES", "REPLACES"):
                 if hasattr(self.neo4j_repo, "create_supersedes_relation"):
                     await self.neo4j_repo.create_supersedes_relation(from_doc_id, to_doc_id)
+                    executed = True
                 elif hasattr(self.neo4j_repo, "create_relationship"):
                     await self.neo4j_repo.create_relationship(from_doc_id, to_doc_id, "SUPERSEDES")
+                    executed = True
             elif rel in ("AMENDS", "MODIFIES"):
                 if hasattr(self.neo4j_repo, "create_amends_relation"):
                     await self.neo4j_repo.create_amends_relation(from_doc_id, to_doc_id)
+                    executed = True
                 elif hasattr(self.neo4j_repo, "create_relationship"):
                     await self.neo4j_repo.create_relationship(from_doc_id, to_doc_id, "AMENDS")
+                    executed = True
             elif hasattr(self.neo4j_repo, "create_relationship"):
                 await self.neo4j_repo.create_relationship(from_doc_id, to_doc_id, rel)
+                executed = True
+
+            if not executed:
+                return {
+                    "status": "unsupported_relation",
+                    "from": from_doc_id,
+                    "to": to_doc_id,
+                    "relation": rel,
+                    "error": f"Neo4j repository does not support creating relation '{rel}'",
+                }
 
             return {"status": "success", "from": from_doc_id, "to": to_doc_id, "relation": rel}
         except Exception as e:

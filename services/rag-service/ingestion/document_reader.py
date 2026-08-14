@@ -10,6 +10,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 from typing import Any, Dict, List, Optional, Union
@@ -275,6 +276,9 @@ class DocumentReader:
                     os.unlink(actual_path)
                 except OSError:
                     pass
+                parent_dir = os.path.dirname(actual_path)
+                if os.path.basename(parent_dir).startswith("rag_doc_") and os.path.isdir(parent_dir):
+                    shutil.rmtree(parent_dir, ignore_errors=True)
 
     def _convert_doc_to_docx(self, file_path: str) -> Optional[str]:
         """Convert legacy .doc to .docx using headless LibreOffice."""
