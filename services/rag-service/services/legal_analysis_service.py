@@ -42,7 +42,10 @@ class LegalAnalysisEngine:
         """Fetch relevant chunk texts for a document using search pipeline."""
         if '/' in doc_number_or_id:
             parts = doc_number_or_id.split('/', 1)
-            num = parts[1] if parts[0].isalnum() or '_' in parts[0] else doc_number_or_id
+            if not parts[0].isdigit() and not any(c.isdigit() for c in parts[0]):
+                num = parts[1]
+            else:
+                num = doc_number_or_id
         else:
             num = doc_number_or_id
 

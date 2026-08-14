@@ -62,3 +62,18 @@ class TestLegalAnalysisService:
         ai_client.complete = AsyncMock(side_effect=Exception("err"))
         result = _run(service._generate_delta_analysis("n", "o", "q", "cn", "co"))
         assert "Lỗi" in result
+
+    def test_fetch_doc_context_parsing(self):
+        pipeline = InMemorySearchPipeline()
+        pipeline.search = AsyncMock(return_value={"results": [{"text": "Context for 01/2024/TT-BXD"}]})
+        service, _, _ = _make_service(search_pipeline=pipeline)
+
+        # Case 1: Raw doc number starting with digits
+        ctx1 = _run(service._fetch_doc_context("01/2024/TT-BXD", "PCCC"))
+        assert ctx1 == "Context for 01/2024/TT-BXD"
+        assert pipeline.search.call_args[1]["doc_number"] == "01/2024/TT-BXD"
+
+        # Case 2: Namespace prefixed doc_id
+        ctx2 = _run(service._fetch_doc_context("VBPL/01/2024/TT-BXD", "PCCC"))
+        assert ctx2 == "Context for 01/2024/TT-BXD"
+        assert pipeline.search.call_args[1]["doc_number"] == "01/2024/TT-BXD"
