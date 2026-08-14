@@ -22,6 +22,12 @@
 
 ### Thay đổi đã thực hiện (2026-08-14)
 
+- [x] **AI Gateway & Client Seam Architecture Deepening (Wayfinder Map #49)**:
+  - **Candidate #1 & Ticket #46 — Purge Orphan Migration Scripts**: Xóa bỏ hoàn toàn các file script tạm một lần (`fix_yaml.py`, `refactor_yaml.py`, `new_config.yaml`), bảo đảm tính toàn vẹn và nguồn cấu hình duy nhất của `litellm_config.yaml`.
+  - **Candidate #2 & Ticket #47 — Decouple ParameterNormalizer & 100% Hermetic Tests**: Tách pure domain logic sang class `ParameterNormalizer` (token length estimation, tiered routing, thinking level normalization). Chuyển `GeminiParameterCorrector` thành thin adapter độc lập, unblock 100% unit tests offline (`14/14 passed`, 0 skipped).
+  - **Candidate #3 & Ticket #48 — Deep Ingestion Vision Seam**: Mở rộng `AIGatewayClient.complete_vision(system_prompt=...)` và `complete_vision_sync()`. Tinh gọn `cloud_vision.py` ủy quyền fallback cascade (`model_chain`) & base64 format cho Client trong khi bảo toàn 100% Domain Knowledge pháp lý (`_EXTRACT_SYSTEM`).
+  - **Full Test Suite & Git Sync**: Toàn bộ **393/393 backend unit tests PASSED (100%)**, 0 lint errors, đã đóng trọn vẹn Map #49 và push 100% lên `master`.
+
 - [x] **RAG Codebase Architecture Deepening Round 2 (PR #45)**:
   - **Candidate 01 — Deep `DocumentReader` Seam**: Hợp nhất 4 format parsers (PDF, DOCX/DOC, XLSX/XLS, Image) và phân tầng OCR (Native Text ➡️ Surya OCR ➡️ Vision LLM) vào `ingestion/document_reader.py`. Bổ sung `InMemoryDocumentReader` test adapter hermetic cho offline test.
   - **Candidate 02 — Vision `AIGatewayClient` Seam**: Chuẩn hóa 100% điểm gọi OCR/Vision trong `cloud_vision.py`, `vision.py`, `figure_extractor.py`, `chunking.py` qua `complete_vision()` / `complete_vision_sync()`. Tận dụng cooldown Google AI Studio và chuỗi 3-tier fallback.
