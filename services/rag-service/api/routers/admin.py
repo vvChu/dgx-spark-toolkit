@@ -2,10 +2,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 from models.schemas import SyncStatusRequest, SyncStatusResponse
 from core.config import get_settings
-from core.database import get_milvus_repo, get_neo4j_repo, get_state_manager
-from repositories.milvus_repo import MilvusRepository
-from repositories.neo4j_repo import Neo4jRepository
-from ingestion.state_manager import PostgresStateManager
+from core.database import get_document_store
+from repositories.document_store import DocumentStore
 from services.lifecycle_service import LifecycleService
 
 import asyncio
@@ -77,13 +75,11 @@ async def run_pipeline(action: str):
 @router.post("/sync-status", response_model=SyncStatusResponse)
 async def sync_document_status(
     request: SyncStatusRequest,
-    state_manager: PostgresStateManager = Depends(get_state_manager),
-    milvus_repo: MilvusRepository = Depends(get_milvus_repo),
-    neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
+    document_store: DocumentStore = Depends(get_document_store),
 ):
     """Cascading update of document validity status across all data stores."""
     try:
-        service = LifecycleService(state_manager, milvus_repo, neo4j_repo)
+        service = LifecycleService(document_store=document_store)
         result = await service.sync_document_status(request.doc_id, request.new_status)
 
         if result["status"] == "partial_success":

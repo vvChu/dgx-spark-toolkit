@@ -136,3 +136,55 @@ class TestDocumentStore:
 
         del_res = store.delete_document_sync(doc.identity.doc_id)
         assert del_res["status"] == "success"
+
+    def test_in_memory_document_store_version_update(self):
+        import asyncio
+
+        async def _test():
+            store = InMemoryDocumentStore()
+            res = await store.notify_version_update(
+                new_doc_id="VBPL/02_2025_TT-BXD",
+                supersedes=["VBPL/01_2024_TT-BXD"],
+                amends=["VBPL/03_2023_TT-BXD"],
+            )
+            assert res["status"] == "success"
+            assert "VBPL/01_2024_TT-BXD" in res["superseded"]
+            assert "VBPL/03_2023_TT-BXD" in res["amended"]
+            assert store.document_statuses["VBPL/01_2024_TT-BXD"] == "SUPERSEDED"
+            assert store.document_statuses["VBPL/03_2023_TT-BXD"] == "OUTDATED"
+            assert len(store.relations) == 2
+
+        asyncio.run(_test())
+
+    def test_document_store_relations_with_mock(self):
+        import asyncio
+
+        async def _test():
+            mock_neo4j = MagicMock()
+            mock_neo4j.create_supersedes_relation = AsyncMock()
+            mock_neo4j.create_amends_relation = AsyncMock()
+            mock_neo4j.update_node_status = AsyncMock()
+
+            mock_milvus = MagicMock()
+            mock_milvus.update_doc_validity = AsyncMock()
+
+            mock_state = MagicMock()
+            mock_state.update_validity_status = MagicMock()
+
+            store = DocumentStore(
+                milvus_repo=mock_milvus,
+                neo4j_repo=mock_neo4j,
+                state_manager=mock_state,
+            )
+
+            res = await store.notify_version_update(
+                new_doc_id="VBPL/NEW",
+                supersedes=["VBPL/OLD_1"],
+                amends=["VBPL/OLD_2"],
+            )
+            assert res["status"] == "success"
+            assert mock_neo4j.create_supersedes_relation.call_count == 1
+            assert mock_neo4j.create_amends_relation.call_count == 1
+            assert mock_milvus.update_doc_validity.call_count == 2
+
+        asyncio.run(_test())

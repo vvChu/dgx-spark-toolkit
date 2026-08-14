@@ -55,3 +55,21 @@ class TestLifecycleService:
         result = _run(svc.sync_document_status("X/Y", "OUTDATED"))
         assert result["status"] == "partial_success"
         assert len(result["errors"]) == 3
+
+    def test_notify_new_document_ingested_via_document_store(self):
+        from repositories.document_store import InMemoryDocumentStore
+        from services.lifecycle_service import LifecycleService
+
+        store = InMemoryDocumentStore()
+        svc = LifecycleService(document_store=store)
+
+        res = _run(svc.notify_new_document_ingested(
+            new_doc_id="VBPL/NEW_2025",
+            supersedes=["VBPL/OLD_2020"],
+            amends=["VBPL/AMENDED_2022"],
+        ))
+        assert res["status"] == "success"
+        assert "VBPL/OLD_2020" in res["superseded"]
+        assert "VBPL/AMENDED_2022" in res["amended"]
+        assert store.document_statuses["VBPL/OLD_2020"] == "SUPERSEDED"
+        assert store.document_statuses["VBPL/AMENDED_2022"] == "OUTDATED"

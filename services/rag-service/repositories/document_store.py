@@ -202,6 +202,98 @@ class DocumentStore:
 
         return {"status": "success" if not errors else "partial_success", "errors": errors}
 
+    async def add_relation(self, from_doc_id: str, to_doc_id: str, relation_type: str) -> Dict[str, Any]:
+        """Create a directed legal relationship edge between two documents in Neo4j."""
+        rel = relation_type.upper().strip()
+        if not self.neo4j_repo:
+            return {"status": "no_graph_repo", "from": from_doc_id, "to": to_doc_id, "relation": rel}
+
+        try:
+            executed = False
+            if rel in ("SUPERSEDES", "REPLACES"):
+                if hasattr(self.neo4j_repo, "create_supersedes_relation"):
+                    await self.neo4j_repo.create_supersedes_relation(from_doc_id, to_doc_id)
+                    executed = True
+                elif hasattr(self.neo4j_repo, "create_relationship"):
+                    await self.neo4j_repo.create_relationship(from_doc_id, to_doc_id, "SUPERSEDES")
+                    executed = True
+            elif rel in ("AMENDS", "MODIFIES"):
+                if hasattr(self.neo4j_repo, "create_amends_relation"):
+                    await self.neo4j_repo.create_amends_relation(from_doc_id, to_doc_id)
+                    executed = True
+                elif hasattr(self.neo4j_repo, "create_relationship"):
+                    await self.neo4j_repo.create_relationship(from_doc_id, to_doc_id, "AMENDS")
+                    executed = True
+            elif hasattr(self.neo4j_repo, "create_relationship"):
+                await self.neo4j_repo.create_relationship(from_doc_id, to_doc_id, rel)
+                executed = True
+
+            if not executed:
+                return {
+                    "status": "unsupported_relation",
+                    "from": from_doc_id,
+                    "to": to_doc_id,
+                    "relation": rel,
+                    "error": f"Neo4j repository does not support creating relation '{rel}'",
+                }
+
+            return {"status": "success", "from": from_doc_id, "to": to_doc_id, "relation": rel}
+        except Exception as e:
+            logger.error(f"DocumentStore add_relation failed ({from_doc_id} -[{rel}]-> {to_doc_id}): {e}")
+            return {"status": "error", "from": from_doc_id, "to": to_doc_id, "relation": rel, "error": str(e)}
+
+    def add_relation_sync(self, from_doc_id: str, to_doc_id: str, relation_type: str) -> Dict[str, Any]:
+        return _run_async(self.add_relation(from_doc_id, to_doc_id, relation_type))
+
+    async def notify_version_update(
+        self,
+        new_doc_id: str,
+        supersedes: Optional[List[str]] = None,
+        amends: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Orchestrate legal versioning lifecycle updates across Postgres, Milvus, and Neo4j."""
+        results = {"new_doc_id": new_doc_id, "superseded": [], "amended": [], "errors": []}
+
+        for old_doc_id in (supersedes or []):
+            logger.info(f"[DocumentStore] {new_doc_id} supersedes {old_doc_id} — marking SUPERSEDED")
+            sync_res = await self.sync_status(old_doc_id, "SUPERSEDED")
+            if sync_res.get("status") == "success":
+                results["superseded"].append(old_doc_id)
+            else:
+                results["errors"].extend(sync_res.get("errors", [f"sync failed for {old_doc_id}"]))
+
+            rel_res = await self.add_relation(new_doc_id, old_doc_id, "SUPERSEDES")
+            if rel_res.get("status") == "error":
+                results["errors"].append(f"neo4j_supersedes {old_doc_id}: {rel_res.get('error')}")
+
+        for amended_doc_id in (amends or []):
+            logger.info(f"[DocumentStore] {new_doc_id} amends {amended_doc_id} — marking OUTDATED")
+            sync_res = await self.sync_status(amended_doc_id, "OUTDATED")
+            if sync_res.get("status") == "success":
+                results["amended"].append(amended_doc_id)
+            else:
+                results["errors"].extend(sync_res.get("errors", [f"sync failed for {amended_doc_id}"]))
+
+            rel_res = await self.add_relation(new_doc_id, amended_doc_id, "AMENDS")
+            if rel_res.get("status") == "error":
+                results["errors"].append(f"neo4j_amends {amended_doc_id}: {rel_res.get('error')}")
+
+        status = "success" if not results["errors"] else "partial_success"
+        logger.info(
+            f"[DocumentStore] Version update complete for {new_doc_id}: "
+            f"superseded={len(results['superseded'])}, amended={len(results['amended'])}, "
+            f"errors={len(results['errors'])}"
+        )
+        return {"status": status, **results}
+
+    def notify_version_update_sync(
+        self,
+        new_doc_id: str,
+        supersedes: Optional[List[str]] = None,
+        amends: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        return _run_async(self.notify_version_update(new_doc_id, supersedes, amends))
+
     def delete_document_sync(self, doc_id: str) -> Dict[str, Any]:
         return _run_async(self.delete_document(doc_id))
 
@@ -213,6 +305,7 @@ class InMemoryDocumentStore(DocumentStore):
         super().__init__(state_manager=state_manager or InMemoryStateManager())
         self.indexed_documents: Dict[str, ProcessedDocument] = {}
         self.document_statuses: Dict[str, str] = {}
+        self.relations: List[Dict[str, str]] = []
 
     def is_document_processed(self, rel_path: str) -> bool:
         return self.state_manager.get_status(rel_path) == "COMPLETED"
@@ -226,6 +319,39 @@ class InMemoryDocumentStore(DocumentStore):
 
     async def sync_status(self, doc_id: str, new_status: str) -> Dict[str, Any]:
         return self.sync_status_sync(doc_id, new_status)
+
+    def add_relation_sync(self, from_doc_id: str, to_doc_id: str, relation_type: str) -> Dict[str, Any]:
+        rel = {"from": from_doc_id, "to": to_doc_id, "relation": relation_type}
+        self.relations.append(rel)
+        return {"status": "success", **rel}
+
+    async def add_relation(self, from_doc_id: str, to_doc_id: str, relation_type: str) -> Dict[str, Any]:
+        return self.add_relation_sync(from_doc_id, to_doc_id, relation_type)
+
+    def notify_version_update_sync(
+        self,
+        new_doc_id: str,
+        supersedes: Optional[List[str]] = None,
+        amends: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        results = {"new_doc_id": new_doc_id, "superseded": [], "amended": [], "errors": []}
+        for s in (supersedes or []):
+            self.document_statuses[s] = "SUPERSEDED"
+            self.relations.append({"from": new_doc_id, "to": s, "relation": "SUPERSEDES"})
+            results["superseded"].append(s)
+        for a in (amends or []):
+            self.document_statuses[a] = "OUTDATED"
+            self.relations.append({"from": new_doc_id, "to": a, "relation": "AMENDS"})
+            results["amended"].append(a)
+        return {"status": "success", **results}
+
+    async def notify_version_update(
+        self,
+        new_doc_id: str,
+        supersedes: Optional[List[str]] = None,
+        amends: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        return self.notify_version_update_sync(new_doc_id, supersedes, amends)
 
     def index_document_sync(self, processed_doc: ProcessedDocument) -> Dict[str, Any]:
         identity = getattr(processed_doc, "identity", None)

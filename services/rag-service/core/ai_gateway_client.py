@@ -293,25 +293,64 @@ class AIGatewayClient:
         prompt: str = "Trích xuất toàn bộ văn bản tiếng Việt từ ảnh pháp lý này.",
         *,
         model: Optional[str] = None,
+        model_chain: Optional[List[str]] = None,
+        max_tokens: int = 8192,
+        temperature: float = 0.0,
+        timeout: Optional[float] = None,
     ) -> str:
-        """Send vision OCR completion."""
+        """Send vision OCR or multimodal completion with automated base64 formatting and fallback cascade."""
         import base64
+        from io import BytesIO
+
+        mime_type = "image/jpeg"
         if isinstance(image_bytes_or_b64, bytes):
+            if image_bytes_or_b64.startswith(b'\x89PNG\r\n\x1a\n'):
+                mime_type = "image/png"
             b64 = base64.b64encode(image_bytes_or_b64).decode("utf-8")
+            data_uri = f"data:{mime_type};base64,{b64}"
+        elif hasattr(image_bytes_or_b64, "save"):  # PIL Image
+            bio = BytesIO()
+            image_bytes_or_b64.save(bio, format="JPEG")
+            b64 = base64.b64encode(bio.getvalue()).decode("utf-8")
+            data_uri = f"data:image/jpeg;base64,{b64}"
         else:
-            b64 = str(image_bytes_or_b64)
+            b64_str = str(image_bytes_or_b64)
+            if b64_str.startswith("data:"):
+                data_uri = b64_str
+            else:
+                data_uri = f"data:{mime_type};base64,{b64_str}"
 
         messages = [
             {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                    {"type": "image_url", "image_url": {"url": data_uri}}
                 ]
             }
         ]
         target_model = model or getattr(self.settings, "PRIMARY_VISION_MODEL", "gemini-3-flash")
-        return await self.complete(messages, model=target_model, model_chain=[target_model, "gemini-3.1-flash-lite", "rag-core"])
+        chain = model_chain or [target_model, "ocr-primary", "ocr-fallback", "rag-core"]
+        extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
+
+        res = await self.complete(
+            messages,
+            model=target_model,
+            model_chain=chain,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            extra_body=extra_body,
+            timeout=timeout,
+        )
+
+        res = re.sub(r'<think>[\s\S]*?</think>\s*', '', res)
+        tp_match = re.match(
+            r'(?:Thinking Process|Internal Monologue|Reasoning):?\s*\n[\s\S]*?\n\n([\s\S]+)',
+            res, re.IGNORECASE
+        )
+        if tp_match:
+            res = tp_match.group(1)
+        return res.strip()
 
     # Sync Wrappers
     def complete_sync(self, messages: List[Dict[str, Any]], **kwargs) -> str:
@@ -333,6 +372,11 @@ class MockAIGatewayClient(AIGatewayClient):
     def __init__(self, default_response: str = "Mocked LLM completion"):
         self.default_response = default_response
         self.call_history: List[Dict[str, Any]] = []
+        self._mock_vision_handler = None
+
+    def set_mock_vision_response(self, handler_or_str: Any) -> None:
+        """Configure mock vision response (string or callable(prompt, image) -> str)."""
+        self._mock_vision_handler = handler_or_str
 
     async def complete(self, messages: List[Dict[str, Any]], **kwargs) -> str:
         self.call_history.append({"messages": messages, "kwargs": kwargs})
@@ -361,7 +405,6 @@ class MockAIGatewayClient(AIGatewayClient):
     async def complete_json(self, messages: List[Dict[str, Any]], schema: Optional[Type[BaseModel]] = None, **kwargs) -> Any:
         self.call_history.append({"messages": messages, "schema": schema, "kwargs": kwargs})
         if schema:
-            # Generate dummy dictionary matching schema fields
             fields = schema.model_fields if hasattr(schema, 'model_fields') else {}
             dummy = {k: "test" for k in fields.keys()}
             return dummy
@@ -372,7 +415,11 @@ class MockAIGatewayClient(AIGatewayClient):
         return await self.complete_json(messages, schema=schema, **kwargs)
 
     async def complete_vision(self, image_bytes_or_b64: Any, prompt: str = "", **kwargs) -> str:
-        self.call_history.append({"prompt": prompt, "kwargs": kwargs})
+        self.call_history.append({"prompt": prompt, "kwargs": kwargs, "vision": True})
+        if self._mock_vision_handler is not None:
+            if callable(self._mock_vision_handler):
+                return self._mock_vision_handler(prompt, image_bytes_or_b64)
+            return str(self._mock_vision_handler)
         return f"OCR: {self.default_response}"
 
 

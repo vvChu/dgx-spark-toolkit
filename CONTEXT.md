@@ -28,6 +28,14 @@ _Avoid_: Text cleaner, string sanitizer
 The unified persistence module orchestrating vector indexing (Milvus), knowledge graph relationships (Neo4j), and state tracking.
 _Avoid_: Database manager, storage layer
 
+**DocumentReader**:
+The unified multi-format document reader and extraction engine orchestrating native text parsing, PDF tier classification, OCR routing, and Office/image format conversion behind a single extraction interface.
+_Avoid_: PDF reader, document converter, file extractor
+
+**InMemoryDocumentReader**:
+An in-memory test adapter for `DocumentReader` providing deterministic multi-page document extractions for hermetic offline testing.
+_Avoid_: Mock reader, fake extractor
+
 ## AI Gateway & LLM Domain
 
 **AIGatewayClient**:
@@ -41,12 +49,16 @@ _Avoid_: Fake LLM, dummy client
 ## Retrieval & Search Domain
 
 **SearchPipeline**:
-The search execution engine combining hybrid vector retrieval, knowledge graph traversal, and reranking behind a single query interface.
+The search execution engine combining hybrid vector retrieval, knowledge graph traversal, multi-hop agentic reflection, and reranking behind a single query interface.
 _Avoid_: Query engine, search executor
 
 **SearchContext**:
-The type-safe state container holding query parameters, candidate hits, reranked results, and execution traces across search stages.
+The type-safe state container holding query parameters, candidate hits, reranked results, multi-hop plan traces, and execution telemetry across search stages.
 _Avoid_: Query context, search state
+
+**AgenticRetrieval**:
+The iterative plan-retrieve-reflect loop within `SearchPipeline` that decomposes complex legal queries into sub-queries and evaluates contextual sufficiency across multiple hops.
+_Avoid_: Agentic search loop, multi-step searcher
 
 ## Frontend Stream Domain
 

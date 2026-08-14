@@ -133,25 +133,15 @@ class ChatService:
         session_id: str, use_agentic: bool,
     ) -> list[dict]:
         """Execute standard or agentic retrieval."""
-        rewritten_query = await rewrite_query(query, self.http_client)
-
-        if use_agentic:
-            tracer.start_step("agentic_retrieval")
-            try:
-                from retrieval.agentic_retriever import AgenticRetriever
-                agentic = AgenticRetriever(self.retrieval_service, self.http_client)
-                result = await agentic.retrieve(query, tracer=tracer, session_id=session_id)
-                tracer.end_step(hops=result.hops, sub_queries=result.sub_queries)
-                return result.results
-            except Exception as e:
-                logger.warning("Agentic retrieval failed, falling back: %s", e)
-
-        # Standard retrieval (also fallback from failed agentic)
         search_res = await self.retrieval_service.search(
-            query=rewritten_query, limit=15, use_reranker=True,
-            session_id=session_id, tracer=tracer,
+            query=query,
+            limit=15,
+            use_reranker=True,
+            use_agentic=use_agentic,
+            session_id=session_id,
+            tracer=tracer,
         )
-        return search_res["results"]
+        return search_res.get("results", [])
 
     async def _accumulate_context(
         self, session_id: str, results: list[dict], tracer: QueryTracer,

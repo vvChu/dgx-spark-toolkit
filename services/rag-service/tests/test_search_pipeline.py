@@ -36,3 +36,27 @@ class TestSearchPipeline:
         assert res["results"][0]["doc_number"] == "01/2024/TT-BXD"
         assert res["query_intent"] == "GENERAL"
         assert len(pipeline.call_history) == 1
+
+    def test_in_memory_search_pipeline_agentic(self):
+        import asyncio
+        from retrieval.search_pipeline import InMemorySearchPipeline
+
+        pipeline = InMemorySearchPipeline()
+        res = asyncio.run(pipeline.search("So sánh quy chuẩn PCCC và tiêu chuẩn xây dựng", limit=3, use_agentic=True))
+        assert isinstance(res, dict)
+        assert res["query_intent"] == "COMPLEX"
+        assert res["hops"] == 2
+        assert len(res["sub_queries"]) == 2
+        assert "Mock in-memory agentic plan" in res["reasoning"]
+
+    def test_agentic_retriever_facade(self):
+        import asyncio
+        from retrieval.agentic_retriever import AgenticRetriever
+        from retrieval.search_pipeline import InMemorySearchPipeline
+
+        pipeline = InMemorySearchPipeline()
+        retriever = AgenticRetriever(retrieval_service=pipeline)
+        res = asyncio.run(retriever.retrieve("So sánh quy định"))
+        assert len(res.results) == 1
+        assert res.hops == 2
+        assert len(res.sub_queries) == 2

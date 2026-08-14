@@ -863,11 +863,7 @@ def _generate_table_summary(table_text: str, doc_id: str) -> str:
         except Exception:
             pass
 
-    gateway_base = os.environ.get("VLLM_API_BASE", "http://ai-gateway:4000/v1")
-    api_key = os.environ.get("LITELLM_MASTER_KEY", "")
-    # Prefer Gemini Flash for table summaries (fast + free)
     model = os.environ.get("TABLE_SUMMARY_MODEL", "gemini-flash")
-
     prompt = (
         "Tóm tắt bảng dữ liệu sau bằng tiếng Việt. "
         "Nêu rõ: (1) Mục đích của bảng, (2) Tên các cột chính, "
@@ -876,39 +872,22 @@ def _generate_table_summary(table_text: str, doc_id: str) -> str:
         f"Bảng:\n{table_text[:3000]}"  # Cap input to avoid token overflow
     )
 
+    from core.ai_gateway_client import get_ai_gateway_client
+    client = get_ai_gateway_client()
     try:
-        import httpx
-        resp = httpx.post(
-            f"{gateway_base}/chat/completions",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 200,
-                "temperature": 0.1,
-            },
-            timeout=30.0,
+        content = client.complete_sync(
+            [{"role": "user", "content": prompt}],
+            model=model,
+            max_tokens=200,
+            temperature=0.1,
         )
-        if resp.status_code == 200:
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            # Strip thinking tags if present (Qwen3.5 thinking mode)
-            import re
-            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
-
-            # Store in Redis cache (TTL: 7 days = 604800s)
-            if r and content:
-                try:
-                    r.setex(cache_key, 604800, content)
-                except Exception:
-                    pass
-            return content
-        else:
-            logger.debug(f"[TABLE-SUM] Gateway returned {resp.status_code}")
-            return ""
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+        if r and content:
+            try:
+                r.setex(cache_key, 604800, content)
+            except Exception:
+                pass
+        return content
     except Exception as e:
         logger.debug(f"[TABLE-SUM] LLM call failed: {e}")
         return ""

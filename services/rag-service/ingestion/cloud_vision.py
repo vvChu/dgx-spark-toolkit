@@ -38,35 +38,13 @@ METADATA_FALLBACK = os.getenv("METADATA_FALLBACK", "rag-core")         # Text-on
 _MAX_RETRIES = 3
 _INITIAL_BACKOFF = 2  # seconds
 
-# ── Shared HTTP Client ──────────────────────────────────────────────────────────
-import threading as _threading
-
-_http_client: httpx.Client | None = None
-_http_lock = _threading.Lock()
-
-
-def _get_client() -> httpx.Client:
-    global _http_client
-    if _http_client is None:
-        with _http_lock:
-            if _http_client is None:
-                # Granular timeout: connect fast, read generous for OCR, avoid 5-min hangs
-                _http_client = httpx.Client(
-                    timeout=httpx.Timeout(
-                        connect=15.0,  # TCP connect: fail fast but allow queue buffer
-                        read=180.0,    # OCR read: high DPI needs a lot of time
-                        write=15.0,    # Upload image payload
-                        pool=15.0,     # Connection pool wait
-                    )
-                )
-    return _http_client
+from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 
 
 def _call_model(messages: list, model: str, max_tokens: int = 4096,
                 temperature: float = 0.0, disable_thinking: bool = True) -> str:
     """Send a request to a specific model via AIGatewayClient."""
-    from core.ai_gateway_client import AIGatewayClient
-    client = AIGatewayClient()
+    client = get_ai_gateway_client()
     extra = {}
     if disable_thinking and ("rag" in model or "qwen" in model.lower()):
         extra = {"chat_template_kwargs": {"enable_thinking": False}}
@@ -81,69 +59,6 @@ def _call_model(messages: list, model: str, max_tokens: int = 4096,
     except Exception as e:
         logger.warning(f"AIGatewayClient call to {model} failed: {e}")
         return ""
-
-    # Kích hoạt Adaptive Micro-Sleep 1.5s để làm giãn nhịp gọi API,
-    # phân bổ mượt load vào 15 RPM của Gemini Flash Lite (Tránh Burst Spike)
-    time.sleep(1.5)
-
-    queue_retries = 0
-    for attempt in range(_MAX_RETRIES):
-        try:
-            resp = client.post(
-                f"{GATEWAY_URL}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-
-            if resp.status_code == 429:
-                if queue_retries < 5:
-                    queue_retries += 1
-                    logger.warning(f"[HANG_DOI] 429 RateLimit trên {model}. Active Queue Pause 60s để săn dư lượng Quota... (lần {queue_retries}/5)")
-                    time.sleep(60)
-                    # Gửi lại API request này mà không tính vào số attempt thất bại thông thường
-                    resp = client.post(
-                        f"{GATEWAY_URL}/chat/completions",
-                        headers={"Authorization": f"Bearer {api_key}"},
-                        json=payload,
-                    )
-                    if resp.status_code == 429:
-                        continue # Vòng lặp For sẽ tự kích hoạt retry fallback nếu Queue Pause 5 phút thất bại
-                else:         
-                    wait = _INITIAL_BACKOFF * (2 ** attempt)
-                    logger.warning(f"Rate limited (429) trên {model} (Queue cạn). Rơi tự do sang Fallback trong {wait}s ({attempt+1}/{_MAX_RETRIES})")
-                    time.sleep(wait)
-                    continue
-
-            resp.raise_for_status()
-            data = resp.json()
-
-            if not isinstance(data, dict) or "choices" not in data:
-                logger.warning(f"Invalid response from {model}: {data}")
-                cb.record_failure(Exception("Invalid response"))
-                return ""
-
-            content = data["choices"][0].get("message", {}).get("content") or ""
-            # Strip thinking tokens from models that leak them (Gemini, Qwen)
-            content = re.sub(r'<think>[\s\S]*?</think>\s*', '', content)
-            tp_match = re.match(
-                r'(?:Thinking Process|Internal Monologue|Reasoning):?\s*\n[\s\S]*?\n\n([\s\S]+)',
-                content, re.IGNORECASE
-            )
-            if tp_match:
-                content = tp_match.group(1)
-            cb.record_success()
-            return content.strip()
-
-        except Exception as e:
-            cb.record_failure(e)
-            if attempt == _MAX_RETRIES - 1:
-                logger.error(f"Model {model} failed after {_MAX_RETRIES} attempts: {e}")
-                return ""
-            wait = _INITIAL_BACKOFF * (2 ** attempt)
-            logger.warning(f"Model {model} attempt {attempt+1} failed: {e}. Retry in {wait}s")
-            time.sleep(wait)
-
-    return ""
 
 
 def _strip_preamble(text: str) -> str:

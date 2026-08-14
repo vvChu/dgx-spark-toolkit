@@ -448,71 +448,26 @@ def call_vision_fallback(img_bytes, ocr_text, page_num, model="gemini-3-flash"):
         "Trả về CHỈ nội dung đã sao chép, không giải thích, không thêm bất kỳ nội dung nào ngoài tài liệu."
     )
 
-    gateway_url = os.environ.get("VLLM_API_BASE", "http://ai-gateway:4000/v1")
-    api_key = os.environ.get("LITELLM_MASTER_KEY")
-    if not api_key:
-        logger.error("LITELLM_MASTER_KEY is not set; cannot call vision fallback.")
+    from core.ai_gateway_client import get_ai_gateway_client
+    client = get_ai_gateway_client()
+    try:
+        content = client.complete_vision_sync(
+            base64_image,
+            prompt=prompt,
+            model=model,
+            model_chain=[model, "ocr-primary", "ocr-fallback", "rag-core"],
+            max_tokens=8192,
+            temperature=0.1,
+        )
+        return clean_llm_text(content)
+    except Exception as e:
+        logger.error(f"Vision fallback failed for page {page_num}: {e}")
         return ""
-
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]
-            }
-        ],
-        "max_tokens": 8192,
-        "temperature": 0.1
-    }
-    
-    if model in ("rag-core", "qwen3.5-35b"):
-        payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
-    max_retries = 5
-    retry_delay = 2
-    client = _get_vision_http_client()
-    for attempt in range(max_retries):
-        try:
-            resp = client.post(
-                f"{gateway_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-
-            if resp.status_code == 429 or resp.status_code >= 500:
-                wait_time = retry_delay * (2 ** attempt)
-                logger.warning(f"Server error ({resp.status_code}) on page {page_num}. Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(wait_time)
-                continue
-
-            resp.raise_for_status()
-            data = resp.json()
-            if not isinstance(data, dict) or "choices" not in data or not data["choices"]:
-                logger.warning(f"Invalid API response in vision fallback: {data}")
-                return ""
-            msg = data['choices'][0].get('message', {})
-            content = msg.get('content') or ""
-            return clean_llm_text(content)
-        except Exception as e:
-            if attempt == max_retries - 1:
-                logger.error(f"Vision fallback failed for page {page_num} after {max_retries} attempts: {e}")
-                return ""
-            wait_time = retry_delay * (2 ** attempt)
-            logger.warning(f"Vision fallback attempt {attempt+1}/{max_retries} failed for page {page_num}: {e}. Retrying in {wait_time}s...")
-            time.sleep(wait_time)
-    return ""
 
 
 def call_table_vision_llm(img_data, ocr_text, page_num, is_pil=False):
-    """Specialized call to convert a table image into a clean Markdown table.
-
-    Uses gemini-3-flash (fast remote) as primary, falls back to rag-core (local GPU)
-    if the remote model fails. This frees GPU for the more critical OCR extraction task.
-    """
-    import base64
+    """Specialized call to convert a table image into a clean Markdown table via AIGatewayClient."""
+    from core.ai_gateway_client import get_ai_gateway_client
     from io import BytesIO
 
     if is_pil:
@@ -522,7 +477,6 @@ def call_table_vision_llm(img_data, ocr_text, page_num, is_pil=False):
     else:
         img_bytes = img_data
 
-    base64_image = base64.b64encode(img_bytes).decode('utf-8')
     prompt = (
         "Bạn là chuyên gia sao chép NGUYÊN VĂN bảng biểu từ tài liệu kỹ thuật pháp lý sang Markdown. "
         "Dưới đây là văn bản thô trích xuất từ vùng bảng:\n---\n"
@@ -535,50 +489,23 @@ def call_table_vision_llm(img_data, ocr_text, page_num, is_pil=False):
         "5. Nếu có merged cells, điền lại dữ liệu vào từng ô riêng để Markdown đọc được.\n"
     )
 
-    gateway_url = os.environ.get("VLLM_API_BASE", "http://ai-gateway:4000/v1")
-    api_key = os.environ.get("LITELLM_MASTER_KEY")
-    client = _get_vision_http_client()
-
-    # Model chain: gemini-3-flash (fast remote) → rag-core (local GPU fallback)
     _TABLE_MODEL = os.environ.get("TABLE_VISION_MODEL", "gemini-3-flash")
-    models_to_try = [_TABLE_MODEL]
-    if _TABLE_MODEL != "rag-core":
-        models_to_try.append("rag-core")
-
-    messages_content = [
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-    ]
-
-    for model in models_to_try:
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": messages_content}],
-            "max_tokens": 8192,
-            "temperature": 0.0
-        }
-        if model in ("rag-core", "qwen3.5-35b"):
-            payload["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
-
-        try:
-            import time as _time
-            t0 = _time.time()
-            resp = client.post(
-                f"{gateway_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            content = data['choices'][0]['message'].get('content') or ""
-            elapsed = _time.time() - t0
-            logger.info(f"  Table→Markdown [{model}] page {page_num} OK ({elapsed:.1f}s, {len(content)} chars)")
+    client = get_ai_gateway_client()
+    try:
+        content = client.complete_vision_sync(
+            img_bytes,
+            prompt=prompt,
+            model=_TABLE_MODEL,
+            model_chain=[_TABLE_MODEL, "ocr-primary", "rag-core"],
+            max_tokens=8192,
+            temperature=0.0,
+        )
+        if content:
+            logger.info(f"  Table→Markdown page {page_num} OK ({len(content)} chars)")
             return clean_llm_text(content)
-        except Exception as e:
-            logger.warning(f"Table-to-Markdown {model} failed for page {page_num}: {e}")
-            continue
+    except Exception as e:
+        logger.warning(f"Table-to-Markdown failed for page {page_num}: {e}")
 
-    logger.error(f"Table-to-Markdown ALL models failed for page {page_num}")
     return ocr_text
 
 
@@ -874,25 +801,20 @@ QUY TẮC BẮT BUỘC:
 - KHÔNG dùng markdown đặc biệt (**, ##, *)
 - Chỉ xuất nội dung tóm tắt thuần túy dạng đoạn văn"""
 
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": _SUMMARY_SYSTEM},
-                {"role": "user", "content": f"Tóm tắt nội dung kỹ thuật và pháp lý của văn bản sau bằng tiếng Việt:\n\n{content_for_summary}"}
-            ],
-            "max_tokens": 400,
-            "temperature": 0.1,
-            "extra_body": {
-                "chat_template_kwargs": {"enable_thinking": False}
-            }
-        }
-
+        from core.ai_gateway_client import get_ai_gateway_client
+        client = get_ai_gateway_client()
+        messages = [
+            {"role": "system", "content": _SUMMARY_SYSTEM},
+            {"role": "user", "content": f"Tóm tắt nội dung kỹ thuật và pháp lý của văn bản sau bằng tiếng Việt:\n\n{content_for_summary}"}
+        ]
         try:
-            client = _get_vision_http_client()
-            resp = client.post(self.api_url, headers={"Authorization": f"Bearer {self.api_key}"}, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
+            content = client.complete_sync(
+                messages,
+                model=self.model,
+                max_tokens=400,
+                temperature=0.1,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
             return clean_llm_text(content, is_summary=True)
         except Exception as e:
             logger.error(f"Summary generation failed: {e}")

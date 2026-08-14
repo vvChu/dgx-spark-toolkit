@@ -80,6 +80,35 @@ def get_embedding_model() -> BGE_M3_HybridEmbedding:
     return _embedding_model.get()
 
 
+_AGENTIC_PLAN_PROMPT = """Bạn là chuyên gia phân tích truy vấn pháp luật Việt Nam. Phân tích câu hỏi sau và xác định các nội dung cần tra cứu.
+
+Câu hỏi: {query}
+
+Trả về JSON:
+{{
+  "sub_queries": ["câu hỏi phụ 1", "câu hỏi phụ 2"],
+  "reasoning": "giải thích ngắn gọn"
+}}
+
+Quy tắc:
+- Tối đa 3 sub_queries độc lập, tập trung vào từ khóa pháp lý cốt lõi.
+- Nếu câu hỏi đơn giản, trả về 1 sub_query giống câu hỏi gốc."""
+
+_AGENTIC_EVAL_PROMPT = """Đánh giá xem các trích đoạn văn bản dưới đây có đủ cơ sở để trả lời câu hỏi pháp lý hay chưa.
+
+Câu hỏi: {query}
+
+Trích đoạn:
+{context}
+
+Trả về JSON:
+{{
+  "is_sufficient": true/false,
+  "confidence": 0.0-1.0,
+  "follow_up_query": "câu hỏi bổ sung nếu còn thiếu"
+}}"""
+
+
 @dataclass
 class SearchContext:
     raw_query: str
@@ -90,6 +119,7 @@ class SearchContext:
     year: Optional[int] = None
     doc_number: Optional[str] = None
     use_hyde: bool = False
+    use_agentic: Optional[bool] = None
     use_cache: bool = True
     session_id: Optional[str] = None
     tracer: Optional[QueryTracer] = None
@@ -107,6 +137,13 @@ class SearchContext:
     top_results: List[Dict[str, Any]] = field(default_factory=list)
     cached_hit: bool = False
     search_grounding_triggered: bool = False
+
+    # Multi-hop agentic state
+    sub_queries: List[str] = field(default_factory=list)
+    hops: int = 1
+    reasoning: str = ""
+    is_sufficient: bool = True
+    confidence: float = 1.0
 
 
 async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10, ai_client: Optional[AIGatewayClient] = None) -> List[str]:
@@ -151,7 +188,7 @@ async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10,
 
 
 class SearchPipeline:
-    """Deep search pipeline consolidating vector search, reranking, and Graph RAG."""
+    """Deep search pipeline consolidating vector search, multi-hop agentic retrieval, reranking, and Graph RAG."""
 
     def __init__(self, milvus_repo: MilvusRepository, neo4j_repo: Neo4jRepository, ai_client: Optional[AIGatewayClient] = None):
         self.milvus = milvus_repo
@@ -170,6 +207,7 @@ class SearchPipeline:
         year: Optional[int] = None,
         doc_number: Optional[str] = None,
         use_hyde: bool = False,
+        use_agentic: Optional[bool] = None,
         use_cache: bool = True,
         session_id: Optional[str] = None,
         tracer: Optional[QueryTracer] = None,
@@ -184,6 +222,7 @@ class SearchPipeline:
             year=year,
             doc_number=doc_number,
             use_hyde=use_hyde,
+            use_agentic=use_agentic,
             use_cache=use_cache,
             session_id=session_id,
             tracer=tracer,
@@ -204,14 +243,22 @@ class SearchPipeline:
                     "results": ctx.top_results,
                     "cached": True,
                     "trace": ctx.tracer.finalize(cache_hit=True, result_count=len(ctx.top_results)),
-                    "query_intent": ctx.intent.value if ctx.intent else "GENERAL"
+                    "query_intent": ctx.intent.value if ctx.intent else "GENERAL",
+                    "hops": ctx.hops,
+                    "sub_queries": ctx.sub_queries,
+                    "reasoning": ctx.reasoning,
                 }
 
-            # Step 2: Query Rewrite & HyDE
-            await self._stage_rewrite_and_hyde(ctx)
+            is_agentic = (ctx.use_agentic is True) or (ctx.use_agentic is None and ctx.intent == QueryIntent.COMPLEX)
 
-            # Step 3: Hybrid Search
-            await self._stage_hybrid_search(ctx)
+            if is_agentic:
+                await self._stage_agentic_multihop(ctx)
+            else:
+                # Step 2: Query Rewrite & HyDE
+                await self._stage_rewrite_and_hyde(ctx)
+
+                # Step 3: Hybrid Search
+                await self._stage_hybrid_search(ctx)
 
             # Step 4: Rerank & Score
             await self._stage_rerank_and_score(ctx)
@@ -230,7 +277,7 @@ class SearchPipeline:
 
             # Cache final results
             if ctx.use_cache and ctx.top_results:
-                _semantic_cache.get().set(ctx.search_query, ctx.query_vector_np, ctx.top_results, filter_key=ctx.cache_filter_key)
+                _semantic_cache.get().set(ctx.search_query or ctx.raw_query, ctx.query_vector_np, ctx.top_results, filter_key=ctx.cache_filter_key)
 
             # HITL Sampling
             try:
@@ -245,6 +292,9 @@ class SearchPipeline:
                 "trace": trace_data,
                 "query_intent": ctx.intent.value if ctx.intent else "GENERAL",
                 "search_grounding_triggered": ctx.search_grounding_triggered,
+                "hops": ctx.hops,
+                "sub_queries": ctx.sub_queries,
+                "reasoning": ctx.reasoning,
             }
 
     async def _stage_intent_and_cache(self, ctx: SearchContext) -> bool:
@@ -314,13 +364,109 @@ class SearchPipeline:
             ctx.query_vector = emb["dense"]
             ctx.sparse_query = emb.get("sparse", {})
 
+    async def _embed_query(self, query_text: str) -> tuple[np.ndarray, list, dict]:
+        loop = asyncio.get_running_loop()
+        model = get_embedding_model()
+        emb = await loop.run_in_executor(None, model.embed_query, query_text)
+        return np.array(emb["dense"]), emb["dense"], emb.get("sparse", {})
+
+    async def _retrieve_raw_hits(self, dense_vec: list, sparse_vec: dict, limit: int, expr: Optional[str] = None) -> list:
+        results = await self.milvus.hybrid_search(dense_vec, sparse_vec, limit=limit, expr=expr)
+        HYBRID_RECALL_10.inc()
+        return results[0] if results and results[0] else []
+
     async def _stage_hybrid_search(self, ctx: SearchContext):
         ctx.tracer.start_step("retrieve")
         initial_limit = min(ctx.limit * 10 if ctx.use_reranker else ctx.limit, 100)
-        results = await self.milvus.hybrid_search(ctx.query_vector, ctx.sparse_query, limit=initial_limit, expr=ctx.filter_expr)
-        HYBRID_RECALL_10.inc()
-        ctx.raw_hits = results[0] if results and results[0] else []
+        ctx.raw_hits = await self._retrieve_raw_hits(ctx.query_vector, ctx.sparse_query, limit=initial_limit, expr=ctx.filter_expr)
         ctx.tracer.end_step(source="milvus", hits=len(ctx.raw_hits))
+
+    async def _stage_agentic_multihop(self, ctx: SearchContext):
+        """Execute multi-hop plan-retrieve-reflect loop inside SearchPipeline."""
+        ctx.tracer.start_step("agentic_plan")
+        try:
+            plan = await ctx.ai_client.extract_json(
+                _AGENTIC_PLAN_PROMPT.format(query=ctx.raw_query),
+                model="gemini-3.5-flash-lite",
+            )
+            sub_queries = plan.get("sub_queries", [ctx.raw_query])
+            if not isinstance(sub_queries, list) or not sub_queries:
+                sub_queries = [ctx.raw_query]
+            ctx.sub_queries = sub_queries[:3]
+            ctx.reasoning = plan.get("reasoning", "")
+        except Exception as e:
+            logger.warning(f"Agentic plan generation failed: {e}")
+            ctx.sub_queries = [ctx.raw_query]
+        ctx.tracer.end_step(sub_queries=ctx.sub_queries, reasoning=ctx.reasoning)
+
+        # Hop 1: Parallel sub-query retrieval
+        ctx.tracer.start_step("agentic_retrieve_hop1")
+        ctx.hops = 1
+        initial_limit = min(ctx.limit * 5 if ctx.use_reranker else ctx.limit, 40)
+
+        async def _fetch_for_sub_query(sub_q: str):
+            _, dense_vec, sparse_vec = await self._embed_query(sub_q)
+            return await self._retrieve_raw_hits(dense_vec, sparse_vec, limit=initial_limit, expr=ctx.filter_expr)
+
+        tasks = [_fetch_for_sub_query(sq) for sq in ctx.sub_queries]
+        hop1_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        all_hits = []
+        seen_texts = set()
+        for res in hop1_results:
+            if isinstance(res, list):
+                for hit in res:
+                    txt = hit.entity.get("text", "")[:200]
+                    if txt and txt not in seen_texts:
+                        seen_texts.add(txt)
+                        all_hits.append(hit)
+
+        ctx.raw_hits = all_hits
+        ctx.tracer.end_step(hop=1, unique_hits=len(all_hits))
+
+        # Hop 2: Reflection & Follow-up (if necessary)
+        if all_hits and len(all_hits) > 0:
+            ctx.tracer.start_step("agentic_evaluate")
+            preview_chunks = []
+            for hit in all_hits[:8]:
+                doc_num = hit.entity.get("doc_number", "")
+                txt = hit.entity.get("text", "")[:300]
+                preview_chunks.append(f"[{doc_num}] {txt}")
+            context_preview = "\n".join(preview_chunks)
+
+            try:
+                eval_res = await ctx.ai_client.extract_json(
+                    _AGENTIC_EVAL_PROMPT.format(query=ctx.raw_query, context=context_preview),
+                    model="gemini-3.5-flash-lite",
+                )
+                ctx.is_sufficient = eval_res.get("is_sufficient", True)
+                ctx.confidence = float(eval_res.get("confidence", 1.0))
+                follow_up = eval_res.get("follow_up_query", "")
+            except Exception as e:
+                logger.warning(f"Agentic evaluation failed: {e}")
+                ctx.is_sufficient = True
+                ctx.confidence = 1.0
+                follow_up = ""
+
+            ctx.tracer.end_step(is_sufficient=ctx.is_sufficient, confidence=ctx.confidence)
+
+            if not ctx.is_sufficient and ctx.confidence < 0.70 and follow_up and follow_up != ctx.raw_query:
+                ctx.hops = 2
+                ctx.tracer.start_step("agentic_retrieve_hop2")
+                try:
+                    _, dense_vec, sparse_vec = await self._embed_query(follow_up)
+                    hop2_hits = await self._retrieve_raw_hits(dense_vec, sparse_vec, limit=initial_limit, expr=ctx.filter_expr)
+                    for hit in hop2_hits:
+                        txt = hit.entity.get("text", "")[:200]
+                        if txt and txt not in seen_texts:
+                            seen_texts.add(txt)
+                            all_hits.append(hit)
+                    ctx.sub_queries.append(follow_up)
+                    ctx.raw_hits = all_hits
+                    ctx.tracer.end_step(hop=2, added_hits=len(hop2_hits))
+                except Exception as e:
+                    logger.warning(f"Hop 2 retrieval failed: {e}")
+                    ctx.tracer.end_step(hop=2, error=str(e))
 
     async def _stage_rerank_and_score(self, ctx: SearchContext):
         if not ctx.raw_hits:
@@ -440,16 +586,19 @@ class InMemorySearchPipeline(SearchPipeline):
         self.ai_client = ai_client
         self.call_history: List[Dict[str, Any]] = []
 
-    async def search(self, query: str, limit: int = 10, **kwargs) -> Dict[str, Any]:
-        self.call_history.append({"query": query, "limit": limit, "kwargs": kwargs})
+    async def search(self, query: str, limit: int = 10, use_agentic: Optional[bool] = None, **kwargs) -> Dict[str, Any]:
+        self.call_history.append({"query": query, "limit": limit, "use_agentic": use_agentic, "kwargs": kwargs})
         results = self.custom_results[:limit]
         return {
             "results": results,
             "cached": False,
             "trace": {"query": query, "steps": [], "total_time": 0.01},
-            "query_intent": "GENERAL",
+            "query_intent": "COMPLEX" if use_agentic else "GENERAL",
             "search_grounding_triggered": False,
+            "hops": 2 if use_agentic else 1,
+            "sub_queries": [query, f"{query} chi tiết"] if use_agentic else [query],
+            "reasoning": "Mock in-memory agentic plan" if use_agentic else "",
         }
 
     async def execute(self, ctx: SearchContext) -> Dict[str, Any]:
-        return await self.search(ctx.raw_query, limit=ctx.limit)
+        return await self.search(ctx.raw_query, limit=ctx.limit, use_agentic=ctx.use_agentic)

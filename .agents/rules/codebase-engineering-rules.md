@@ -32,4 +32,13 @@ Tài liệu lưu trữ các quy tắc kỹ thuật cố định được rút ra
 - **Quy tắc**: Các in-memory test adapters (`InMemorySearchPipeline`, `InMemoryDocumentStore`, `MockAIGatewayClient`) tuyệt đối KHÔNG tự động eager-initialize các network HTTP clients (`get_ai_gateway_client()`) trong `__init__`.
 - **Chi tiết**: Đảm bảo unit test chạy hoàn toàn độc lập (hermetic), offline 100%, không rò rỉ socket hoặc tạo side-effects mạng.
 
+## 8. Kiểm tra Năng lực Thực thi Rõ ràng trong Graph Seams
+- **Quy tắc**: Các phương thức thao tác đồ thị (như `DocumentStore.add_relation()`) phải có biến cờ `executed` để kiểm tra phương thức tương ứng trên repository có thực sự tồn tại và chạy thành công không. Nếu repository không hỗ trợ loại quan hệ đó, PHẢI trả về status lỗi rõ ràng (`unsupported_relation`), tuyệt đối không trả về `{"status": "success"}` giả mạo.
+- **Chi tiết**: Ngăn ngừa việc tầng trên tưởng nhầm cạnh đồ thị đã được tạo trong khi thực tế không có thao tác nào được thực hiện.
+
+## 9. Dọn dẹp Toàn diện Thư mục Tạm khi Chuyển đổi Định dạng
+- **Quy tắc**: Khi chuyển đổi tài liệu qua subprocess (như LibreOffice headless chuyển `.doc` sang `.docx` trong thư mục tạm `mkdtemp`), khối `finally` không chỉ xóa file tạm đơn lẻ mà PHẢI dọn dẹp sạch sẽ toàn bộ thư mục cha tạm thời (`shutil.rmtree(parent_dir, ignore_errors=True)`).
+- **Chi tiết**: Ngăn chặn rò rỉ dung lượng ổ đĩa (disk space leak) trong các worker tiến trình ingestion chạy liên tục trong thời gian dài.
+
+
 
