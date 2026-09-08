@@ -35,3 +35,12 @@ Critical technical gotchas, anti-patterns, and environment constraints to keep i
 ## 7. Neo4j Credential Aliasing
 - Pydantic Settings accepts either `NEO4J_PASSWORD` or `NEO4J_PASS` via `AliasChoices`.
 - Ensure custom setup scripts or connection strings check both aliases before erroring.
+
+## 8. Centralized API Proxy Protocol & Prefix (`openai/` vs `anthropic/`)
+- **Context**: Centralized API Proxy (`GATEWAY_PROXY_URL=http://100.83.192.30:8045/v1`) is an OpenAI-compatible gateway (New API / One API).
+- **Rule**: In `litellm_config.yaml`, **ALL models routed through this proxy (including Claude Opus/Sonnet/Haiku) MUST use the `openai/` prefix**:
+  ```yaml
+  model: openai/claude-opus-4-6-thinking
+  api_base: os.environ/GATEWAY_PROXY_URL
+  ```
+- **Anti-pattern**: Never use `anthropic/` with `GATEWAY_PROXY_URL`. When LiteLLM detects `anthropic/`, it switches to Anthropic native protocol and appends `/v1/messages` to `api_base`, generating duplicate paths like `http://100.83.192.30:8045/v1/v1/messages` (Protocol: Claude) and causing immediate **HTTP 404 Not Found (0ms)** errors on the proxy.

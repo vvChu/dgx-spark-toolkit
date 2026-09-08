@@ -36,12 +36,15 @@ python3 /home/vvc/Codebase/dgx-spark-toolkit/scripts/model_auto_updater.py --for
 | Archetype | Model Aliases | Target Backend |
 | :--- | :--- | :--- |
 | **OCR / Vision Ingestion** | `ocr-primary`, `ocr-fallback`, `ocr-tier4` | Google AI Studio Direct (10 keys) |
-| **Standard / Coding** | `gemini-3.7-flash` (medium / low), `text-gemma` | Google API + Centralized Proxy |
-| **Deep Reasoning** | `gemini-3.7-flash-high`, `claude-sonnet-4-6-thinking` | Google API + Proxy |
+| **Standard / Coding** | `gemini-3.8-flash`, `gemini-3.7-flash` (medium / low), `text-gemma` | Google API + Centralized Proxy |
+| **Deep Reasoning** | `claude-opus-4-6-thinking`, `gemini-3.8-flash-high`, `gemini-3.7-flash-high`, `claude-sonnet-4-6-thinking` | Google API + Proxy |
 | **Local Private / Zero-Cost** | `rag-core`, `qwen-local-primary` | Local vLLM Qwen 35B FP8 |
+
+### Proxy Provider Prefix Invariant
+All models routed through `GATEWAY_PROXY_URL` (including Anthropic Claude models) **must** be defined with the `openai/` prefix (`model: openai/<model-id>`). Never use `anthropic/` with `GATEWAY_PROXY_URL`, as LiteLLM will append `/v1/messages` and cause HTTP 404 Not Found.
 
 ## Client Integration Guidelines
 
-- **Timeout**: Set client HTTP timeout to **30s – 60s** to allow Gateway to complete fallback cascade if upstream experiences temporary 503 errors.
+- **Timeout**: Set client HTTP timeout to **30s – 60s** (use **60s – 90s** for Claude Opus Thinking models).
 - **Thinking Parameters**: Zero-config on client side — `custom_callbacks.gemini_corrector` normalizes thinking levels automatically.
 - **Reference Doc**: Detailed guide available at [`services/ai-gateway/CLIENT_INTEGRATION_GUIDE.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/ai-gateway/CLIENT_INTEGRATION_GUIDE.md).

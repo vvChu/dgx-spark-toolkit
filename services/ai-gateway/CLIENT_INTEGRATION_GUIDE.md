@@ -20,8 +20,8 @@ Khi tích hợp từ phía client, hãy chọn model theo đúng Archetype nghi�
 | Archetype | Model Aliases | Target Backend | Khi nào sử dụng? |
 | :--- | :--- | :--- | :--- |
 | **1. OCR & Vision Ingestion** | `ocr-primary`<br>`ocr-fallback`<br>`ocr-tier4` | Google AI Studio Direct (10 keys) | Xử lý OCR tài liệu PDF, bản vẽ, hình ảnh, văn bản pháp luật. |
-| **2. Standard General / Coding** | `gemini-3.7-flash`<br>`gemini-3.7-flash-medium`<br>`text-gemma` | Google API + Centralized Proxy | Chat tổng quát, code sinh tự động, tóm tắt bài viết, đàm thoại agent. |
-| **3. Deep Reasoning / Complex Audit** | `gemini-3.7-flash-high`<br>`claude-sonnet-4-6-thinking`<br>`reasoning-gemma` | Google API + Centralized Proxy | Phân tích điều khoản hợp đồng phức tạp, đối soát pháp lý, suy luận đa bước. |
+| **2. Standard General / Coding** | `gemini-3.8-flash`<br>`gemini-3.7-flash`<br>`gemini-3.7-flash-medium`<br>`text-gemma` | Google API + Centralized Proxy | Chat tổng quát, code sinh tự động, tóm tắt bài viết, đàm thoại agent. |
+| **3. Deep Reasoning / Complex Audit** | `gemini-3.8-flash-high`<br>`gemini-3.7-flash-high`<br>`claude-sonnet-4-6-thinking`<br>`reasoning-gemma` | Google API + Centralized Proxy | Phân tích điều khoản hợp đồng phức tạp, đối soát pháp lý, suy luận đa bước. |
 | **4. Local Private / Zero-Cost** | `rag-core`<br>`qwen-local-primary` | vLLM Qwen 35B Local (GPU DGX) | Chạy offline, dữ liệu tuyệt mật nội bộ, fallback chốt chặn khi mất Internet. |
 
 ---
