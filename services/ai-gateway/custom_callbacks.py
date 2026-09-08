@@ -128,7 +128,7 @@ class ParameterNormalizer:
                 model = data.get("model", "")
 
             # 2. Target Gemini 3.x, 3.5+ models, and specific Gemini 2.5 reasoning models
-            is_gemini_3_or_above = any(x in model for x in ["gemini-3.7", "gemini-3.6", "gemini-3.5", "gemini-3", "gemini-3.1"])
+            is_gemini_3_or_above = any(x in model for x in ["gemini-3.8", "gemini-3.7", "gemini-3.6", "gemini-3.5", "gemini-3", "gemini-3.1"])
 
             # Retrieve client's parameters
             thinking_budget = data.get("thinking_budget") or data.get("extra_body", {}).get("thinking_budget")

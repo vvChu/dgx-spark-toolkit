@@ -160,6 +160,17 @@ def audit_and_patch_config(
         if conf_model not in live_google:
             print(f"[WARN] Configured Gemini model '{conf_model}' not found in live Google API list.")
 
+    # 3. Audit & Auto-fix Claude Proxy Prefixes (must use openai/ with GATEWAY_PROXY_URL)
+    invalid_anthropic_proxy = set(
+        re.findall(r"model:\s*anthropic/(claude-[a-zA-Z0-9\-\.]+)", content)
+    )
+    for model_id in invalid_anthropic_proxy:
+        print(f"[PATCH] Fixing Claude Proxy prefix: anthropic/{model_id} -> openai/{model_id}")
+        new_content = new_content.replace(
+            f"anthropic/{model_id}", f"openai/{model_id}"
+        )
+        patches_made.append(f"`anthropic/{model_id}` ➡️ `openai/{model_id}`")
+
     has_changes = len(patches_made) > 0
     if has_changes and apply_changes:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
