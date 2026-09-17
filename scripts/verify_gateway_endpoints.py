@@ -87,5 +87,45 @@ def main():
     except Exception as e:
         print(f"Gemini request failed: {e}", flush=True)
 
+    # 4. Test Embedding with drop_params verification (Issue #51)
+    print("\n=== 4. Testing Embedding with drop_params (encoding_format='base64') ===", flush=True)
+    payload_embed = {
+        "model": "gemini-embedding-2",
+        "input": "Hệ thống trích xuất văn bản quy chuẩn xây dựng Việt Nam",
+        "encoding_format": "base64"  # Unsupported by native Gemini; LiteLLM must drop it cleanly
+    }
+    try:
+        t0 = time.time()
+        r = requests.post(f"{base_url}/v1/embeddings", headers=headers, json=payload_embed, timeout=30)
+        dt = time.time() - t0
+        print(f"Status: {r.status_code} ({dt:.2f}s)", flush=True)
+        if r.status_code == 200:
+            data = r.json()
+            embed_dim = len(data["data"][0]["embedding"]) if "data" in data and data["data"] else 0
+            print(f"Success! Generated embedding vector length: {embed_dim}", flush=True)
+        else:
+            print(f"Error Response:\n{r.text}", flush=True)
+    except Exception as e:
+        print(f"Embedding request failed: {e}", flush=True)
+
+    # 5. Test Canonical Stable Aliases (Issue #51)
+    print("\n=== 5. Testing Canonical Stable Aliases ===", flush=True)
+    aliases_to_test = [
+        ("gemini-flash-latest", "/v1/chat/completions", {"model": "gemini-flash-latest", "messages": [{"role": "user", "content": "ping"}], "max_tokens": 10}),
+        ("gemini-reasoning-latest", "/v1/chat/completions", {"model": "gemini-reasoning-latest", "messages": [{"role": "user", "content": "ping"}], "max_tokens": 10}),
+        ("embedding-default", "/v1/embeddings", {"model": "embedding-default", "input": "test alias"}),
+    ]
+    for alias_name, endpoint, payload in aliases_to_test:
+        try:
+            t0 = time.time()
+            r = requests.post(f"{base_url}{endpoint}", headers=headers, json=payload, timeout=30)
+            dt = time.time() - t0
+            print(f"Alias '{alias_name}' -> Status: {r.status_code} ({dt:.2f}s)", flush=True)
+            if r.status_code != 200:
+                print(f"  Error: {r.text[:150]}", flush=True)
+        except Exception as e:
+            print(f"Alias '{alias_name}' failed: {e}", flush=True)
+
 if __name__ == "__main__":
     main()
+

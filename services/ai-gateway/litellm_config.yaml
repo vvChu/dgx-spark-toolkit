@@ -159,7 +159,7 @@ x-templates:
     model: gemini/gemini-3.7-flash
     rpm: 5
     tpm: 250000
-    timeout: 25
+    timeout: 300  # Issue #51: scaled to 300s for deep reasoning workloads
     extra_body:
       generationConfig:
         thinking_config:
@@ -195,7 +195,7 @@ x-templates:
     model: gemini/gemini-3.8-flash
     rpm: 5
     tpm: 250000
-    timeout: 90  # CR-SPARK-20260915-01: increased from 25s — 30k-39k token payloads with thinking=high require longer budget
+    timeout: 300  # Issue #51: scaled to 300s for deep reasoning workloads
     extra_body:
       generationConfig:
         thinking_config:
@@ -247,6 +247,7 @@ model_list:
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
       drop_params: true
+      timeout: 300  # Issue #51: scaled to 300s for deep reasoning workloads
 
   - model_name: claude-opus-4-5
     litellm_params:
@@ -261,6 +262,7 @@ model_list:
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
       drop_params: true
+      timeout: 300  # Issue #51: scaled to 300s for deep reasoning workloads
 
   - model_name: claude-opus-4-6
     litellm_params:
@@ -275,7 +277,8 @@ model_list:
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
       drop_params: true
-      timeout: 90  # CR-SPARK-20260915-01: explicit override — align with CLIENT_INTEGRATION_GUIDE.md 60-90s guideline for Opus Thinking
+      timeout: 300  # Issue #51: scaled to 300s for deep reasoning workloads
+
 
   # =====================================================================
   # GEMINI & CLAUDE MODELS — via Gateway Proxy
@@ -309,7 +312,7 @@ model_list:
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
       drop_params: true
-      timeout: 120
+      timeout: 300  # Issue #51: scaled to 300s for deep reasoning workloads
 
   - model_name: gemini-3.1-pro-low
     litellm_params:
@@ -880,7 +883,7 @@ model_list:
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
       drop_params: true
-      timeout: 120
+      timeout: 300  # Issue #51: scaled to 300s for deep reasoning workloads
 
   # ── gemini-3.8-flash (default alias) ──
   - model_name: gemini-3.8-flash
@@ -1076,7 +1079,7 @@ model_list:
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
       drop_params: true
-      timeout: 120
+      timeout: 300  # Issue #51: scaled to 300s for deep reasoning workloads
 
 
   - model_name: gemini-3-flash-agent
@@ -1597,6 +1600,12 @@ router_settings:
   retry_after: 5
   timeout: 900
 
+  # ── Canonical Stable Aliases (Issue #51) ──
+  model_group_alias:
+    "gemini-flash-latest": "gemini-3.8-flash"
+    "gemini-reasoning-latest": "gemini-3.8-flash-high"
+    "embedding-default": "gemini-embedding-2"
+
   # ── RPD Budget Enforcement (replaces the invalid `rpd` in litellm_params) ──
   # These caps protect free-tier quotas. When a group hits its daily budget,
   # LiteLLM will route to the next fallback automatically.
@@ -1726,9 +1735,19 @@ router_settings:
     - reasoning-fallback:
         - rag-core
 
+    # EMBEDDING FALLBACK CHAIN (Issue #51)
+    - {"gemini-embedding-2": ["gemini-embed"]}
+    - {"gemini-embed": ["gemini-embedding-2"]}
+
   default_fallbacks: ["ocr-fallback"]
 
 litellm_settings:
+  # Issue #51: Globally drop unsupported parameters across all providers
+  drop_params: true
+  model_aliases:
+    "gemini-flash-latest": "gemini-3.8-flash"
+    "gemini-reasoning-latest": "gemini-3.8-flash-high"
+    "embedding-default": "gemini-embedding-2"
   success_callback: ["prometheus", "postgresql"]
   failure_callback: ["prometheus", "postgresql"]
   callbacks: ["custom_callbacks.gemini_corrector_instance"]
