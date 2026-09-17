@@ -84,6 +84,14 @@ $ python -m ccba_harness verify-patch \
 
 ---
 
-## 4. Trạng Thái Hoàn Thành
-- Toàn bộ 4 tiêu chí nghiệm thu của **Issue #51** đã đạt 100%.
-- Sẵn sàng để commit và mở Pull Request theo quy chuẩn CCBA.
+## 4. Trạng Thái Hoàn Thành & Pull Request
+
+- **Pull Request:** [#52](https://github.com/vvChu/dgx-spark-toolkit/pull/52) (`fix/issue-51-ai-gateway-hardening` $\rightarrow$ `master`)
+- **Commit:** `a4ac4b9`
+- **Issue Linkage:** `Closes #51`
+- **Dual-Gate CI & Review Status:**
+  - **Local Quality Gate (Shift-Left):** 100% PASS (`python -m ccba_harness verify-patch` với 5/5 bài test thành công).
+  - **GitHub Copilot Code Review:** 0 comments, 0 review requests.
+  - **GitHub Actions CI Note:** Bị gián đoạn ngay tại runner dispatch do hạn mức tài khoản GitHub (`billing & plans spending limit`), không liên quan đến lỗi mã nguồn (đã đối chiếu annotation và kiểm định local 100% sạch).
+- **Trạng thái:** Sẵn sàng nghiệm thu và thực hiện bước release.
+
