@@ -72,7 +72,7 @@ def main():
     payload_gemini = {
         "model": "gemini-3.8-flash",
         "messages": [{"role": "user", "content": "Xin chào, phản hồi 1 câu ngắn gọn xác nhận bạn là Gemini 3.8 Flash."}],
-        "max_tokens": 60
+        "max_tokens": 256
     }
     try:
         t0 = time.time()
@@ -80,8 +80,11 @@ def main():
         dt = time.time() - t0
         print(f"Status: {r.status_code} ({dt:.2f}s)", flush=True)
         if r.status_code == 200:
-            content = r.json()["choices"][0]["message"].get("content", "")
-            print(f"Result Content:\n{content.strip()}", flush=True)
+            msg = r.json()["choices"][0]["message"]
+            content = (msg.get("content") or "").strip()
+            print(f"Result Content:\n{content}", flush=True)
+            if "reasoning_content" in msg and msg["reasoning_content"]:
+                print(f"Thinking Content (first 100 chars): {msg['reasoning_content'][:100]}...", flush=True)
         else:
             print(f"Error Response:\n{r.text}", flush=True)
     except Exception as e:
