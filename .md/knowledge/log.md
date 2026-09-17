@@ -18,3 +18,17 @@ Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật 
 - **Xác thực**:
   - `.venv/bin/python -m ccba_harness verify-patch` 100% PASS.
   - Live endpoints test qua `scripts/verify_gateway_endpoints.py` 100% PASS.
+
+---
+
+## [2026-09-17] [skill-evolution] | Upgrade ccba-create-pr to v1.2.0
+
+- **Kỹ năng**: `.agents/skills/ccba-create-pr/SKILL.md` (v1.1.0 $\rightarrow$ v1.2.0).
+- **Mục tiêu**: Loại bỏ hardcode `--base main`, tự động phát hiện nhánh chính (`main` hoặc `master`) qua `git symbolic-ref refs/remotes/origin/HEAD` và `rev-parse`.
+- **Phạm vi tác động**:
+  - Bước 0 (Main Branch Guard): Nhận diện `$DEFAULT_BRANCH` để kiểm tra commits dở dang và tách nhánh hồi tố.
+  - Bước 3 (PR Creation): Tự động gán `--base "$DEFAULT_BRANCH"` cho `gh pr create` và `git log`.
+- **Xác thực**:
+  - `ccba-harness validate-skill --file ... --enforce-gpi` 100% PASS.
+  - `ccba-harness verify-patch` 100% PASS.
+
