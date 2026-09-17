@@ -12,7 +12,7 @@ disable-model-invocation: true
 command: /ccba-create-pr
 user-invocable: true
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   author: "CCBA Hub"
 gpi:
   s: 3.0
@@ -30,37 +30,41 @@ triggers:
 
 # Kỹ năng: Tạo Pull Request Chuẩn CCBA Platform (CCBA Pull Request Flow)
 
-Quy trình tự động hóa kiểm định chất lượng mã nguồn tại chỗ (Shift-Left Gate), bảo vệ nhánh chính (`main`), đẩy mã nguồn và khởi tạo GitHub Pull Request kèm vòng lặp theo dõi CI tích xanh và đối soát góp ý từ Copilot Review. *(Lệnh: `/ccba-create-pr`)*
+Quy trình tự động hóa kiểm định chất lượng mã nguồn tại chỗ (Shift-Left Gate), bảo vệ nhánh chính (`main` / `master`), đẩy mã nguồn và khởi tạo GitHub Pull Request kèm vòng lặp theo dõi CI tích xanh và đối soát góp ý từ Copilot Review. *(Lệnh: `/ccba-create-pr`)*
 
 ---
 
-## 🛡️ Bước 0: Main Branch Guard (Tự động phát hiện & bảo vệ nhánh `main`)
+## 🛡️ Bước 0: Main Branch Guard (Tự động phát hiện & bảo vệ nhánh chính)
 
-1. **Lấy tên branch hiện hành:**
+1. **Lấy tên branch hiện hành & tự động xác định nhánh chính (Default Branch):**
    ```bash
-   git branch --show-current
+   CURRENT_BRANCH=$(git branch --show-current)
+   # Tự động phát hiện nhánh chính của remote (main hoặc master)
+   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+   [ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git rev-parse --verify origin/main >/dev/null 2>&1 && echo "main" || echo "master")
+   echo "Current Branch: $CURRENT_BRANCH | Base Branch: $DEFAULT_BRANCH"
    ```
-2. **Nếu đang ở `main`**: Kiểm tra xem có commit nào chưa được push lên remote không:
+2. **Nếu đang ở nhánh chính (`$DEFAULT_BRANCH`)**: Kiểm tra xem có commit nào chưa được push lên remote không:
    ```bash
-   git log origin/main..main --oneline
+   git log origin/$DEFAULT_BRANCH..$DEFAULT_BRANCH --oneline
    ```
-3. **Nếu có commit trên `main` chưa push** $\rightarrow$ Tự động tạo feature branch hồi tố (Retroactive Branch Creation):
+3. **Nếu có commit trên nhánh chính chưa push** $\rightarrow$ Tự động tạo feature branch hồi tố (Retroactive Branch Creation):
    - Phân tích các thông điệp commit gần nhất để suy ra loại công việc (`feat`, `fix`, `docs`, `refactor`, `chore`) và mô tả ngắn gọn.
    - Gợi ý tên branch chuẩn (ví dụ: `feat/improve-pr-automation` hoặc `fix/query-timeout`).
    - Sau khi người dùng đồng ý, thực hiện tách nhánh an toàn:
      ```bash
      # Tạo feature branch tại vị trí hiện tại (giữ nguyên commits)
      git branch <tên-branch>
-     # Reset main về origin/main sạch sẽ
-     git reset --hard origin/main
+     # Reset nhánh chính về origin sạch sẽ
+     git reset --hard origin/$DEFAULT_BRANCH
      # Chuyển sang feature branch vừa tạo
      git checkout <tên-branch>
      ```
-4. **Nếu đang ở `main` nhưng KHÔNG có commit mới**:
-   - Dừng lại và nhắc nhở: *"Không có thay đổi nào trên `main` để tạo PR. Hãy dùng `/ccba-new-feature` để tạo feature branch trước khi lập trình."*
+4. **Nếu đang ở nhánh chính nhưng KHÔNG có commit mới**:
+   - Dừng lại và nhắc nhở: *"Không có thay đổi nào trên `$DEFAULT_BRANCH` để tạo PR. Hãy dùng `/ccba-new-feature` để tạo feature branch trước khi lập trình."*
 5. **Nếu đã ở nhánh tính năng (`feat/*`, `fix/*`, `proposal/*`)**: Tiếp tục Bước 1.
 
-- **Tiêu chí hoàn thành:** Đảm bảo toàn bộ commit nằm trên đúng nhánh tính năng, nhánh `main` được bảo vệ tuyệt đối.
+- **Tiêu chí hoàn thành:** Đảm bảo toàn bộ commit nằm trên đúng nhánh tính năng, nhánh chính (`main`/`master`) được bảo vệ tuyệt đối.
 
 ---
 
@@ -111,26 +115,28 @@ Trước khi đẩy mã nguồn lên remote, Agent **BẮT BUỘC** thực hiệ
 
 ## 🚀 Bước 3: Tự Động Khởi Tạo Pull Request (GitHub CLI `gh`)
 
-1. **Kiểm tra xác thực GitHub CLI:**
+1. **Kiểm tra xác thực GitHub CLI & xác định Base Branch:**
    ```bash
    gh auth status
+   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+   [ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git rev-parse --verify origin/main >/dev/null 2>&1 && echo "main" || echo "master")
    ```
 2. **Phân tích thông tin để tạo Title & Body chuẩn CCBA:**
    - **Tiêu đề PR (Conventional Commits):** Trích xuất từ tiền tố branch (`feat/`, `fix/`, `refactor/`) và commit đầu tiên.
    - **Liên kết Issue:** Nếu branch có chứa mã Issue (ví dụ `feat/issue-266-...` hoặc có tham số `--issue <id>`), tự động gắn `Closes #<id>` vào phần cuối của PR body.
-   - **Mô tả PR (PR Body):** Tự động liệt kê các commit trên branch tính năng:
+   - **Mô tả PR (PR Body):** Tự động liệt kê các commit trên branch tính năng so với nhánh chính:
      ```bash
-     git log origin/main..HEAD --pretty=format:"- %s"
+     git log origin/$DEFAULT_BRANCH..HEAD --pretty=format:"- %s"
      ```
 3. **Khởi tạo Pull Request bằng GitHub CLI:**
    ```bash
-   gh pr create --title "<Title>" --body "<Body>`n`nCloses #<id>" --base main --head <current_branch>
+   gh pr create --title "<Title>" --body "<Body>`n`nCloses #<id>" --base "$DEFAULT_BRANCH" --head <current_branch>
    ```
 4. **Fallback thủ công (nếu `gh` chưa cài hoặc chưa đăng nhập):**
-   - Trích xuất URL tạo PR từ `git remote get-url origin`: `https://github.com/<owner>/<repo>/compare/main...<current_branch>`.
+   - Trích xuất URL tạo PR từ `git remote get-url origin`: `https://github.com/<owner>/<repo>/compare/$DEFAULT_BRANCH...<current_branch>`.
    - In đường dẫn kèm mẫu tiêu đề và mô tả để người dùng mở trên trình duyệt.
 
-- **Tiêu chí hoàn thành:** Pull Request được mở thành công trên GitHub kèm link PR và mã số PR.
+- **Tiêu chí hoàn thành:** Pull Request được mở thành công trên GitHub trỏ đúng base branch (`main` hoặc `master`) kèm link PR và mã số PR.
 
 ---
 
