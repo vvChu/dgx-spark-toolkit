@@ -2,6 +2,12 @@ import os
 import sys
 import types
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+# Ensure rag-service root is in sys.path regardless of execution CWD
+_rag_root = Path(__file__).resolve().parents[1]
+if str(_rag_root) not in sys.path:
+    sys.path.insert(0, str(_rag_root))
 
 # Set CI/test defaults so get_settings() doesn't crash when importing main.py
 # outside Docker.  These are NOT real credentials — they only satisfy the
