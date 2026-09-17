@@ -44,6 +44,10 @@ Tài liệu lưu trữ các quy tắc kỹ thuật cố định được rút ra
 - **Quy tắc**: Tuyệt đối **CẤM** gọi `manage_task(status)` theo vòng lặp (busy-polling) khi một lệnh được đẩy xuống chạy nền (`task-xxx`). Khi nhận thông báo `Tool is running as a background task`, Agent **PHẢI** lập tức dừng gọi công cụ (end turn) và xuất thông điệp ngắn cho người dùng.
 - **Chi tiết**: Antigravity runtime là kiến trúc Reactive Event-Driven. Khi task nền chạy xong, runtime sẽ tự động phát `<SYSTEM_MESSAGE>` và resume lượt của Agent kèm toàn bộ output và exit code. Việc gọi loop poll `manage_task(status)` làm lãng phí hàng chục nghìn tokens, gây tắc nghẽn UI và tăng chi phí API không cần thiết.
 
+## 11. Chuẩn hóa Định tuyến Centralized Proxy (Antigravity-Manager) qua Giao thức OpenAI
+- **Quy tắc**: Mọi model định tuyến qua Centralized Proxy (`GATEWAY_PROXY_URL=http://<host>:8045/v1`) trong `litellm_config.yaml` hoặc client SDK **BẮT BUỘC** sử dụng prefix `openai/` (ví dụ `openai/claude-opus-4-6-thinking`, `openai/claude-sonnet-4-6`), tuyệt đối **CẤM** dùng prefix `anthropic/`.
+- **Chi tiết**: Khi dùng `anthropic/`, SDK/LiteLLM tự động nối thêm `/v1/messages` vào `api_base`, sinh ra đường dẫn sai `...:8045/v1/v1/messages` gây lỗi `HTTP 404 Not Found (0ms)`. Antigravity-Manager tương thích hoàn toàn giao thức OpenAI (`POST /v1/chat/completions`), tự động xử lý thinking blocks, tool calls và cơ chế bảo vệ quota Ultra internally.
 
-
-
+## 12. Kiểm tra Trạng thái Liveness cho LiteLLM Proxy Container
+- **Quy tắc**: Khi kiểm tra trạng thái sống (liveness/health) của container LiteLLM Proxy (`:8090`), **BẮT BUỘC** dùng endpoint `GET /health/liveliness` (hoặc `GET /health/readiness`), tuyệt đối **CẤM** dùng `GET /health`.
+- **Chi tiết**: Endpoint `GET /health` của LiteLLM mặc định kích hoạt kiểm tra đồng thời tất cả các model deployment backend (hơn 100 models), gây độ trễ hàng phút hoặc timeout. Khi proxy bật bảo mật master key, request phải kèm header `Authorization: Bearer $LITELLM_MASTER_KEY` (lấy từ `.env` gốc).

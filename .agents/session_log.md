@@ -5,6 +5,40 @@
 
 ---
 
+## 🟢 Session: 2026-09-08 (vvc)
+
+### Trạng thái hệ thống (cuối session)
+
+| Service | Status | Port |
+|---|---|---|
+| `ai-gateway` (LiteLLM) | ✅ Up (healthy) | `8090` |
+| `centralized-proxy` (Antigravity-Manager) | ✅ Up (remote) | `100.83.192.30:8045` |
+
+### Thay đổi đã thực hiện
+
+- [x] **AI Gateway Model Harmonization & Claude Opus Routing**:
+  - **Audit & Bổ sung Gemini 3.8 Flash**: Thêm `gemini-3.8-flash` (base, low, medium, high) vào `litellm_config.yaml` sử dụng 10 Direct Google AI Studio keys + fallback sang Proxy.
+  - **Sửa triệt để lỗi 404 Claude Opus**: Phát hiện và sửa lỗi nhân đôi path `/v1/v1/messages` khi dùng prefix `anthropic/` với `GATEWAY_PROXY_URL`. Chuẩn hóa toàn bộ Claude model sang `openai/` prefix (`openai/claude-opus-4-6-thinking`, `openai/claude-opus-4-6`, v.v.).
+  - **Nâng cấp Model Auto-Updater**: Bổ sung Step 4 vào `scripts/model_auto_updater.py` và `.agents/skills/model-updater/SKILL.md` để tự động audit và sửa các prefix proxy không hợp lệ.
+
+- [x] **Nghiên cứu Chuyên sâu Codebase Antigravity-Manager (`lbjlaq/Antigravity-Manager` v4.3.0)**:
+  - **Ma trận Protocol**: Xác nhận 3 giao thức chính: OpenAI (`/v1/chat/completions`), Anthropic (`/v1/messages`), và Gemini Native (`/v1beta/models/*`).
+  - **Cơ chế Variant Tiering**: Làm rõ logic suy diễn Tier từ `thinking.budget_tokens` (<2000: Low, 2000-7000: Medium, >=7000: High).
+  - **Ultra Priority Protection**: Model `claude-opus-4-6-thinking` được bảo vệ bằng pool tài khoản Ultra hoạt động 100% ổn định.
+  - **Bản chất lỗi 503**: Giải mã cơ chế live rate-limit tracking của `token_manager.rs` khi tất cả account của một model bị Google 429/403.
+  - **Image Generation Architecture**: Chuẩn hóa gọi sinh ảnh qua `POST /v1/images/generations` với model `gemini-3-pro-image`.
+
+- [x] **Kiểm thử Thực tế Toàn diện (Live Verification)**:
+  - Viết `scripts/test_all_live_proxy_models.py` kiểm tra đồng thời 91 model trực tiếp trên Proxy; xuất báo cáo `proxy_test_report.md` và `proxy_test_report.json`.
+  - Viết `scripts/verify_gateway_endpoints.py` xác thực kết nối qua Gateway `:8090`. Kết quả:
+    - `/health/liveliness`: **200 OK (2.0ms)**
+    - `claude-opus-4-6-thinking`: **200 OK** (kèm thinking content)
+    - `gemini-3.8-flash`: **200 OK**
+  - Lưu **Pitfall #8** vào `docs/PITFALLS.md` và cập nhật `CLIENT_INTEGRATION_GUIDE.md`.
+  - Hoàn tất 2 commits tuân thủ Git Conventions: `feat(ai-gateway)` (146fdad) và `docs(gateway)` (3b54ba2).
+
+---
+
 ## 🟢 Session: 2026-08-14 (vvc)
 
 ### Trạng thái hệ thống (cuối session)

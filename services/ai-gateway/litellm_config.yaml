@@ -195,7 +195,7 @@ x-templates:
     model: gemini/gemini-3.8-flash
     rpm: 5
     tpm: 250000
-    timeout: 25
+    timeout: 90  # CR-SPARK-20260915-01: increased from 25s — 30k-39k token payloads with thinking=high require longer budget
     extra_body:
       generationConfig:
         thinking_config:
@@ -275,6 +275,7 @@ model_list:
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
       drop_params: true
+      timeout: 90  # CR-SPARK-20260915-01: explicit override — align with CLIENT_INTEGRATION_GUIDE.md 60-90s guideline for Opus Thinking
 
   # =====================================================================
   # GEMINI & CLAUDE MODELS — via Gateway Proxy
@@ -1731,6 +1732,8 @@ litellm_settings:
   success_callback: ["prometheus", "postgresql"]
   failure_callback: ["prometheus", "postgresql"]
   callbacks: ["custom_callbacks.gemini_corrector_instance"]
+  # CR-SPARK-20260915-01 (Mục 3): Expose actual model in response headers so client can detect silent downgrades
+  add_response_headers: true
   cache: true
   cache_params:
     type: redis
@@ -1746,3 +1749,5 @@ general_settings:
   background_health_checks: false
   health_check_interval: 120
   health_check_details: false
+  # CR-SPARK-20260915-01 (Mục 3): Store model ID in DB for audit; headers x-litellm-model-id & x-litellm-provider exposed via add_response_headers above
+  store_model_in_db: true
