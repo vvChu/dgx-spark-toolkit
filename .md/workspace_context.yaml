@@ -1,0 +1,19 @@
+project:
+  name: dgx-spark-toolkit
+  archetype: specialized_extension
+  type: Phần mềm
+  mode: software
+  qc_mode: null
+  hub_path: /home/vvc/ccba/ccba-agent-platform
+  description: CCBA Spoke Workspace for dgx-spark-toolkit
+must_read:
+  always:
+  - path: .md/workspace_context.yaml
+    why: Workspace configuration & bootstrap
+  - path: .md/INDEX.md
+    why: Ubiquitous Language & Knowledge Base Index
+do_not_touch:
+- .env
+acknowledgment_required: true
+acknowledgment_format: 'Tôi đã đọc workspace_context.yaml. Dự án dgx-spark-toolkit
+  thuộc Archetype specialized_extension, loại Phần mềm (mode: software).'

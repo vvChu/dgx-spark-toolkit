@@ -1,0 +1,176 @@
+[
+  {
+    "id": "test_pccc_audit_fire_rating_industrial_f5",
+    "input_prompt": "Thẩm tra giải pháp thiết kế bậc chịu lửa cho công trình nhà xưởng sản xuất thiết bị điện tử (nhóm nguy hiểm cháy theo công năng F5.1), chiều cao PCCC 18m, 3 tầng, diện tích sàn xây dựng mỗi tầng là 4.500 m2. Hồ sơ thiết kế đề xuất áp dụng Bậc chịu lửa Bậc III. Hãy đánh giá tính phù hợp và kết luận đạt hay không đạt theo QCVN 06:2022/BXD.",
+    "golden_answer": {
+      "verdict": "KHONG_DAT",
+      "required_fire_rating": "Bậc I hoặc Bậc II",
+      "legal_basis": "QCVN 06:2022/BXD Bảng H.3 Phụ lục H",
+      "analysis": "Nhà sản xuất F5.1 hạng C quy mô 3 tầng, diện tích 4.500 m2/tầng bắt buộc phải có Bậc chịu lửa tối thiểu Bậc II (hoặc Bậc I); Bậc chịu lửa Bậc III chỉ cho phép tối đa 2 tầng với diện tích khoang cháy nhỏ hơn."
+    },
+    "rubric": "Phải kết luận KHÔNG ĐẠT. Căn cứ Bảng H.3 Phụ lục H QCVN 06:2022/BXD, nhà sản xuất hạng C (F5.1) cao 3 tầng với diện tích 4.500 m2 bắt buộc phải đạt Bậc chịu lửa tối thiểu Bậc II (hoặc Bậc I); Bậc III vi phạm quy chuẩn nghiêm trọng. Yêu cầu bọc bảo vệ chống cháy kết cấu chịu lực đạt giới hạn chịu lửa tương ứng.",
+    "metadata": {
+      "target_skill": "ccba-ai-qc-pccc-audit",
+      "discipline": "Fire Protection / PCCC",
+      "standard": "QCVN 06:2022/BXD Bảng H.3",
+      "difficulty": "hard",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(Bậc II|Bậc I|không đạt|không phù hợp|Bảng H\\.3|QCVN\\s*06:2022)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  },
+  {
+    "id": "test_pccc_audit_corridor_smoke_exhaust_appendix_d",
+    "input_prompt": "Thẩm tra thiết kế hệ thống hút khói hành lang: Một tòa nhà văn phòng 7 tầng (nhóm F4.3) có hành lang chung mỗi tầng dài 28m, rộng 1.8m, dạng kín không có cửa sổ mở trực tiếp ra ngoài trời. Đơn vị thiết kế không bố trí hệ thống hút khói cơ khí sự cố cho hành lang này với lý do chiều dài hành lang chưa vượt quá 30m. Hãy thẩm tra sự tuân thủ quy chuẩn.",
+    "golden_answer": {
+      "verdict": "KHONG_DAT",
+      "threshold_distance_m": 15,
+      "legal_basis": "QCVN 06:2022/BXD Phụ lục D (Mục D.2)",
+      "analysis": "Hành lang dài trên 15m trong nhà từ 2 tầng trở lên không có thông gió/chiếu sáng tự nhiên trực tiếp bắt buộc phải trang bị hệ thống hút khói cơ khí sự cố; mốc 30m của đơn vị thiết kế là sai quy chuẩn."
+    },
+    "rubric": "Phải kết luận SAI hoặc KHÔNG ĐẠT. Căn cứ Phụ lục D (Mục D.2) QCVN 06:2022/BXD, hành lang dài trên 15m không có thông gió tự nhiên trực tiếp bắt buộc phải trang bị hệ thống hút khói cơ khí sự cố. Yêu cầu bổ sung quạt hút khói chịu nhiệt và van hút khói tại hành lang.",
+    "metadata": {
+      "target_skill": "ccba-ai-qc-pccc-audit",
+      "discipline": "Smoke Control / HVAC",
+      "standard": "QCVN 06:2022/BXD Phụ lục D",
+      "difficulty": "medium",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(15\\s*m|Phụ lục D|D\\.2|hút khói|không đạt|vi phạm)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  },
+  {
+    "id": "test_pccc_audit_evacuation_dead_end_distance",
+    "input_prompt": "Thẩm tra khoảng cách thoát nạn: Khối căn hộ chung cư cao 25 tầng (nhóm F1.3) bố trí mặt bằng dạng hành lang cụt. Khoảng cách đo dọc theo hành lang từ tâm cửa căn hộ xa nhất đến cửa buồng thang bộ không nhiễm khói N1 là 32m. Công trình có trang bị hệ thống chữa cháy tự động Sprinkler toàn bộ tòa nhà. Khoảng cách này có phù hợp theo QCVN 06:2022/BXD không?",
+    "golden_answer": {
+      "verdict": "KHONG_DAT",
+      "max_allowed_distance_m": 25,
+      "legal_basis": "QCVN 06:2022/BXD Bảng G.1 và Bảng G.2",
+      "analysis": "Hành lang cụt nhà F1.3 có sprinkler tối đa chỉ cho phép 20m - 25m tùy mật độ; khoảng cách 32m vi phạm giới hạn thoát nạn an toàn."
+    },
+    "rubric": "Phải kết luận KHÔNG ĐẠT hoặc VI PHẠM. Căn cứ Bảng G.1/G.2 QCVN 06:2022/BXD, khoảng cách thoát nạn từ cửa phòng đến lối thoát nạn gần nhất tại hành lang cụt đối với nhà F1.3 có sprinkler tối đa chỉ từ 20m đến 25m. Khoảng cách 32m vượt quá quy định cho phép.",
+    "metadata": {
+      "target_skill": "ccba-ai-qc-pccc-audit",
+      "discipline": "Architectural Life Safety / Egress",
+      "standard": "QCVN 06:2022/BXD Bảng G.1/G.2",
+      "difficulty": "medium",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(Bảng G|hành lang cụt|không phù hợp|không đạt|25\\s*m|20\\s*m)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  },
+  {
+    "id": "test_pccc_audit_fire_compartment_damper_rei150",
+    "input_prompt": "Thẩm tra giải pháp ngăn cháy lan qua đường ống kỹ thuật: Bản vẽ cơ điện thể hiện hệ thống ống thông gió điều hòa không khí xuyên qua tường ngăn cháy loại 1 (giới hạn chịu lửa REI 150) giữa hai khoang cháy của trung tâm thương mại. Đơn vị thiết kế chỉ ghi chú 'chèn kín khe hở bằng vữa xi măng' mà không bố trí van ngăn cháy (fire damper) tại vị trí xuyên tường. Hãy cho ý kiến thẩm tra chuyên môn.",
+    "golden_answer": {
+      "verdict": "KHONG_DAT",
+      "required_device": "Van ngăn cháy (Fire Damper) tối thiểu EI 120 / EI 150",
+      "legal_basis": "QCVN 06:2022/BXD Điều 4.14 và Phụ lục A",
+      "analysis": "Đường ống dẫn gió xuyên tường ngăn cháy loại 1 (REI 150) bắt buộc phải có van ngăn cháy tự động đóng và bọc cách nhiệt bảo vệ; chỉ chèn vữa xi măng là vi phạm nghiêm trọng giải pháp ngăn cháy lan giữa các khoang cháy."
+    },
+    "rubric": "Phải kết luận KHÔNG ĐẠT hoặc LỖI NGHIÊM TRỌNG. Căn cứ Điều 4.14 QCVN 06:2022/BXD, đường ống thông gió đi xuyên qua tường ngăn cháy loại 1 bắt buộc phải lắp đặt van ngăn cháy (fire damper) có giới hạn chịu lửa phù hợp (EI 120/EI 150) và khe hở quanh ống phải được chèn kín bằng vật liệu chống cháy chuyên dụng. Chỉ chèn vữa xi măng không thể ngăn lửa và khói độc lan truyền trong lòng ống.",
+    "metadata": {
+      "target_skill": "ccba-ai-qc-pccc-audit",
+      "discipline": "Fire Compartmentation / MEP",
+      "standard": "QCVN 06:2022/BXD Điều 4.14",
+      "difficulty": "hard",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(van ngăn cháy|fire damper|EI\\s*120|EI\\s*150|khoang cháy|REI\\s*150|không đạt)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  },
+  {
+    "id": "test_pccc_audit_staircase_n1_highrise",
+    "input_prompt": "Thẩm tra giải pháp thang thoát nạn: Tòa nhà hỗn hợp thương mại và văn phòng có chiều cao PCCC là 42m. Thiết kế bố trí 02 buồng thang bộ thoát nạn kín đặt ở lõi nhà, có cửa chống cháy tự động đóng mở trực tiếp vào sảnh tầng và có hệ thống cấp không khí tạo áp suất dương khi có cháy (loại thang N2). Chủ đầu tư muốn chuyển đổi 1 trong 2 thang này thành thang bộ loại 1 thông thường (thang kín không điều áp) để giảm chi phí quạt tạo áp. Hãy thẩm tra và kết luận.",
+    "golden_answer": {
+      "verdict": "BAC_BO",
+      "legal_basis": "QCVN 06:2022/BXD Điều 3.4.12",
+      "analysis": "Nhà có chiều cao PCCC > 28m bắt buộc toàn bộ buồng thang bộ thoát nạn phải là thang bộ không nhiễm khói loại N1 hoặc loại N2/N3 có điều áp dương; cấm tuyệt đối chuyển đổi sang thang bộ loại 1 thông thường."
+    },
+    "rubric": "Phải BÁC BỎ hoặc KHÔNG CHẤP THUẬN. Căn cứ Điều 3.4.12 QCVN 06:2022/BXD, công trình có chiều cao PCCC > 28m bắt buộc toàn bộ buồng thang bộ thoát nạn phải là thang bộ không nhiễm khói loại N1, N2 hoặc N3. Tuyệt đối không được sử dụng thang bộ loại 1 thông thường không điều áp vì nguy cơ nhiễm khói gây ngạt thở cho người thoát nạn.",
+    "metadata": {
+      "target_skill": "ccba-ai-qc-pccc-audit",
+      "discipline": "Life Safety / Staircases",
+      "standard": "QCVN 06:2022/BXD Điều 3.4.12",
+      "difficulty": "medium",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(28\\s*m|Điều 3\\.4\\.12|không nhiễm khói|N1|N2|loại 1|không chấp thuận|bác bỏ)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  },
+  {
+    "id": "test_pccc_audit_sprinkler_spacing_tcvn3890",
+    "input_prompt": "Thẩm tra hệ thống chữa cháy tự động Sprinkler: Một gara để xe ô tô ngầm tại tầng hầm 1 của tòa nhà chung cư (nhóm nguy cơ cháy trung bình, diện tích bảo vệ của một đầu phun tiêu chuẩn là 12 m2) được bố trí các đầu phun Sprinkler quay xuống với khoảng cách giữa hai đầu phun liền kề là 4.2m và khoảng cách từ đầu phun tới tường là 2.2m. Hãy kiểm tra khoảng cách này theo tiêu chuẩn TCVN 3890:2023 và TCVN 7336:2021.",
+    "golden_answer": {
+      "verdict": "KHONG_DAT",
+      "max_spacing_m": 4.0,
+      "max_wall_distance_m": 2.0,
+      "legal_basis": "TCVN 7336:2021 và TCVN 3890:2023",
+      "analysis": "Khoảng cách tối đa giữa hai đầu phun nhóm nguy cơ trung bình là 3.5m - 4.0m và cách tường không quá 2.0m; khoảng cách 4.2m và cách tường 2.2m là vượt chuẩn cho phép."
+    },
+    "rubric": "Phải kết luận KHÔNG ĐẠT. Căn cứ TCVN 7336:2021 và TCVN 3890:2023, đối với cơ sở nhóm nguy cơ cháy trung bình, khoảng cách tối đa giữa hai đầu phun Sprinkler không được vượt quá 4.0m (thường là 3.5m - 4.0m) và khoảng cách từ đầu phun đến tường không quá 2.0m (1/2 khoảng cách giữa 2 đầu). Bố trí 4.2m và 2.2m để lại khoảng hở không được dập lửa an toàn.",
+    "metadata": {
+      "target_skill": "ccba-ai-qc-pccc-audit",
+      "discipline": "Fire Suppression / Sprinkler",
+      "standard": "TCVN 3890:2023 & TCVN 7336:2021",
+      "difficulty": "medium",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(TCVN\\s*7336|TCVN\\s*3890|khoảng cách|đầu phun|sprinkler|không đạt|vượt quá)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  }
+]

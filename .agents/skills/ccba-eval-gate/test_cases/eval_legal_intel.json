@@ -1,0 +1,183 @@
+[
+  {
+    "id": "test_legal_intel_appraisal_authority_group_b",
+    "input_prompt": "Căn cứ Luật Xây dựng năm 2025 (Luật số 135/2025/QH15) và Nghị định hướng dẫn quản lý dự án đầu tư xây dựng mới nhất, hãy cho biết thẩm quyền thẩm định Báo cáo nghiên cứu khả thi đầu tư xây dựng đối với dự án nhóm B sử dụng vốn đầu tư công do Ủy ban nhân dân cấp tỉnh quyết định đầu tư thuộc về cơ quan nào?",
+    "golden_answer": {
+      "appraisal_authority": "Cơ quan chuyên môn về xây dựng thuộc UBND cấp tỉnh (Sở Xây dựng, Sở GTVT, Sở NN&PTNT, Sở Công Thương theo chuyên ngành)",
+      "approval_authority": "Chủ tịch UBND cấp tỉnh (Người quyết định đầu tư)",
+      "legal_basis": "Luật Xây dựng năm 2025 (Luật số 135/2025/QH15) và các Nghị định hướng dẫn",
+      "analysis": "Cơ quan chuyên môn về xây dựng cấp tỉnh chủ trì thẩm định các nội dung kỹ thuật, sự tuân thủ quy hoạch và tổng mức đầu tư của dự án nhóm B trước khi trình Chủ tịch UBND cấp tỉnh phê duyệt."
+    },
+    "rubric": "Phải xác định chính xác Cơ quan chuyên môn về xây dựng thuộc UBND cấp tỉnh (Sở Xây dựng hoặc Sở quản lý công trình xây dựng chuyên ngành) là cơ quan chủ trì thẩm định Báo cáo NCKT dự án nhóm B sử dụng vốn đầu tư công cấp tỉnh. Phân định rõ thẩm quyền thẩm định (Sở chuyên ngành) và thẩm quyền quyết định đầu tư/phê duyệt (UBND cấp tỉnh).",
+    "metadata": {
+      "target_skill": "ccba-legal-intel",
+      "discipline": "Construction Law & Project Appraisal",
+      "law": "Luật Xây dựng 2025 (Luật 135/2025/QH15)",
+      "difficulty": "medium",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(Cơ quan chuyên môn về xây dựng|Sở Xây dựng|UBND cấp tỉnh|Luật Xây dựng 2025|135/2025/QH15)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  },
+  {
+    "id": "test_legal_intel_repeal_practice_certificate_pm_cost",
+    "input_prompt": "Trong năm 2026, một kỹ sư xây dựng muốn nộp hồ sơ đăng ký sát hạch để cấp mới Chứng chỉ hành nghề Quản lý dự án hạng II và Chứng chỉ hành nghề Định giá xây dựng hạng II. Cơ quan quản lý nhà nước có tiếp nhận cấp mới không? Căn cứ theo quy định pháp lý nào?",
+    "golden_answer": {
+      "verdict": "KHONG_TIEP_NHAN_CAP_MOI",
+      "legal_basis": "Điều 55 Nghị định số 212/2026/NĐ-CP",
+      "mechanism": "Nhà nước bãi bỏ việc cấp mới chứng chỉ hành nghề Quản lý dự án và Định giá xây dựng, chuyển sang quản lý điều kiện năng lực thực tế (văn bằng đại học và số năm kinh nghiệm)."
+    },
+    "rubric": "Phải trả lời rõ ràng: Cơ quan nhà nước KHÔNG TIẾP NHẬN cấp mới chứng chỉ hành nghề Quản lý dự án và Định giá xây dựng. Căn cứ Điều 55 Nghị định số 212/2026/NĐ-CP, việc cấp mới chứng chỉ cho 02 lĩnh vực này đã chính thức bị bãi bỏ; cá nhân đảm nhận vị trí được quản lý theo điều kiện năng lực, kinh nghiệm thực tế.",
+    "metadata": {
+      "target_skill": "ccba-legal-intel",
+      "discipline": "Professional Practice Licensing",
+      "law": "Nghị định 212/2026/NĐ-CP Điều 55",
+      "difficulty": "hard",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(không tiếp nhận|không cấp mới|bãi bỏ|Điều 55|212/2026/NĐ-CP|Quản lý dự án|Định giá)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  },
+  {
+    "id": "test_legal_intel_practice_cert_exemption_cases",
+    "input_prompt": "Theo Luật Xây dựng năm 2025 và các văn bản quy định chi tiết, những trường hợp nào cá nhân tham gia hoạt động xây dựng được MIỄN chứng chỉ hành nghề chuyên môn?",
+    "golden_answer": {
+      "exempt_cases": [
+        "Thiết kế, thẩm tra thiết kế sơ bộ trong Báo cáo NCKT tiền khả thi",
+        "Thiết kế, thẩm tra, giám sát hệ thống thông tin liên lạc, viễn thông công trình",
+        "Thiết kế, thẩm tra, giám sát hoàn thiện công trình (trát, ốp lát, sơn bả) không ảnh hưởng kết cấu chịu lực",
+        "Công viên cây xanh, chiếu sáng công cộng, đường cáp viễn thông",
+        "Cá nhân thực hiện công việc dưới sự hướng dẫn của người có chứng chỉ (chưa giữ chức danh chủ chốt)"
+      ],
+      "legal_basis": "Luật Xây dựng 2025 (Luật 135/2025/QH15) và Nghị định 212/2026/NĐ-CP"
+    },
+    "rubric": "Phải liệt kê chính xác các trường hợp miễn chứng chỉ hành nghề theo Luật Xây dựng 2025 và Nghị định 212/2026/NĐ-CP: thiết kế sơ bộ tiền khả thi; hoàn thiện công trình không ảnh hưởng kết cấu chịu lực; hệ thống thông tin liên lạc/viễn thông; công viên cây xanh/chiếu sáng; và cá nhân thực hiện công việc không giữ chức danh chủ nhiệm/chủ trì/giám sát trưởng.",
+    "metadata": {
+      "target_skill": "ccba-legal-intel",
+      "discipline": "Professional Practice Regulations",
+      "law": "Luật Xây dựng 2025 & NĐ 212/2026/NĐ-CP",
+      "difficulty": "medium",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(tiền khả thi|hoàn thiện|chiếu sáng|thông tin liên lạc|miễn)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  },
+  {
+    "id": "test_legal_intel_completion_inspection_procedure_nd105",
+    "input_prompt": "Trình tự, thủ tục kiểm tra công tác nghiệm thu hoàn thành hạng mục công trình hoặc công trình xây dựng đưa vào sử dụng của Cơ quan chuyên môn về xây dựng được quy định như thế nào theo Nghị định số 105/2025/NĐ-CP?",
+    "golden_answer": {
+      "procedure": [
+        "1. Chủ đầu tư nộp văn bản đề nghị kiểm tra kèm Danh mục hồ sơ hoàn thành công trình trước ngày dự kiến nghiệm thu tối thiểu 15 ngày (cấp đặc biệt, cấp I) hoặc 10 ngày (cấp còn lại)",
+        "2. Cơ quan kiểm tra hồ sơ pháp lý, hoàn công và kiểm tra hiện trường công trình thực tế",
+        "3. Kiểm tra văn bản chấp thuận nghiệm thu PCCC và môi trường của cơ quan có thẩm quyền",
+        "4. Ban hành Thông báo kết quả kiểm tra công tác nghiệm thu chấp thuận đưa công trình vào sử dụng trong thời hạn quy định"
+      ],
+      "legal_basis": "Nghị định số 105/2025/NĐ-CP"
+    },
+    "rubric": "Phải nêu rõ trình tự: Chủ đầu tư gửi văn bản đề nghị kèm danh mục hồ sơ hoàn thành; Cơ quan chuyên môn về xây dựng kiểm tra hồ sơ và kiểm tra hiện trường thực tế; kiểm tra văn bản nghiệm thu PCCC và môi trường; ra văn bản Thông báo kết quả kiểm tra công tác nghiệm thu hoàn thành công trình theo Nghị định 105/2025/NĐ-CP.",
+    "metadata": {
+      "target_skill": "ccba-legal-intel",
+      "discipline": "Quality Management & Inspection",
+      "law": "Nghị định 105/2025/NĐ-CP",
+      "difficulty": "medium",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(Nghị định 105/2025|Thông báo kết quả kiểm tra|nghiệm thu|PCCC|hồ sơ hoàn thành)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  },
+  {
+    "id": "test_legal_intel_transitional_provisions_nd217",
+    "input_prompt": "Một dự án đầu tư xây dựng được phê duyệt Báo cáo nghiên cứu khả thi trong thời kỳ Nghị định 175/2024/NĐ-CP có hiệu lực. Sang năm 2026 khi Nghị định 217/2026/NĐ-CP ban hành và có hiệu lực, dự án có phải lập lại Báo cáo nghiên cứu khả thi để thẩm định lại không? Giải thích quy định chuyển tiếp.",
+    "golden_answer": {
+      "verdict": "KHONG_PHAI_LAP_LAI",
+      "legal_basis": "Điều khoản chuyển tiếp Nghị định 217/2026/NĐ-CP và Luật Xây dựng 2025",
+      "analysis": "Dự án đã được phê duyệt hợp pháp theo quy định của pháp luật trước ngày Nghị định mới có hiệu lực thì tiếp tục thực hiện theo quyết định đã phê duyệt; chỉ khi có điều chỉnh dự án làm thay đổi mục tiêu, quy mô, địa điểm hoặc vượt tổng mức đầu tư mới phải thẩm định điều chỉnh theo quy định mới."
+    },
+    "rubric": "Phải khẳng định KHÔNG PHẢI LẬP LẠI để thẩm định lại. Căn cứ quy định chuyển tiếp của Nghị định 217/2026/NĐ-CP và Luật Xây dựng 2025, các dự án đã được phê duyệt hợp pháp theo Nghị định 175/2024/NĐ-CP thì tiếp tục thực hiện theo quyết định đã phê duyệt, trừ trường hợp có phát sinh điều chỉnh dự án.",
+    "metadata": {
+      "target_skill": "ccba-legal-intel",
+      "discipline": "Transitional Law & Compliance",
+      "law": "Nghị định 217/2026/NĐ-CP & NĐ 175/2024/NĐ-CP",
+      "difficulty": "medium",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(quy định chuyển tiếp|không phải lập lại|Nghị định 217/2026|175/2024|tiếp tục thực hiện)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  },
+  {
+    "id": "test_legal_intel_foreign_contractor_operating_license",
+    "input_prompt": "Nhà thầu nước ngoài trúng thầu thi công gói thầu xây dựng tại Việt Nam trong năm 2026 bắt buộc phải đáp ứng những điều kiện tiên quyết nào để được cấp Giấy phép hoạt động xây dựng? Căn cứ theo quy định pháp luật xây dựng hiện hành.",
+    "golden_answer": {
+      "mandatory_conditions": [
+        "Có quyết định trúng thầu hoặc quyết định chỉ định thầu của Chủ đầu tư",
+        "Bắt buộc phải liên danh với nhà thầu Việt Nam hoặc sử dụng nhà thầu phụ Việt Nam (trừ khi nhà thầu trong nước không đủ năng lực)",
+        "Cam kết tuân thủ đầy đủ pháp luật Việt Nam (thuế, an toàn lao động, xuất nhập khẩu, môi trường)"
+      ],
+      "legal_basis": "Luật Xây dựng 2025 (Luật 135/2025/QH15) và các quy định hướng dẫn thi hành"
+    },
+    "rubric": "Phải nêu đủ các điều kiện tiên quyết cấp Giấy phép hoạt động xây dựng cho nhà thầu nước ngoài: đã có quyết định trúng thầu/chọn thầu; bắt buộc phải liên danh với nhà thầu Việt Nam hoặc sử dụng nhà thầu phụ Việt Nam; và cam kết tuân thủ pháp luật Việt Nam. Căn cứ theo Luật Xây dựng năm 2025.",
+    "metadata": {
+      "target_skill": "ccba-legal-intel",
+      "discipline": "Foreign Contractor Licensing",
+      "law": "Luật Xây dựng 2025",
+      "difficulty": "hard",
+      "assertions": [
+        {
+          "type": "regex",
+          "pattern": "(Giấy phép hoạt động xây dựng|nhà thầu nước ngoài|liên danh|nhà thầu phụ|trúng thầu)",
+          "is_critical": true
+        },
+        {
+          "type": "length",
+          "min_length": 50,
+          "max_length": 10000
+        }
+      ]
+    }
+  }
+]

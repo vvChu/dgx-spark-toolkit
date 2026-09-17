@@ -73,3 +73,7 @@ tests/*.pdf
 .agents/worker_*
 .agents/ORIGINAL_REQUEST.md
 
+# CCBA Scratch and Backups
+.md/scratch/
+.md/backups/
+scratch/
