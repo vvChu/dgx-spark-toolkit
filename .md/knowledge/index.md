@@ -11,6 +11,7 @@ Mục lục trung tâm quản lý các tệp tài liệu tri thức, báo cáo v
 | [`session_learnings.md`](session_learnings.md) | Tri thức & Quy chuẩn | 5 Miền Kiến Trúc (ADR-0057) và hệ thống quy tắc `RULE-X.Y` |
 | [`log.md`](log.md) | Hoạt động | Nhật ký dòng thời gian nạp, cập nhật và ban hành tài liệu |
 | [`reports/walkthrough.md`](reports/walkthrough.md) | Báo cáo nghiệm thu | Báo cáo kỹ thuật chi tiết các tính năng và bản sửa đổi (Issue #51) |
+| [`../wayfinder/antigravity-tools-optimization/map.md`](../wayfinder/antigravity-tools-optimization/map.md) | Lộ trình & Tickets | Bản đồ định hướng tối ưu hóa toàn diện Antigravity Tools v4.7.8 (TICK-01 $\rightarrow$ TICK-06) |
 
 ---
 
