@@ -37,6 +37,7 @@
 
 - `RULE-4.1 (GitHub Actions Billing Fallback)`: Khi runner GitHub Actions bị gián đoạn ở tầng dispatch do hạn mức tài khoản (`billing & plans spending limit`), đối chiếu annotation để xác nhận và sử dụng Shift-Left Local Quality Gate làm căn cứ nghiệm thu tin cậy, không suy đoán sai lệch sang lỗi mã nguồn.
 - `RULE-4.2 (Copilot Review Verification)`: Mọi review từ bot/Copilot (`PRR_...`) phải được đối soát và giải trình minh bạch tại `.md/knowledge/reports/walkthrough.md`.
+- `RULE-4.3 (GitHub PR Merge In-Progress Recovery)`: Khi `gh pr merge` gặp lỗi `GraphQL: Merge already in progress` (HTTP 405) sau sự cố kết nối gián đoạn (502 Bad Gateway), GitHub đang giữ transaction lock tạm thời trên PR. Tuyệt đối không force-push hay hủy branch; chờ 10-20 giây cooldown rồi hoàn tất merge trực tiếp qua REST API: `gh api -X PUT repos/{owner}/{repo}/pulls/{number}/merge -f merge_method=squash`.
 
 ---
 
@@ -45,3 +46,5 @@
 - `RULE-5.1 (Python Executable Ambiguity)`: Trên môi trường Ubuntu/Linux, lệnh `python` không tồn tại mặc định. Mọi pre-commit hooks, scripts và lệnh tự động hóa phải gọi tường minh `python3` hoặc `.venv/bin/python`.
 - `RULE-5.2 (Remote Branch Pruning)`: Sau khi squash & merge PR trên GitHub, bắt buộc chạy `git fetch --prune` để dọn dẹp tracking branches đã bị xóa trên remote.
 - `RULE-5.3 (Headless Tauri GUI Daemon via Xvfb)`: Các ứng dụng Tauri desktop (như Antigravity Tools) chạy dưới dạng systemd user service trên máy chủ Linux/DGX Spark không được gán cứng biến môi trường `DISPLAY=:11.0` (phụ thuộc vào phiên XRDP). Phải khởi chạy qua `/usr/bin/xvfb-run -a <binary> --minimized` để tự cấp phát virtual display độc lập trong RAM, kết hợp `loginctl enable-linger <user>` để đảm bảo service chạy liên tục 24/7 sau khi reboot mà không cần người dùng đăng nhập remote desktop.
+- `RULE-5.4 (PR Release Synchronization Cycle)`: Sau khi PR được squash & merge trên GitHub và remote branch bị xóa, local `master` cần thực hiện chu trình đồng bộ hoàn tất: checkout `master` $\rightarrow$ `git pull origin master` (fast-forward) $\rightarrow$ `git branch -D <branch>` $\rightarrow$ `git fetch --prune` để dọn sạch tracking branches mồ côi.
+
