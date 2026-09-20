@@ -4,6 +4,20 @@ Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật 
 
 ---
 
+## [2026-09-20] [ops/monitoring] | Smart Watchdog Telegram Integration & Daily Digest
+
+- **Nhiệm vụ**: Tích hợp giám sát thời gian thực cho Antigravity Tools (:8045), Quota Pool và Báo cáo hoạt động định kỳ (Daily Digest) kèm thông số phần cứng DGX Spark và Top Models qua Telegram bot `@RAG_Ingestion_Bot`.
+- **Thành phần**:
+  - Cập nhật `docker-compose.yml` chuyển tiếp biến `GATEWAY_PROXY_URL` và `GATEWAY_PROXY_KEY` cho container `smart-watchdog`.
+  - Nâng cấp `scripts/smart_watchdog.py`: Thêm kiểm tra liveliness `:8045/healthz`, cảnh báo cạn kiệt pool tài khoản, bóc tách Top 2 models tiêu thụ token, đo lường RAM/NVMe/SoC Temp và phát Daily Digest lúc 08:00 sáng.
+  - Thử nghiệm gửi tin nhắn mẫu đến Telegram: Thành công 100% (`Telegram test send result: True`).
+  - Bổ sung `RULE-5.5` vào `session_learnings.md`.
+- **Xác thực**:
+  - `ccba-harness verify-patch --preset doc` 100% PASS.
+  - `scripts/check_spoke_cleanliness.py` & `scripts/check_hub_import_depth.py` 100% PASS.
+
+---
+
 ## [2026-09-20] [release] | Release PR #53 & Antigravity Tools v4.7.8 Integration
 
 - **Nhiệm vụ**: Thực thi release PR #53 tích hợp toàn bộ giải pháp nâng cấp Antigravity Tools v4.7.8 và tối ưu AI Gateway vào `master`.
