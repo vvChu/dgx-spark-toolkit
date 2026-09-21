@@ -86,6 +86,12 @@ class IngestionQueue:
             "dead_letter_count": self.redis_queue.get_dead_letter_count(),
         }
 
+    def health_check(self) -> Dict[str, Any]:
+        """Check health of underlying queue storage."""
+        if hasattr(self.redis_queue, "health_check"):
+            return self.redis_queue.health_check()
+        return {"status": "healthy", "type": "in_memory"}
+
 
 class InMemoryIngestionQueue(IngestionQueue):
     """In-memory adapter for testing without Redis or PostgreSQL."""

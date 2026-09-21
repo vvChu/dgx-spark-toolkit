@@ -185,9 +185,14 @@ class AIGatewayClient:
                     if getattr(resp, "status_code", 200) == 429:
                         await asyncio.sleep(2 * (attempt + 1))
                         continue
-                    resp.raise_for_status()
+                    res_status = resp.raise_for_status()
+                    if asyncio.iscoroutine(res_status):
+                        await res_status
                     data = resp.json()
-                    return data["choices"][0]["message"]["content"].strip()
+                    if asyncio.iscoroutine(data):
+                        data = await data
+                    msg = data["choices"][0]["message"]
+                    return (msg.get("content") or "").strip()
                 except Exception as e:
                     last_error = e
                     logger.warning(f"AIGatewayClient completion error on model {target_model} (attempt {attempt+1}): {e}")
