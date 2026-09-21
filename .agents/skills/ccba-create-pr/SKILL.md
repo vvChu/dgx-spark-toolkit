@@ -39,8 +39,9 @@ Quy trình tự động hóa kiểm định chất lượng mã nguồn tại ch
 1. **Lấy tên branch hiện hành & xác định nhánh chính (Default Branch):**
    ```bash
    git branch --show-current
+   git symbolic-ref --short refs/remotes/origin/HEAD
    ```
-   *Agent xác định nhánh hiện tại (`<current_branch>`) và nhánh chính mặc định của repository (`<default_branch>`, ví dụ: `main` hoặc `master`).*
+   *Agent xác định nhánh hiện tại (`<current_branch>`) và nhánh chính mặc định của repository (`<default_branch>`, ví dụ: `main` hoặc `master`, trích xuất từ `origin/HEAD` hoặc fallback kiểm tra `origin/main` / `origin/master`).*
 2. **Nếu đang ở nhánh chính (`<default_branch>`)**: Kiểm tra xem có commit nào chưa được push lên remote không:
    ```bash
    git log origin/<default_branch>..<default_branch> --oneline
@@ -126,7 +127,7 @@ Trước khi đẩy mã nguồn lên remote, Agent **BẮT BUỘC** thực hiệ
      ```
 3. **Khởi tạo Pull Request bằng GitHub CLI:**
    ```bash
-   gh pr create --title "<Title>" --body "<Body>\n\nCloses #<id>" --base <default_branch> --head <current_branch>
+   gh pr create --title "<Title>" --body "$PR_BODY" --base <default_branch> --head <current_branch>
    ```
 4. **Fallback thủ công (nếu `gh` chưa cài hoặc chưa đăng nhập):**
    - Trích xuất URL tạo PR từ `git remote get-url origin`: `https://github.com/<owner>/<repo>/compare/<default_branch>...<current_branch>`.
