@@ -23,7 +23,7 @@ Layered FastAPI application running on Python 3.12:
 - `core/database.py`: Lifespan management and dependency injection for all database clients.
 
 ### 2. Ingestion Pipeline (`services/rag-service/ingestion/`)
-A 9-stage pipeline orchestrated by `orchestrator.py` with stage definitions in `stages/`:
+A 9-stage pipeline consolidated in `pipeline.py` (orchestrated by `ProductionIngestor`):
 1. `s01_intake`: File validation, hash deduplication, and initial registration.
 2. `s02_ocr`: PDF text and bounding-box extraction via Surya OCR or PyMuPDF.
 3. `s03_metadata`: Legal metadata extraction (issuing authority, date, type, signer).
