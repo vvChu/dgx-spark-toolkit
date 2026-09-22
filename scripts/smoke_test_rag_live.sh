@@ -85,17 +85,30 @@ wait_for_service() {
 
 test_chat_stream_endpoint() {
     local path="/chat/stream"
-    local data='{"query": "xin chào"}'
     local description="Chat Stream Endpoint (SSE)"
 
     echo -n "Checking ${description} (POST ${path})... "
 
     local raw_output
-    raw_output=$(curl -s -N --max-time 25 \
-        -X POST \
-        -H "Content-Type: application/json" \
-        -d "${data}" \
-        "${BASE_URL}${path}" 2>&1 | head -n 10) || {
+    raw_output=$(python3 -c "
+import urllib.request, json, sys
+payload = json.dumps({'query': 'xin chào'}).encode('utf-8')
+req = urllib.request.Request(
+    '${BASE_URL}${path}',
+    data=payload,
+    headers={'Content-Type': 'application/json'}
+)
+try:
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        for _ in range(15):
+            line = resp.readline().decode('utf-8', errors='ignore')
+            if 'data:' in line:
+                print(line.strip())
+                sys.exit(0)
+except Exception as e:
+    print(f'ERROR: {e}')
+    sys.exit(1)
+" 2>&1) || {
         echo "FAILED (Network/Connection error)"
         echo "Details: ${raw_output}"
         FAILED_TESTS=$((FAILED_TESTS + 1))
