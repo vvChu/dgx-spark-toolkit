@@ -704,14 +704,14 @@ async def dispatch_command(
     title: str = "",
     cq_id: Optional[str] = None,
     timeout: Optional[int] = None,
-) -> None:
+) -> bool:
     """Universal dispatcher for commands defined in chatops_commands.yaml or emergency shell."""
     # Special handling for emergency shell execution
     if command_id == "system.emergency.exec":
         shell_cmd = params.get("cmd", "")
         job_id = hashlib.md5(f"exec_{time.time()}".encode()).hexdigest()[:6]
         await execute_shell_job(shell_cmd, job_id, chat_id, message_id, title or f"Khẩn cấp: {shell_cmd[:30]}", timeout=timeout or 60)
-        return
+        return True
 
     registry = load_command_registry()
     cmd_def = registry.get(command_id)
@@ -722,7 +722,7 @@ async def dispatch_command(
         err_text = f"❌ *[LỖI]* Lệnh `{command_id}` chưa được định nghĩa trong `chatops_commands.yaml`!"
         if not await edit_telegram_msg(chat_id, message_id, err_text, reply_markup=get_main_dashboard_markup()):
             await send_telegram_msg(chat_id, err_text, reply_markup=get_main_dashboard_markup())
-        return
+        return False
 
     runner = cmd_def.get("runner", "internal")
     title = title or cmd_def.get("description", command_id)
@@ -740,7 +740,7 @@ async def dispatch_command(
             err_msg = f"❌ *[LỖI THAM SỐ]* Giá trị `{p_val}` của tham số `{p_name}` không thỏa mãn mẫu an toàn `{p_pattern}`!"
             if not await edit_telegram_msg(chat_id, message_id, err_msg, reply_markup=get_main_dashboard_markup()):
                 await send_telegram_msg(chat_id, err_msg, reply_markup=get_main_dashboard_markup())
-            return
+            return False
 
     # 2. Resolve Service Lock Name
     svc_lock_name = None
@@ -757,7 +757,7 @@ async def dispatch_command(
         warn_msg = "⚠️ *Đang có một tác vụ nặng khác đang chạy trên server. Vui lòng thử lại sau!*"
         if not await edit_telegram_msg(chat_id, message_id, warn_msg, reply_markup=get_main_dashboard_markup()):
             await send_telegram_msg(chat_id, warn_msg, reply_markup=get_main_dashboard_markup())
-        return
+        return False
 
     if svc_lock_name:
         s_lock = get_service_lock(svc_lock_name)
@@ -767,10 +767,10 @@ async def dispatch_command(
             busy_msg = f"⚠️ *Dịch vụ `{svc_lock_name}` đang có tác vụ khác thực thi. Vui lòng thử lại sau!*"
             if not await edit_telegram_msg(chat_id, message_id, busy_msg, reply_markup=get_main_dashboard_markup()):
                 await send_telegram_msg(chat_id, busy_msg, reply_markup=get_main_dashboard_markup())
-            return
+            return False
 
     # 4. Executor implementation
-    async def _execute_action():
+    async def _execute_action() -> bool:
         if runner == "internal":
             if cq_id:
                 await answer_callback(cq_id)
@@ -793,6 +793,7 @@ async def dispatch_command(
                 unhandled = f"⚠️ Chưa xử lý runner internal cho lệnh `{command_id}`"
                 if not await edit_telegram_msg(chat_id, message_id, unhandled, reply_markup=get_main_dashboard_markup()):
                     await send_telegram_msg(chat_id, unhandled, reply_markup=get_main_dashboard_markup())
+            return True
         elif runner in ["docker_cli", "host_script"]:
             target_tmpl = cmd_def.get("target", "")
             try:
@@ -801,28 +802,30 @@ async def dispatch_command(
                 err_text = f"❌ *[LỖI CẤU HÌNH]* Thiếu tham số `{ke}` cho lệnh `{command_id}`!"
                 if not await edit_telegram_msg(chat_id, message_id, err_text):
                     await send_telegram_msg(chat_id, err_text)
-                return
+                return False
 
             job_id = hashlib.md5(f"{command_id}_{time.time()}".encode()).hexdigest()[:6]
             await execute_shell_job(rendered_cmd, job_id, chat_id, message_id, title, timeout=cmd_timeout)
+            return True
         else:
             invalid_runner = f"❌ *[LỖI]* Runner `{runner}` không hợp lệ!"
             if not await edit_telegram_msg(chat_id, message_id, invalid_runner):
                 await send_telegram_msg(chat_id, invalid_runner)
+            return False
 
     # 5. Run with proper locks
     if is_heavy and svc_lock_name:
         async with heavy_op_lock:
             async with get_service_lock(svc_lock_name):
-                await _execute_action()
+                return await _execute_action()
     elif is_heavy:
         async with heavy_op_lock:
-            await _execute_action()
+            return await _execute_action()
     elif svc_lock_name:
         async with get_service_lock(svc_lock_name):
-            await _execute_action()
+            return await _execute_action()
     else:
-        await _execute_action()
+        return await _execute_action()
 
 
 # --- 8. TELEGRAM LONG POLLER ENGINE ---
@@ -950,6 +953,7 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 "• `/rag_state`: Xem tiến độ hàng đợi RAG Ingestion.\n"
                 "• `/restart <service>`: Khởi động lại container.\n"
                 "• `/upgrade_owu`: Nâng cấp Open WebUI.\n"
+                "• `/boost <skill>`: Tăng cường suy luận sâu cho kỹ năng bị kẹt (ADR-0052).\n"
                 "• `/exec <PIN> <command>`: Thực thi lệnh khẩn cấp (có 2-step confirmation).\n"
             )
             await edit_telegram_msg(chat_id, message_id, help_text, reply_markup=get_main_dashboard_markup())
@@ -960,18 +964,18 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             nonce = data.split(":", 1)[1]
             entry = action_cache.pop(nonce, None)
             if not entry or time.time() > entry.get("expires", 0):
-                await answer_callback(cq_id, "⚠️ Nút bấm đã hết hạn hoặc đã được thực thi!", show_alert=True)
-                expired_msg = "⚠️ *Thao tác đã hết hạn hoặc đã được thực thi trước đó.*"
-                if not await edit_telegram_msg(chat_id, message_id, expired_msg, reply_markup=get_main_dashboard_markup()):
-                    await send_telegram_msg(chat_id, expired_msg, reply_markup=get_main_dashboard_markup())
+                await answer_callback(cq_id, "⚠️ Thao tác đã hết hạn hoặc đã được thực thi!", show_alert=True)
                 return
 
-            await answer_callback(cq_id, "Đang xử lý tác vụ...")
             cmd = entry["command"]
             params = entry.get("params", {})
             title = entry.get("title", "")
             timeout = entry.get("timeout")
-            await dispatch_command(cmd, params, chat_id, message_id, title=title, cq_id=cq_id, timeout=timeout)
+            await answer_callback(cq_id, f"🚀 Khởi chạy {title}...")
+            status_msg_id = await send_telegram_msg(chat_id, f"⏳ *[ĐANG CHẠY]* `{title}`\nVui lòng đợi...")
+            dispatched = await dispatch_command(cmd, params, chat_id, status_msg_id or message_id, title=title, cq_id=cq_id, timeout=timeout)
+            if not dispatched:
+                action_cache[nonce] = entry
             return
 
         return
@@ -1170,6 +1174,24 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             await send_telegram_msg(chat_id, confirm_msg, reply_markup=markup)
             return
 
+        # 8. /boost <skill>
+        if text.startswith("/boost"):
+            parts = text.split(maxsplit=1)
+            if len(parts) < 2:
+                await send_telegram_msg(chat_id, "Cú pháp: `/boost <skill_name>` (Ví dụ: `/boost bigbim-risk`)")
+                return
+            skill_arg = parts[1].strip()
+            sent_id = await send_telegram_msg(chat_id, f"⏳ *[ĐANG CHẠY]* `🚀 /boost {skill_arg}`\nVui lòng đợi...")
+            if sent_id:
+                await dispatch_command(
+                    "ccba.skill.boost",
+                    {"skill": skill_arg},
+                    chat_id,
+                    sent_id,
+                    title=f"🚀 /boost {skill_arg}",
+                )
+            return
+
 
 async def telegram_polling_loop() -> None:
     """Long Polling loop running concurrently with FastAPI."""
@@ -1312,7 +1334,7 @@ async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Opti
         label = act.get("label", "Thực thi")
         cmd = act.get("command", "")
         params = act.get("params", {})
-        timeout = act.get("timeout", 120)
+        timeout = act.get("timeout")
 
         nonce = hashlib.sha256(f"{action_id}_{time.time()}_{label}".encode()).hexdigest()[:8]
         action_cache[nonce] = {

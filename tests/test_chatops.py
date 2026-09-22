@@ -61,6 +61,18 @@ def test_command_registry_service_lock_and_whitelist():
     for s in disallowed:
         assert not regex.match(s), f"Should NOT match disallowed: {s}"
 
+    # 3. Check ccba.skill.boost command definition
+    boost_cmd = cmds["ccba.skill.boost"]
+    assert boost_cmd["slash"] == "/boost"
+    assert boost_cmd["service_lock"] == "ccba-tuner"
+    assert boost_cmd["timeout_seconds"] == 600
+    assert boost_cmd["runner"] == "host_script"
+    skill_regex = re.compile(boost_cmd["param_rules"]["skill"])
+    assert skill_regex.match("bigbim-risk")
+    assert skill_regex.match("ccba_legal_123")
+    assert not skill_regex.match("skill;rm -rf /")
+    assert not skill_regex.match("skill with spaces")
+
 
 def test_restart_service_markup():
     """Verify get_restart_service_markup contains milvus-standalone and neo4j-graph."""
@@ -370,6 +382,212 @@ def test_dispatch_command_callback_handling():
                 mock_answer.assert_called_with("cq_test_2", "❌ Lỗi tham số service!", show_alert=True)
 
     asyncio.run(_test())
+
+
+def test_dynamic_action_callback_handling():
+    """Verify dynamic action callback handles expired actions and dispatches valid actions cleanly."""
+    async def _test():
+        # Scenario 1: Expired or missing nonce -> only answer_callback with alert, NO edit/send
+        daemon.action_cache.clear()
+        cq_expired = {
+            "callback_query": {
+                "id": "cq_exp_1",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"message_id": 999, "chat": {"id": daemon.ADMIN_USER_ID}},
+                "data": "act:nonexistent_nonce",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+            await daemon.process_telegram_update(cq_expired)
+            mock_answer.assert_called_once_with("cq_exp_1", "⚠️ Thao tác đã hết hạn hoặc đã được thực thi!", show_alert=True)
+            mock_edit.assert_not_called()
+            mock_send.assert_not_called()
+            mock_dispatch.assert_not_called()
+
+        # Scenario 2: Valid nonce -> answer_callback, send separate status message, dispatch with status_msg_id
+        daemon.action_cache["valid_nonce_1"] = {
+            "command": "ccba.skill.boost",
+            "params": {"skill": "bigbim-risk"},
+            "title": "🚀 /boost bigbim-risk",
+            "timeout": 600,
+            "expires": time.time() + 3600,
+        }
+        cq_valid = {
+            "callback_query": {
+                "id": "cq_valid_1",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"message_id": 999, "chat": {"id": daemon.ADMIN_USER_ID}},
+                "data": "act:valid_nonce_1",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
+             patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+            mock_send.return_value = 1001  # status_msg_id
+            await daemon.process_telegram_update(cq_valid)
+            mock_answer.assert_called_once_with("cq_valid_1", "🚀 Khởi chạy 🚀 /boost bigbim-risk...")
+            mock_send.assert_called_once()
+            assert "ĐANG CHẠY" in mock_send.call_args[0][1]
+            mock_dispatch.assert_called_once_with(
+                "ccba.skill.boost",
+                {"skill": "bigbim-risk"},
+                daemon.ADMIN_USER_ID,
+                1001,
+                title="🚀 /boost bigbim-risk",
+                cq_id="cq_valid_1",
+                timeout=600,
+            )
+
+    asyncio.run(_test())
+
+
+def test_dynamic_action_callback_restores_nonce_on_busy_lock():
+    """Verify dynamic action callback preserves nonce in action_cache if service lock is busy."""
+    async def _test():
+        daemon.action_cache.clear()
+        svc_lock = daemon.get_service_lock("ccba-tuner")
+        await svc_lock.acquire()  # Simulate ongoing runner holding lock
+
+        entry = {
+            "command": "ccba.skill.boost",
+            "params": {"skill": "stagnant-skill"},
+            "title": "🚀 /boost stagnant-skill",
+            "timeout": 600,
+            "expires": time.time() + 3600,
+        }
+        daemon.action_cache["busy_nonce_1"] = entry
+
+        cq_busy = {
+            "callback_query": {
+                "id": "cq_busy_1",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"message_id": 999, "chat": {"id": daemon.ADMIN_USER_ID}},
+                "data": "act:busy_nonce_1",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
+             patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit:
+            mock_send.return_value = 1002
+
+            await daemon.process_telegram_update(cq_busy)
+
+            # Nonce must be preserved in cache because command was rejected due to lock
+            assert "busy_nonce_1" in daemon.action_cache
+            assert daemon.action_cache["busy_nonce_1"] == entry
+
+            # Progress message must be edited with busy warning
+            mock_edit.assert_called_once()
+            assert "đang có tác vụ khác thực thi" in mock_edit.call_args[0][2]
+
+        svc_lock.release()
+
+    asyncio.run(_test())
+
+
+def test_boost_text_command_handling():
+    """Verify /boost <skill> text command parses arguments and dispatches command."""
+    async def _test():
+        # Scenario 1: Missing argument
+        msg_missing = {
+            "message": {
+                "message_id": 101,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/boost",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
+            await daemon.process_telegram_update(msg_missing)
+            mock_send.assert_called_once_with(daemon.ADMIN_USER_ID, "Cú pháp: `/boost <skill_name>` (Ví dụ: `/boost bigbim-risk`)")
+
+        # Scenario 2: Valid argument dispatches ccba.skill.boost
+        msg_valid = {
+            "message": {
+                "message_id": 102,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/boost bigbim-risk",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+            mock_send.return_value = 1003
+            mock_dispatch.return_value = True
+
+            await daemon.process_telegram_update(msg_valid)
+            mock_send.assert_called_once()
+            assert "bigbim-risk" in mock_send.call_args[0][1]
+            mock_dispatch.assert_called_once_with(
+                "ccba.skill.boost",
+                {"skill": "bigbim-risk"},
+                daemon.ADMIN_USER_ID,
+                1003,
+                title="🚀 /boost bigbim-risk",
+            )
+
+    asyncio.run(_test())
+
+
+def test_notify_action_timeout_handling(monkeypatch):
+    """Verify /api/v1/notify preserves custom timeout or sets None to fallback to command timeout."""
+    client = TestClient(daemon.app, client=("127.0.0.1", 50000))
+    monkeypatch.setattr(daemon, "CHATOPS_INTERNAL_SECRET", "test_secret_timeout")
+    daemon.action_cache.clear()
+
+    with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+         patch("scripts.chatops_daemon.append_audit_log"):
+        mock_send.return_value = 8888
+
+        # 1. Action with custom timeout
+        res = client.post(
+            "/api/v1/notify",
+            json={
+                "title": "Boost Request",
+                "body": "Stagnant skill detected",
+                "actions": [
+                    {
+                        "action_id": "boost_bigbim",
+                        "label": "🚀 /boost bigbim-risk",
+                        "command": "ccba.skill.boost",
+                        "params": {"skill": "bigbim-risk"},
+                        "timeout": 600,
+                    }
+                ],
+            },
+            headers={"X-ChatOps-Secret": "test_secret_timeout"},
+        )
+        assert res.status_code == 200
+        assert len(daemon.action_cache) == 1
+        cached_entry = list(daemon.action_cache.values())[0]
+        assert cached_entry["timeout"] == 600
+
+        # 2. Action without timeout falls back to None (so dispatch_command uses command default)
+        daemon.action_cache.clear()
+        res2 = client.post(
+            "/api/v1/notify",
+            json={
+                "title": "Default Timeout Request",
+                "body": "No explicit timeout specified",
+                "actions": [
+                    {
+                        "action_id": "generic_act",
+                        "label": "Do Work",
+                        "command": "ccba.skill.boost",
+                        "params": {"skill": "bigbim-risk"},
+                    }
+                ],
+            },
+            headers={"X-ChatOps-Secret": "test_secret_timeout"},
+        )
+        assert res2.status_code == 200
+        cached_entry2 = list(daemon.action_cache.values())[0]
+        assert cached_entry2["timeout"] is None
 
 
 def test_is_newer_version():
