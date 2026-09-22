@@ -310,7 +310,8 @@ def test_internal_notify_security(monkeypatch):
     monkeypatch.setattr(daemon, "CHATOPS_INTERNAL_SECRET", "dgx_test_secret_123")
 
     # With correct header
-    with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
+    with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+         patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
         mock_send.return_value = 8888
         res = client.post(
             "/api/v1/notify",
@@ -319,6 +320,7 @@ def test_internal_notify_security(monkeypatch):
         )
         assert res.status_code == 200
         assert res.json()["status"] == "dispatched"
+        mock_audit.assert_called_once()
 
 
 def test_execute_shell_job_timeout_reaping():
