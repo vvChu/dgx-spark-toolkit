@@ -66,10 +66,18 @@ def _make_repo():
 
 
 class TestNeo4jRepository:
-    def test_driver_property(self):
+    def test_init_schema(self):
+        repo, session = _make_repo()
+        _run(repo.init_schema())
+        assert session.run.call_count == 2
+
+    def test_close(self):
+        from unittest.mock import AsyncMock
         driver = MagicMock()
+        driver.close = AsyncMock()
         repo = Neo4jRepository(driver)
-        assert repo.driver is driver
+        _run(repo.close())
+        driver.close.assert_called_once()
 
     def test_get_document_relations_success(self):
         repo, session = _make_repo()

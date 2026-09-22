@@ -24,9 +24,6 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Callable
 from concurrent.futures import ThreadPoolExecutor
 
-from pymilvus import connections, Collection, utility, FieldSchema, CollectionSchema, DataType
-from neo4j import GraphDatabase, AsyncGraphDatabase
-from pymilvus import AsyncMilvusClient
 from prometheus_client import start_http_server, Gauge, Counter, Histogram
 import fitz
 
@@ -53,7 +50,6 @@ from ingestion.image_preprocessor import preprocess_page_image
 from ingestion.json_parser import extract_json_from_response
 from repositories.milvus_repo import MilvusRepository
 from repositories.neo4j_repo import Neo4jRepository
-from services.lifecycle_service import LifecycleService
 from ingestion.models import ProcessedDocument, DocumentIdentity, DocumentMetadata
 from ingestion.document_reader import DocumentReader, InMemoryDocumentReader
 
@@ -94,6 +90,7 @@ class DocumentIngestionPipeline:
         state_manager: StateManager | None = None,
         settings: Any | None = None,
         document_reader: DocumentReader | None = None,
+        document_store: Any | None = None,
     ):
         pipeline_config._load()
         settings = settings or get_settings()
@@ -115,44 +112,22 @@ class DocumentIngestionPipeline:
         self.exporter = DataExporter(settings.EXPORT_DIR) if settings.EXPORT_PROCESSED_DATA else None
         self._http_client = httpx.Client(timeout=300)
 
-        # Database connections (handled gracefully if offline)
+        # Legacy compatibility attributes
         self.neo4j_driver = None
         self._async_milvus = None
         self._async_neo4j = None
-        self.lifecycle_service = None
         self.collection = None
 
         from repositories.document_store import DocumentStore, InMemoryDocumentStore
 
-        if isinstance(self.state_manager, InMemoryStateManager):
+        if document_store is not None:
+            self.document_store = document_store
+        elif isinstance(self.state_manager, InMemoryStateManager):
             self.document_store = InMemoryDocumentStore(state_manager=self.state_manager)
         else:
             try:
-                self.neo4j_driver = GraphDatabase.driver(
-                    pipeline_config.NEO4J_URI, auth=(pipeline_config.NEO4J_USER, pipeline_config.NEO4J_PASS)
-                )
-                self._async_milvus = AsyncMilvusClient(
-                    uri=f"http://{pipeline_config.MILVUS_HOST}:{pipeline_config.MILVUS_PORT}"
-                )
-                self._async_neo4j = AsyncGraphDatabase.driver(
-                    pipeline_config.NEO4J_URI, auth=(pipeline_config.NEO4J_USER, pipeline_config.NEO4J_PASS)
-                )
-                milvus_repo = MilvusRepository(self._async_milvus)
-                neo4j_repo = Neo4jRepository(self._async_neo4j)
-                self.document_store = DocumentStore(
-                    milvus_repo=milvus_repo,
-                    neo4j_repo=neo4j_repo,
-                    state_manager=self.state_manager,
-                )
-                self.lifecycle_service = LifecycleService(
-                    self.state_manager,
-                    milvus_repo,
-                    neo4j_repo,
-                    document_store=self.document_store,
-                )
-                self.init_neo4j()
-                self.connect_milvus()
-                self.collection = self.setup_collection()
+                self.document_store = DocumentStore.create_default(state_manager=self.state_manager)
+                self.document_store.init_infrastructure_sync()
             except Exception as e:
                 logger.warning(f"Database setup incomplete for pipeline: {e}")
                 self.document_store = InMemoryDocumentStore(state_manager=self.state_manager)
@@ -163,12 +138,8 @@ class DocumentIngestionPipeline:
 
     def close(self):
         try:
-            if self.neo4j_driver:
-                self.neo4j_driver.close()
-            if self._async_neo4j:
-                self._async_neo4j.close()
-            if self._async_milvus:
-                self._async_milvus.close()
+            if self.document_store and hasattr(self.document_store, "close_sync"):
+                self.document_store.close_sync()
             if self._http_client:
                 self._http_client.close()
             logger.info("DocumentIngestionPipeline resources closed safely.")
@@ -186,64 +157,19 @@ class DocumentIngestionPipeline:
             logger.error(f"Failed to load processed cache: {e}")
 
     def init_neo4j(self):
-        if not self.neo4j_driver:
-            return
-        with self.neo4j_driver.session() as session:
-            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE")
-            session.run("CREATE INDEX IF NOT EXISTS FOR (d:Document) ON (d.doc_number)")
+        """Delegate schema initialization to DocumentStore."""
+        if self.document_store and hasattr(self.document_store, "init_infrastructure_sync"):
+            self.document_store.init_infrastructure_sync()
 
     def connect_milvus(self):
-        try:
-            connections.connect(host=pipeline_config.MILVUS_HOST, port=pipeline_config.MILVUS_PORT)
-            logger.info(f"Connected to Milvus at {pipeline_config.MILVUS_HOST}:{pipeline_config.MILVUS_PORT}")
-        except Exception as e:
-            logger.warning(f"Milvus connection skipped: {e}")
+        """No-op: Milvus connections are managed inside MilvusRepository."""
+        pass
 
     def setup_collection(self):
-        try:
-            if utility.has_collection(pipeline_config.COLLECTION_NAME):
-                col = Collection(pipeline_config.COLLECTION_NAME)
-                col.load()
-                return col
-
-            fields = [
-                FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
-                FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=15000),
-                FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=512),
-                FieldSchema(name="page", dtype=DataType.INT64),
-                FieldSchema(name="summary", dtype=DataType.VARCHAR, max_length=2048),
-                FieldSchema(name="doc_date", dtype=DataType.VARCHAR, max_length=32),
-                FieldSchema(name="doc_type", dtype=DataType.VARCHAR, max_length=32),
-                FieldSchema(name="authority", dtype=DataType.VARCHAR, max_length=64),
-                FieldSchema(name="file_hash", dtype=DataType.VARCHAR, max_length=64),
-                FieldSchema(name="is_table", dtype=DataType.BOOL),
-                FieldSchema(name="chunk_type", dtype=DataType.VARCHAR, max_length=16),
-                FieldSchema(name="parent_id", dtype=DataType.VARCHAR, max_length=256),
-                FieldSchema(name="doc_number", dtype=DataType.VARCHAR, max_length=128),
-                FieldSchema(name="doc_id", dtype=DataType.VARCHAR, max_length=256, default_value=""),
-                FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, max_length=512, default_value=""),
-                FieldSchema(name="bbox", dtype=DataType.VARCHAR, max_length=128),
-                FieldSchema(name="validity_status", dtype=DataType.VARCHAR, max_length=32, default_value="ACTIVE"),
-                FieldSchema(name="legal_level", dtype=DataType.VARCHAR, max_length=32, default_value="UNKNOWN"),
-                FieldSchema(name="hierarchy_path", dtype=DataType.VARCHAR, max_length=1024, default_value=""),
-                FieldSchema(name="citation_count", dtype=DataType.INT64, default_value=0),
-                FieldSchema(name="project_code", dtype=DataType.VARCHAR, max_length=64, default_value="GENERIC"),
-                FieldSchema(name="discipline", dtype=DataType.VARCHAR, max_length=32, default_value="UNKNOWN"),
-                FieldSchema(name="doc_status", dtype=DataType.VARCHAR, max_length=32, default_value="ACTIVE"),
-                FieldSchema(name="revision", dtype=DataType.INT64, default_value=0),
-                FieldSchema(name="synthetic_queries", dtype=DataType.VARCHAR, max_length=4095, default_value=""),
-                FieldSchema(name="source_category", dtype=DataType.VARCHAR, max_length=64, default_value="KHAC"),
-                FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=1024),
-            ]
-            schema = CollectionSchema(fields, description="Vietnamese legal document chunks")
-            col = Collection(pipeline_config.COLLECTION_NAME, schema)
-            index_params = {"metric_type": "COSINE", "index_type": "HNSW", "params": {"M": 16, "efConstruction": 200}}
-            col.create_index(field_name="vector", index_params=index_params)
-            col.load()
-            return col
-        except Exception as e:
-            logger.warning(f"Could not setup Milvus collection: {e}")
-            return None
+        """Delegate collection setup to DocumentStore."""
+        if self.document_store and hasattr(self.document_store, "init_infrastructure_sync"):
+            self.document_store.init_infrastructure_sync()
+        return None
 
     def get_file_hash(self, file_path: str | Path) -> str:
         hasher = hashlib.sha256()

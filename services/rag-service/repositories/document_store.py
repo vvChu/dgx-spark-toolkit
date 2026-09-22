@@ -44,6 +44,84 @@ class DocumentStore:
         self.milvus_repo = milvus_repo
         self.neo4j_repo = neo4j_repo
 
+    @classmethod
+    def create_default(
+        cls,
+        state_manager: Optional[StateManager] = None,
+        milvus_uri: Optional[str] = None,
+        neo4j_uri: Optional[str] = None,
+        neo4j_user: Optional[str] = None,
+        neo4j_pass: Optional[str] = None,
+    ) -> "DocumentStore":
+        """Factory method constructing DocumentStore with underlying database repositories."""
+        from pymilvus import AsyncMilvusClient
+        from neo4j import AsyncGraphDatabase
+
+        settings = get_settings()
+        m_uri = milvus_uri or f"http://{settings.MILVUS_HOST}:{settings.MILVUS_PORT}"
+        n_uri = neo4j_uri or settings.NEO4J_URI
+        n_user = neo4j_user or settings.NEO4J_USER
+        n_pwd = neo4j_pass or (
+            settings.NEO4J_PASSWORD.get_secret_value()
+            if hasattr(settings.NEO4J_PASSWORD, "get_secret_value")
+            else str(settings.NEO4J_PASSWORD)
+        )
+
+        try:
+            milvus_client = AsyncMilvusClient(uri=m_uri)
+            milvus_repo = MilvusRepository(milvus_client)
+        except Exception as e:
+            logger.warning(f"Failed to initialize MilvusRepository: {e}")
+            milvus_repo = None
+
+        try:
+            neo4j_driver = AsyncGraphDatabase.driver(n_uri, auth=(n_user, n_pwd))
+            neo4j_repo = Neo4jRepository(neo4j_driver)
+        except Exception as e:
+            logger.warning(f"Failed to initialize Neo4jRepository: {e}")
+            neo4j_repo = None
+
+        return cls(
+            milvus_repo=milvus_repo,
+            neo4j_repo=neo4j_repo,
+            state_manager=state_manager,
+        )
+
+    async def init_infrastructure(self) -> None:
+        """Initialize underlying storage infrastructure (schemas, constraints, indexes)."""
+        if self.milvus_repo and hasattr(self.milvus_repo, "ensure_collection_schema"):
+            try:
+                await self.milvus_repo.ensure_collection_schema()
+            except Exception as e:
+                logger.warning(f"Milvus schema initialization failed: {e}")
+
+        if self.neo4j_repo and hasattr(self.neo4j_repo, "init_schema"):
+            try:
+                await self.neo4j_repo.init_schema()
+            except Exception as e:
+                logger.warning(f"Neo4j schema initialization failed: {e}")
+
+    def init_infrastructure_sync(self) -> None:
+        """Synchronous wrapper for infrastructure initialization."""
+        try:
+            _run_async(self.init_infrastructure())
+        except Exception as e:
+            logger.warning(f"Sync infrastructure initialization skipped: {e}")
+
+    async def close(self) -> None:
+        """Safely close repository connections."""
+        if self.milvus_repo and hasattr(self.milvus_repo, "close"):
+            await self.milvus_repo.close()
+        if self.neo4j_repo and hasattr(self.neo4j_repo, "close"):
+            await self.neo4j_repo.close()
+
+    def close_sync(self) -> None:
+        """Sync wrapper to close repository resources."""
+        try:
+            _run_async(self.close())
+        except Exception as e:
+            logger.debug(f"Error closing DocumentStore: {e}")
+
     def is_document_processed(self, rel_path: str) -> bool:
         """Check if document is already successfully processed in StateManager."""
         try:
@@ -91,7 +169,7 @@ class DocumentStore:
 
         if errors:
             logger.error(f"Sync status for {doc_id} partial failure: {errors}")
-            return {"status": "partial_success", "errors": errors}
+            return {"status": "partial_success", "doc_id": doc_id, "new_status": new_status, "errors": errors}
 
         return {"status": "success", "doc_id": doc_id, "new_status": new_status}
 
@@ -373,3 +451,15 @@ class InMemoryDocumentStore(DocumentStore):
 
     async def delete_document(self, doc_id: str) -> Dict[str, Any]:
         return self.delete_document_sync(doc_id)
+
+    async def init_infrastructure(self) -> None:
+        pass
+
+    def init_infrastructure_sync(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+    def close_sync(self) -> None:
+        pass
