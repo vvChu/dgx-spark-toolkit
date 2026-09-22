@@ -44,8 +44,14 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 ADMIN_USER_ID = int(TELEGRAM_CHAT_ID) if TELEGRAM_CHAT_ID.isdigit() else 0
 
 CHATOPS_PORT = int(os.environ.get("CHATOPS_PORT", "8095"))
-CHATOPS_INTERNAL_SECRET = os.environ.get("CHATOPS_INTERNAL_SECRET", "dgx_spark_chatops_secret_2026").strip()
-CHATOPS_EMERGENCY_PIN = os.environ.get("CHATOPS_EMERGENCY_PIN", "982631").strip()
+CHATOPS_INTERNAL_SECRET = os.environ.get("CHATOPS_INTERNAL_SECRET", "").strip()
+CHATOPS_EMERGENCY_PIN = os.environ.get("CHATOPS_EMERGENCY_PIN", "").strip()
+
+if not CHATOPS_INTERNAL_SECRET:
+    print("[Security Error] CHATOPS_INTERNAL_SECRET is not configured in .env! Internal notify endpoint will reject all requests.", flush=True)
+
+if not CHATOPS_EMERGENCY_PIN or len(CHATOPS_EMERGENCY_PIN) < 6:
+    print("[Security Warning] CHATOPS_EMERGENCY_PIN is not configured or < 6 digits! Emergency /exec is disabled.", flush=True)
 
 LOG_DIR = PROJECT_ROOT / "logs" / "chatops"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -82,7 +88,29 @@ SHELL_BLACKLIST = [
 action_cache: Dict[str, Dict[str, Any]] = {}
 heavy_op_lock = asyncio.Lock()
 service_locks: Dict[str, asyncio.Lock] = {}
-last_audit_hash: str = "0" * 64
+http_client: Optional[httpx.AsyncClient] = None
+
+
+def load_last_audit_hash() -> str:
+    """Restores the last SHA-256 hash from audit.jsonl to maintain cryptographic chain continuity across restarts."""
+    if not AUDIT_FILE.exists():
+        return "0" * 64
+    try:
+        with open(AUDIT_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            for line in reversed(lines):
+                line = line.strip()
+                if line:
+                    record = json.loads(line)
+                    h = record.get("record_hash")
+                    if h and isinstance(h, str) and len(h) == 64:
+                        return h
+    except Exception as e:
+        print(f"[Audit Warning] Failed to restore audit hash chain from {AUDIT_FILE}: {e}", flush=True)
+    return "0" * 64
+
+
+last_audit_hash: str = load_last_audit_hash()
 
 
 def get_service_lock(service_name: str) -> asyncio.Lock:
@@ -90,6 +118,17 @@ def get_service_lock(service_name: str) -> asyncio.Lock:
     if service_name not in service_locks:
         service_locks[service_name] = asyncio.Lock()
     return service_locks[service_name]
+
+
+def get_http_client() -> httpx.AsyncClient:
+    """Returns or initializes the persistent httpx client with connection pooling."""
+    global http_client
+    if http_client is None or http_client.is_closed:
+        http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(45.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50, keepalive_expiry=60.0),
+        )
+    return http_client
 
 
 # --- 3. AUDIT LOGGER (CHAINED SHA-256) ---
@@ -132,15 +171,15 @@ def append_audit_log(
 
 # --- 4. TELEGRAM API UTILITIES ---
 async def telegram_request(method: str, payload: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-    """Makes an async POST request to Telegram Bot API with timeout."""
+    """Makes an async POST request to Telegram Bot API with persistent client."""
     url = f"{TELEGRAM_API_BASE}/{method}"
     try:
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            res = await client.post(url, json=payload or {})
-            data = res.json()
-            if not data.get("ok"):
-                print(f"[Telegram Error] {method}: {data.get('description')}", flush=True)
-            return data
+        client = get_http_client()
+        res = await client.post(url, json=payload or {})
+        data = res.json()
+        if not data.get("ok"):
+            print(f"[Telegram Error] {method}: {data.get('description')}", flush=True)
+        return data
     except Exception as e:
         print(f"[Telegram Net Error] {method}: {e}", flush=True)
         return None
@@ -202,15 +241,15 @@ async def answer_callback(callback_query_id: str, text: Optional[str] = None, sh
 
 
 async def send_telegram_document(chat_id: int, file_path: Path, caption: str = "") -> bool:
-    """Sends a document file (.log) to Telegram."""
+    """Sends a document file (.log) to Telegram with persistent client."""
     url = f"{TELEGRAM_API_BASE}/sendDocument"
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            with open(file_path, "rb") as f:
-                files = {"document": (file_path.name, f, "text/plain")}
-                data = {"chat_id": str(chat_id), "caption": caption[:1000]}
-                res = await client.post(url, data=data, files=files)
-                return res.status_code == 200
+        client = get_http_client()
+        with open(file_path, "rb") as f:
+            files = {"document": (file_path.name, f, "text/plain")}
+            data = {"chat_id": str(chat_id), "caption": caption[:1000]}
+            res = await client.post(url, data=data, files=files, timeout=60.0)
+            return res.status_code == 200
     except Exception as e:
         print(f"[Document Send Error] {e}", flush=True)
         return False
@@ -286,7 +325,7 @@ async def probe_hardware_and_containers() -> str:
                 parts = c_line.split("|")
                 name = parts[0]
                 status = parts[1]
-                if any(core in name for core in ["open-webui", "ai-gateway", "qwen36b", "smart-watchdog", "cloudflared", "rag-service"]):
+                if any(core in name for core in ["open-webui", "ai-gateway", "qwen36b", "smart-watchdog", "cloudflared", "rag-service", "milvus", "neo4j"]):
                     st_icon = "🟢" if "Up" in status else "🔴"
                     lines.append(f" {st_icon} `{name}`: {status}")
     except Exception as e:
@@ -378,6 +417,10 @@ async def execute_shell_job(
         except asyncio.TimeoutError:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=3.0)
             except Exception:
                 pass
             dur = int((time.time() - start_time) * 1000)
@@ -491,7 +534,16 @@ def get_main_dashboard_markup() -> Dict[str, Any]:
 
 def get_restart_service_markup() -> Dict[str, Any]:
     """Builds sub-menu for restarting services."""
-    services = ["open-webui", "qwen36b", "ai-gateway", "smart-watchdog", "cloudflared-tunnel", "rag-service"]
+    services = [
+        "open-webui",
+        "qwen36b",
+        "ai-gateway",
+        "smart-watchdog",
+        "cloudflared-tunnel",
+        "rag-service",
+        "milvus-standalone",
+        "neo4j-graph",
+    ]
     keyboard = []
     for i in range(0, len(services), 2):
         row = [{"text": f"🔄 {services[i]}", "callback_data": f"rst:{services[i]}"}]
@@ -517,33 +569,46 @@ def load_command_registry() -> Dict[str, Dict[str, Any]]:
 
 
 async def probe_rag_state() -> str:
-    """Probes RAG pipeline service health and vector store connections."""
-    lines = ["📄 *TIẾN ĐỘ & TRẠNG THÁI RAG INGESTION PIPELINE* 📄\n"]
+    """Probes RAG pipeline service health, vector store, and graph database metrics."""
+    lines = ["📄 *TIẾN ĐỘ & TRẠNG THÁI RAG PIPELINE* 📄\n"]
+    client = get_http_client()
+
+    # 1. Health & Database Connectivity
     try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            res = await client.get("http://127.0.0.1:8005/health")
-            if res.status_code == 200:
-                data = res.json()
-                lines.append("• Dịch vụ `rag-service`: 🟢 Khả dụng (Port 8005)")
-                lines.append(f"• Phiên bản: `{data.get('version', '2.0.0')}`")
-                checks = data.get("checks", {})
-                for db_name, db_st in checks.items():
-                    st_icon = "🟢" if db_st == "ok" else "🔴"
-                    lines.append(f"  └─ `{db_name}`: {st_icon} {db_st}")
-            else:
-                lines.append(f"• Dịch vụ `rag-service`: ⚠️ Phản hồi HTTP {res.status_code}")
+        res = await client.get("http://127.0.0.1:8005/health", timeout=5.0)
+        if res.status_code in [200, 503]:
+            data = res.json()
+            st_text = "🟢 Khả dụng" if data.get("status") == "ok" else "🟡 Hoạt động giảm tải (Degraded)"
+            lines.append(f"• Dịch vụ `rag-service`: {st_text} (Port 8005)")
+            lines.append(f"• Phiên bản: `v{data.get('version', '2.0.0')}`")
+            checks = data.get("checks", {})
+            for db_name, db_st in checks.items():
+                st_icon = "🟢" if db_st in ("ok", "reconnected") else "🔴"
+                lines.append(f"  └─ `{db_name}`: {st_icon} {db_st}")
+        else:
+            lines.append(f"• Dịch vụ `rag-service`: ⚠️ Phản hồi HTTP {res.status_code}")
     except Exception as e:
         lines.append(f"• Dịch vụ `rag-service`: 🔴 Không thể kết nối ({e})")
 
-    # Ingestion queue or status files
-    ingest_dir = PROJECT_ROOT / "data" / "raw"
-    processed_dir = PROJECT_ROOT / "data" / "processed"
-    if ingest_dir.exists():
-        raw_count = len(list(ingest_dir.glob("*.*")))
-        lines.append(f"• Tệp chờ xử lý (`data/raw`): `{raw_count}` tệp")
-    if processed_dir.exists():
-        proc_count = len(list(processed_dir.glob("*.*")))
-        lines.append(f"• Tệp đã lập chỉ mục (`data/processed`): `{proc_count}` tệp")
+    # 2. Vector & Graph Stats
+    try:
+        res_stats = await client.get("http://127.0.0.1:8005/stats", timeout=5.0)
+        if res_stats.status_code == 200:
+            stats = res_stats.json()
+            neo4j_docs = stats.get("neo4j_docs", 0)
+            neo4j_rels = stats.get("neo4j_rels", 0)
+            milvus_entities = stats.get("milvus_entities", 0)
+            total_target = stats.get("total_target", 8870)
+            pct = (neo4j_docs / total_target * 100) if total_target > 0 else 0.0
+
+            lines.append("\n📊 *SỐ LIỆU CHỈ MỤC & CƠ SỞ DỮ LIỆU:*")
+            lines.append(f"• Tài liệu pháp lý (Neo4j): `{neo4j_docs}/{total_target}` ({pct:.1f}%)")
+            lines.append(f"• Quan hệ pháp lý (Neo4j): `{neo4j_rels:,}` liên kết")
+            lines.append(f"• Thực thể vector (Milvus): `{milvus_entities:,}` chunks")
+        else:
+            lines.append(f"\n• Thống kê cơ sở dữ liệu: ⚠️ HTTP {res_stats.status_code}")
+    except Exception as e:
+        lines.append(f"\n• Thống kê cơ sở dữ liệu: ⚠️ Lỗi truy vấn stats ({e})")
 
     lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
     return "\n".join(lines)
@@ -785,6 +850,12 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
         message_id = msg.get("message_id")
         text = msg.get("text", "").strip()
 
+        # Anti-Replay Protection for Stale Telegram Updates
+        msg_date = msg.get("date", 0)
+        if msg_date and (time.time() - msg_date > 120):
+            print(f"[Anti-Replay] Dropping stale update/message {message_id} (age: {int(time.time() - msg_date)}s > 120s)", flush=True)
+            return
+
         # Strict ACL
         if user_id != ADMIN_USER_ID:
             append_audit_log("message", text, {"user_id": user_id}, user_id, "FORBIDDEN", 0, -1, "Unknown user message dropped")
@@ -844,7 +915,7 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
 
             remaining_lock = check_brute_force_lockout()
             if remaining_lock:
-                await send_telegram_msg(chat_id, f"🚨 *LỆNH /EXEC ĐANG BỊ KHÓA!* Vui lòng thử lại sau `{remaining_lock//60} phút {remaining_lock%60} giây`.")
+                await send_telegram_msg(chat_id, f"🚨 *LỆNH /EXEC ĐANG BỊ KHÓA!* Vui lòng thử lại sau `{remaining_lock // 60} phút {remaining_lock % 60} giây`.")
                 return
 
             parts = text.split(maxsplit=2)
@@ -934,35 +1005,63 @@ async def telegram_polling_loop() -> None:
             await asyncio.sleep(5)
 
 
+async def cleanup_action_cache_loop() -> None:
+    """Periodically purges expired nonces from action_cache to prevent memory leaks."""
+    while True:
+        try:
+            await asyncio.sleep(600)  # Check every 10 minutes
+            now = time.time()
+            expired_keys = [k for k, v in action_cache.items() if now > v.get("expires", 0)]
+            for k in expired_keys:
+                action_cache.pop(k, None)
+            if expired_keys:
+                print(f"[ChatOps Cache] Purged {len(expired_keys)} expired action nonce(s).", flush=True)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[ChatOps Cache Warning] Error during cache cleanup: {e}", flush=True)
+
+
 # --- 9. FASTAPI INTERNAL REST SERVER ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 0. Initialize persistent HTTP client
+    get_http_client()
+
     # 1. Wait for network
     print("[ChatOps] Checking network connectivity...", flush=True)
     for _ in range(12):
         try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                res = await client.get("https://api.telegram.org", timeout=4.0)
-                if res.status_code in [200, 302, 404]:
-                    print("[ChatOps] Network and Telegram API reachable.", flush=True)
-                    break
+            client = get_http_client()
+            res = await client.get("https://api.telegram.org", timeout=4.0)
+            if res.status_code in [200, 302, 404]:
+                print("[ChatOps] Network and Telegram API reachable.", flush=True)
+                break
         except Exception:
             await asyncio.sleep(3)
 
     # 2. Reset Webhook
     await telegram_request("deleteWebhook", {"drop_pending_updates": False})
 
-    # 3. Start Telegram Polling Task
+    # 3. Start Background Tasks
     poller_task = asyncio.create_task(telegram_polling_loop())
+    cache_cleaner_task = asyncio.create_task(cleanup_action_cache_loop())
 
     yield
 
     # 4. Graceful Shutdown
     poller_task.cancel()
+    cache_cleaner_task.cancel()
     try:
-        await poller_task
-    except asyncio.CancelledError:
+        await asyncio.gather(poller_task, cache_cleaner_task, return_exceptions=True)
+    except Exception:
         pass
+
+    global http_client
+    if http_client and not http_client.is_closed:
+        await http_client.aclose()
+        http_client = None
+
     print("[ChatOps] Daemon shutdown complete.", flush=True)
 
 
@@ -992,7 +1091,7 @@ async def health_check():
 @app.post("/api/v1/notify")
 async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Optional[str] = Header(None)):
     """Receives alerts from Docker containers and sends Telegram messages with interactive buttons."""
-    if not x_chatops_secret or not hmac.compare_digest(x_chatops_secret, CHATOPS_INTERNAL_SECRET):
+    if not CHATOPS_INTERNAL_SECRET or not x_chatops_secret or not hmac.compare_digest(x_chatops_secret, CHATOPS_INTERNAL_SECRET):
         raise HTTPException(status_code=401, detail="Invalid ChatOps Secret Header")
 
     title = payload.get("title", "Thông báo từ máy chủ DGX Spark")

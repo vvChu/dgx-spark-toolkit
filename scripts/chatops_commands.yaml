@@ -19,7 +19,7 @@ commands:
     slash: "/upgrade_owu"
     description: "Nâng cấp Open WebUI an toàn (Zero Data Loss & Auto-Rollback)"
     risk_tier: "MUTATING_OPS"
-    service_lock: "openwebui"
+    service_lock: "open-webui"
     is_heavy_op: true
     timeout_seconds: 300
     runner: "host_script"
@@ -36,7 +36,7 @@ commands:
     runner: "docker_cli"
     target: "docker restart {service}"
     param_rules:
-      service: "^(open-webui|qwen36b|ai-gateway|smart-watchdog|cloudflared-tunnel|rag-service)$"
+      service: "^(open-webui|qwen36b|ai-gateway|smart-watchdog|cloudflared-tunnel|rag-service|milvus-standalone|neo4j-graph)$"
 
   - id: "rag.ingestion.state"
     slash: "/rag_state"
