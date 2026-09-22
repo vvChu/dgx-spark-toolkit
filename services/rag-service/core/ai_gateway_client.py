@@ -234,7 +234,9 @@ class AIGatewayClient:
         temperature: float = 0.1,
         max_tokens: int = 2048,
         timeout: Optional[float] = None,
+        model_chain: Optional[List[str]] = None,
         retry_on_error: bool = True,
+        **kwargs: Any,
     ) -> Any:
         """Extract structured JSON dictionary or Pydantic model directly from LLM completion."""
         if isinstance(prompt_or_messages, str):
@@ -250,6 +252,8 @@ class AIGatewayClient:
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
+            model_chain=model_chain,
+            **kwargs,
         )
 
         try:
@@ -269,6 +273,8 @@ class AIGatewayClient:
                 temperature=0.0,
                 max_tokens=max_tokens,
                 timeout=timeout,
+                model_chain=model_chain,
+                **kwargs,
             )
             return self._clean_and_parse_json(repair_raw, schema=schema)
 
@@ -281,6 +287,8 @@ class AIGatewayClient:
         temperature: float = 0.1,
         max_tokens: int = 2048,
         timeout: Optional[float] = None,
+        model_chain: Optional[List[str]] = None,
+        **kwargs: Any,
     ) -> Any:
         """Completion in JSON mode using extract_json."""
         return await self.extract_json(
@@ -290,6 +298,8 @@ class AIGatewayClient:
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
+            model_chain=model_chain,
+            **kwargs,
         )
 
     async def complete_vision(

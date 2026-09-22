@@ -77,6 +77,9 @@ class GPUResourceManager:
         old_target_device = getattr(
             huggingface_wrapper, "_target_device", None
         )
+        old_target_devices = getattr(
+            huggingface_wrapper, "target_devices", None
+        )
 
         try:
             if hasattr(huggingface_wrapper, "model"):
@@ -86,6 +89,8 @@ class GPUResourceManager:
                 huggingface_wrapper.device = "cuda"
             if old_target_device is not None:
                 huggingface_wrapper._target_device = "cuda"
+            if old_target_devices is not None:
+                huggingface_wrapper.target_devices = ["cuda"]
 
             yield True
         except Exception as e:
@@ -96,6 +101,8 @@ class GPUResourceManager:
                 huggingface_wrapper.device = old_device_attr
             if old_target_device is not None:
                 huggingface_wrapper._target_device = old_target_device
+            if old_target_devices is not None:
+                huggingface_wrapper.target_devices = old_target_devices
 
             if hasattr(huggingface_wrapper, "model"):
                 huggingface_wrapper.model.to("cpu")

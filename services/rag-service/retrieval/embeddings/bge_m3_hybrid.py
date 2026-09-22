@@ -21,7 +21,7 @@ class BGE_M3_HybridEmbedding:
         self.model = BGEM3FlagModel(
             'BAAI/bge-m3',
             use_fp16=False,
-            device=self.device
+            devices=self.device
         )
         self.dim = 1024
 
