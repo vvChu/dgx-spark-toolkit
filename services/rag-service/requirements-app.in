@@ -1,5 +1,18 @@
 # Application Layer Dependencies for RAG Service
-# Excludes hardware-bound packages (torch, torchvision, torchaudio, vllm, cuda kernels) pre-baked in base image.
+# Excludes hardware-bound packages (torch, torchvision, torchaudio, vllm, triton, transformers, tokenizers, nvidia-*, cuda-*) pre-baked in base image.
+# Recompile command:
+#   uv pip compile services/rag-service/requirements-app.in \
+#     --no-emit-package torch --no-emit-package torchvision --no-emit-package torchaudio \
+#     --no-emit-package vllm --no-emit-package triton \
+#     --no-emit-package transformers --no-emit-package tokenizers \
+#     --no-emit-package huggingface-hub --no-emit-package safetensors \
+#     --no-emit-package cuda-bindings --no-emit-package cuda-pathfinder --no-emit-package cuda-toolkit \
+#     --no-emit-package nvidia-cublas --no-emit-package nvidia-cuda-cupti --no-emit-package nvidia-cuda-nvrtc \
+#     --no-emit-package nvidia-cuda-runtime --no-emit-package nvidia-cudnn-cu13 --no-emit-package nvidia-cufft \
+#     --no-emit-package nvidia-cufile --no-emit-package nvidia-curand --no-emit-package nvidia-cusolver \
+#     --no-emit-package nvidia-cusparse --no-emit-package nvidia-cusparselt-cu13 --no-emit-package nvidia-nccl-cu13 \
+#     --no-emit-package nvidia-nvjitlink --no-emit-package nvidia-nvshmem-cu13 --no-emit-package nvidia-nvtx \
+#     -o services/rag-service/requirements-app.lock
 
 # ── Tier B: Database Clients (Khớp với docker-compose.yml) ──
 pymilvus>=2.6.0,<2.7.0
