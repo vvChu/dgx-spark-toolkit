@@ -35,6 +35,7 @@ echo "ℹ️ Phiên bản hiện tại: $CURRENT_VERSION -> Nâng cấp lên: $T
 
 # 3. Lấy tên Volume động của Open WebUI
 VOLUME_NAME=$(docker inspect open-webui --format '{{range .Mounts}}{{if eq .Destination "/app/backend/data"}}{{.Name}}{{end}}{{end}}' 2>/dev/null || echo "dgx-spark-toolkit_open-webui_data")
+[ -z "$VOLUME_NAME" ] && VOLUME_NAME="dgx-spark-toolkit_open-webui_data"
 echo "ℹ️ Volume lưu trữ state: $VOLUME_NAME"
 
 echo "=== [2/6] Tạo bản sao lưu Snapshot toàn diện (WAL-Safe) ==="
@@ -55,7 +56,8 @@ dst.close()
 src.close()
 "
 
-# Đóng gói Snapshot DB + vector_db + uploads
+# Đóng gói Snapshot DB + vector_db + uploads (đảm bảo thư mục tồn tại để tránh lỗi tar)
+docker exec open-webui mkdir -p /app/backend/data/vector_db /app/backend/data/uploads
 docker exec open-webui tar -czf /app/backend/data/state_backup.tar.gz \
     -C /app/backend/data webui_snapshot.tmp vector_db uploads
 docker cp open-webui:/app/backend/data/state_backup.tar.gz "$BACKUP_TAR"

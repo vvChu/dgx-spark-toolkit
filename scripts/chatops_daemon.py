@@ -1326,6 +1326,9 @@ async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Opti
 
     reply_markup = {"inline_keyboard": inline_keyboard} if inline_keyboard else None
     msg_id = await send_telegram_msg(ADMIN_USER_ID, msg_text, reply_markup=reply_markup)
+    if not msg_id:
+        append_audit_log("notify_event", title, {"severity": severity, "error": "telegram_send_failed"}, ADMIN_USER_ID, "FAILED", 0, 0)
+        raise HTTPException(status_code=502, detail="Failed to dispatch message to Telegram")
     append_audit_log("notify_event", title, {"severity": severity, "actions": len(actions)}, ADMIN_USER_ID, "SENT", 0, 0)
 
     return {"status": "dispatched", "telegram_message_id": msg_id}

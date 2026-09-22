@@ -3,7 +3,7 @@ version: "1.0"
 commands:
   - id: "system.status"
     slash: "/status"
-    description: "Kiểm tra tình trạng CPU, RAM, NVMe và 6 containers cốt lõi"
+    description: "Kiểm tra tình trạng CPU, RAM, NVMe và 8 containers cốt lõi"
     risk_tier: "READ_ONLY"
     service_lock: null
     runner: "internal"

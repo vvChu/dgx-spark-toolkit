@@ -426,3 +426,126 @@ def test_check_openwebui_versions():
             assert info["has_update"]
 
     asyncio.run(_test())
+
+
+def test_internal_notify_telegram_failure_returns_502(monkeypatch):
+    """Verify /api/v1/notify returns 502 and records FAILED in audit when Telegram dispatch fails."""
+    client = TestClient(daemon.app, client=("127.0.0.1", 50000))
+    monkeypatch.setattr(daemon, "CHATOPS_INTERNAL_SECRET", "dgx_test_secret_123")
+
+    with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+         patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+        mock_send.return_value = None  # Telegram delivery failed
+        res = client.post(
+            "/api/v1/notify",
+            json={"title": "Test Delivery Failure", "body": "Alert Content"},
+            headers={"X-ChatOps-Secret": "dgx_test_secret_123"},
+        )
+        assert res.status_code == 502
+        assert "Failed to dispatch message to Telegram" in res.json()["detail"]
+        mock_audit.assert_called_once()
+        assert mock_audit.call_args[0][4] == "FAILED"
+
+
+def test_watchdog_notify_chatops_success(monkeypatch):
+    """Verify watchdog notify_chatops dispatches with proper secret header and payload."""
+    import scripts.smart_watchdog as sw
+
+    monkeypatch.setattr(sw, "CHATOPS_GATEWAY_URL", "http://127.0.0.1:8095")
+    monkeypatch.setattr(sw, "CHATOPS_INTERNAL_SECRET", "test_watchdog_secret")
+
+    with patch("requests.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_post.return_value = mock_resp
+
+        actions = [{"label": "Restart", "command": "system.container.restart"}]
+        result = sw.notify_chatops("Test Title", "Test Body", actions=actions, severity="WARNING")
+
+        assert result is True
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+        assert args[0] == "http://127.0.0.1:8095/api/v1/notify"
+        assert kwargs["headers"]["X-ChatOps-Secret"] == "test_watchdog_secret"
+        assert kwargs["json"]["title"] == "Test Title"
+        assert kwargs["json"]["severity"] == "WARNING"
+        assert len(kwargs["json"]["actions"]) == 1
+
+
+def test_watchdog_notify_chatops_fallback_on_401(monkeypatch):
+    """Verify watchdog falls back to send_telegram_raw when gateway returns 401."""
+    import scripts.smart_watchdog as sw
+
+    monkeypatch.setattr(sw, "CHATOPS_GATEWAY_URL", "http://127.0.0.1:8095")
+    monkeypatch.setattr(sw, "CHATOPS_INTERNAL_SECRET", "wrong_secret")
+
+    with patch("requests.post") as mock_post, \
+         patch("scripts.smart_watchdog.send_telegram_raw") as mock_raw:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.text = "Unauthorized"
+        mock_post.return_value = mock_resp
+        mock_raw.return_value = True
+
+        result = sw.notify_chatops("Test Alert", "Some body")
+
+        assert result is True
+        mock_post.assert_called_once()
+        mock_raw.assert_called_once()
+        assert "Test Alert" in mock_raw.call_args[0][0]
+
+
+def test_watchdog_notify_chatops_fallback_on_network_error(monkeypatch):
+    """Verify watchdog falls back to send_telegram_raw when gateway is unreachable."""
+    import scripts.smart_watchdog as sw
+
+    monkeypatch.setattr(sw, "CHATOPS_GATEWAY_URL", "http://127.0.0.1:8095")
+    monkeypatch.setattr(sw, "CHATOPS_INTERNAL_SECRET", "valid_secret")
+
+    with patch("requests.post", side_effect=Exception("Connection refused")) as mock_post, \
+         patch("scripts.smart_watchdog.send_telegram_raw") as mock_raw:
+        mock_raw.return_value = True
+
+        result = sw.notify_chatops("Net Error", "Gateway Down")
+
+        assert result is True
+        mock_post.assert_called_once()
+        mock_raw.assert_called_once()
+        assert "Net Error" in mock_raw.call_args[0][0]
+
+
+def test_watchdog_notify_chatops_unconfigured_secret(monkeypatch):
+    """Verify watchdog skips HTTP post and directly calls send_telegram_raw if secret is empty."""
+    import scripts.smart_watchdog as sw
+
+    monkeypatch.setattr(sw, "CHATOPS_INTERNAL_SECRET", "")
+
+    with patch("requests.post") as mock_post, \
+         patch("scripts.smart_watchdog.send_telegram_raw") as mock_raw:
+        mock_raw.return_value = True
+
+        result = sw.notify_chatops("No Secret", "Direct telegram only")
+
+        assert result is True
+        mock_post.assert_not_called()
+        mock_raw.assert_called_once()
+
+
+def test_watchdog_core_services_monitoring():
+    """Verify smart_watchdog checks all 7 other core containers."""
+    import inspect
+    import scripts.smart_watchdog as sw
+
+    src = inspect.getsource(sw.check_docker_containers)
+    expected_containers = [
+        "open-webui",
+        "qwen36b",
+        "ai-gateway",
+        "cloudflared-tunnel",
+        "rag-service",
+        "milvus-standalone",
+        "neo4j-graph",
+    ]
+    for c in expected_containers:
+        assert f'"{c}"' in src, f"Expected container {c} to be in check_docker_containers core_services"
+

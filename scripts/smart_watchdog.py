@@ -9,7 +9,10 @@ import os
 import shutil
 import time
 from typing import Any, Dict, List, Optional
-import docker
+try:
+    import docker
+except ImportError:
+    docker = None
 import requests
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -51,22 +54,26 @@ def send_telegram_raw(message: str) -> bool:
 
 def notify_chatops(title: str, body: str, actions: Optional[List[Dict[str, Any]]] = None, severity: str = "INFO") -> bool:
     """Dispatches an interactive event to DGX-ChatOps Gateway with fallback to direct Telegram."""
-    try:
-        payload = {
-            "title": title,
-            "body": body,
-            "severity": severity,
-            "actions": actions or [],
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "X-ChatOps-Secret": CHATOPS_INTERNAL_SECRET,
-        }
-        res = requests.post(f"{CHATOPS_GATEWAY_URL}/api/v1/notify", json=payload, headers=headers, timeout=3)
-        if res.status_code == 200:
-            return True
-    except Exception as e:
-        print(f"[Watchdog -> ChatOps Gateway Error] {e}. Falling back to direct Telegram...", flush=True)
+    if CHATOPS_INTERNAL_SECRET and CHATOPS_GATEWAY_URL:
+        try:
+            payload = {
+                "title": title,
+                "body": body,
+                "severity": severity,
+                "actions": actions or [],
+            }
+            headers = {
+                "Content-Type": "application/json",
+                "X-ChatOps-Secret": CHATOPS_INTERNAL_SECRET,
+            }
+            res = requests.post(f"{CHATOPS_GATEWAY_URL}/api/v1/notify", json=payload, headers=headers, timeout=3)
+            if res.status_code == 200:
+                return True
+            print(f"[Watchdog -> ChatOps Gateway Error] HTTP {res.status_code}: {res.text}. Falling back to direct Telegram...", flush=True)
+        except Exception as e:
+            print(f"[Watchdog -> ChatOps Gateway Error] {e}. Falling back to direct Telegram...", flush=True)
+    else:
+        print("[Watchdog -> ChatOps Gateway] Secret or Gateway URL unconfigured. Falling back to direct Telegram...", flush=True)
 
     # Fallback to direct raw Telegram message
     return send_telegram_raw(f"🔔 *{title}*\n\n{body}")
@@ -104,9 +111,20 @@ def send_telegram_alert(message: str, alert_type: str) -> None:
 
 def check_docker_containers() -> None:
     """Checks the status of core docker containers."""
+    if docker is None:
+        print("Docker Python SDK not installed, skipping container check", flush=True)
+        return
     try:
         client = docker.from_env()
-        core_services = ["ai-gateway", "qwen36b", "milvus-standalone", "rag-service"]
+        core_services = [
+            "open-webui",
+            "qwen36b",
+            "ai-gateway",
+            "cloudflared-tunnel",
+            "rag-service",
+            "milvus-standalone",
+            "neo4j-graph",
+        ]
         for service in core_services:
             try:
                 container = client.containers.get(service)
