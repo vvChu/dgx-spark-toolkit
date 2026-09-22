@@ -333,6 +333,50 @@ def check_and_send_daily_digest() -> None:
             print(f"Sent daily digest for {today_str}", flush=True)
 
 
+# Upstream Release Check Tracking
+LAST_UPSTREAM_CHECK: float = 0.0
+UPSTREAM_CHECK_INTERVAL: float = 6 * 3600  # Scan every 6 hours
+
+
+def check_openwebui_updates() -> None:
+    """Checks for new Open WebUI releases safely without quota burnout."""
+    global LAST_UPSTREAM_CHECK
+    now = time.time()
+    if now - LAST_UPSTREAM_CHECK < UPSTREAM_CHECK_INTERVAL:
+        return
+    LAST_UPSTREAM_CHECK = now
+
+    try:
+        cur_res = requests.get("http://open-webui:8080/api/version", timeout=5)
+        if cur_res.status_code != 200:
+            return
+        cur_ver = cur_res.json().get("version", "unknown").lstrip("v")
+
+        gh_res = requests.get(
+            "https://api.github.com/repos/open-webui/open-webui/releases/latest",
+            headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "DGX-Spark-Watchdog"},
+            timeout=10,
+        )
+        if gh_res.status_code == 200:
+            rel = gh_res.json()
+            latest_tag = rel.get("tag_name", "").lstrip("v")
+            html_url = rel.get("html_url", "https://github.com/open-webui/open-webui/releases")
+            pub_date = rel.get("published_at", "")[:10]
+
+            if latest_tag and latest_tag != cur_ver:
+                msg = (
+                    f"🚀 *CÓ BẢN CẬP NHẬT MỚI: Open WebUI v{latest_tag}* 🚀\n\n"
+                    f"• Phiên bản đang chạy: `v{cur_ver}`\n"
+                    f"• Phiên bản mới nhất: `v{latest_tag}` ({pub_date})\n"
+                    f"• Xem chi tiết: [GitHub Release Notes]({html_url})\n\n"
+                    f"💡 *Nâng cấp an toàn 1-click (Zero Data Loss & Auto-Rollback):*\n"
+                    f"`bash scripts/update-openwebui.sh v{latest_tag}`"
+                )
+                send_telegram_alert(msg, f"openwebui_update_{latest_tag}")
+    except Exception as e:
+        print(f"Update check error: {e}", flush=True)
+
+
 def run_watchdog_cycle() -> None:
     """Executes a single check cycle for all monitored components."""
     check_docker_containers()
@@ -341,6 +385,7 @@ def run_watchdog_cycle() -> None:
     check_antigravity_tools()
     check_quota_pool()
     check_and_send_daily_digest()
+    check_openwebui_updates()
 
 
 def main() -> None:
