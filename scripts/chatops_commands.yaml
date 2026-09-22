@@ -1,0 +1,46 @@
+version: "1.0"
+
+commands:
+  - id: "system.status"
+    slash: "/status"
+    description: "Kiểm tra tình trạng CPU, RAM, NVMe và 8 containers cốt lõi"
+    risk_tier: "READ_ONLY"
+    service_lock: null
+    runner: "internal"
+
+  - id: "host.gpu"
+    slash: "/gpu"
+    description: "Truy vấn nhiệt độ, xung nhịp và bộ nhớ GPU Blackwell GB10"
+    risk_tier: "READ_ONLY"
+    service_lock: null
+    runner: "internal"
+
+  - id: "system.openwebui.upgrade"
+    slash: "/upgrade_owu"
+    description: "Nâng cấp Open WebUI an toàn (Zero Data Loss & Auto-Rollback)"
+    risk_tier: "MUTATING_OPS"
+    service_lock: "open-webui"
+    is_heavy_op: true
+    timeout_seconds: 300
+    runner: "host_script"
+    target: "bash scripts/update-openwebui.sh {target_version}"
+    param_rules:
+      target_version: "^v[0-9]+\\.[0-9]+(\\.[0-9]+)?$"
+
+  - id: "system.container.restart"
+    slash: "/restart"
+    description: "Khởi động lại một container bị treo"
+    risk_tier: "SAFE_OPS"
+    service_lock: "{service}"
+    timeout_seconds: 60
+    runner: "docker_cli"
+    target: "docker restart {service}"
+    param_rules:
+      service: "^(open-webui|qwen36b|ai-gateway|smart-watchdog|cloudflared-tunnel|rag-service|milvus-standalone|neo4j-graph)$"
+
+  - id: "rag.ingestion.state"
+    slash: "/rag_state"
+    description: "Kiểm tra tiến độ hàng đợi RAG Ingestion"
+    risk_tier: "READ_ONLY"
+    service_lock: null
+    runner: "internal"

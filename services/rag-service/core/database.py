@@ -271,14 +271,17 @@ async def get_compliance_service(
 
 async def get_chat_service(
     request: Request,
-    milvus_repo: MilvusRepository = Depends(get_milvus_repo),
-    neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
+    search_pipeline=Depends(get_search_pipeline),
     http_client: httpx.AsyncClient = Depends(get_http_client),
 ) -> "ChatService":
     """Dependency to inject the ChatService with Context Lake services."""
     from services.chat_service import ChatService
+    from core.ai_gateway_client import get_ai_gateway_client
+    ai_client = get_ai_gateway_client(http_client)
     return ChatService(
-        milvus_repo, neo4j_repo, http_client,
+        search_pipeline=search_pipeline,
+        http_client=http_client,
+        ai_client=ai_client,
         session_memory=getattr(request.app.state, "session_memory", None),
         trace_store=getattr(request.app.state, "trace_store", None),
         context_accumulator=getattr(request.app.state, "context_accumulator", None),

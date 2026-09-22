@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import asyncio
 import logging
 import os
 import traceback
@@ -145,22 +146,32 @@ async def pipeline_health(request: Request):
     """Health check for the ingestion pipeline subsystems (Redis queue, DB, state)."""
     checks = {}
 
-    # Redis Queue (singleton from lifespan)
-    rq = getattr(request.app.state, "redis_queue", None)
-    if rq:
+    # Ingestion Queue (deep seam from lifespan)
+    iq = getattr(request.app.state, "ingestion_queue", None)
+    if iq and hasattr(iq, "health_check"):
         try:
-            checks["redis_queue"] = rq.health_check()
+            checks["redis_queue"] = iq.health_check()
         except Exception as e:
             checks["redis_queue"] = {"status": "unavailable", "error": str(e)}
     else:
-        checks["redis_queue"] = {"status": "unavailable", "error": "not initialized"}
+        rq = getattr(request.app.state, "redis_queue", None)
+        if rq:
+            try:
+                checks["redis_queue"] = rq.health_check()
+            except Exception as e:
+                checks["redis_queue"] = {"status": "unavailable", "error": str(e)}
+        else:
+            checks["redis_queue"] = {"status": "unavailable", "error": "not initialized"}
 
     # Async PostgreSQL (singleton from lifespan)
     asm = getattr(request.app.state, "async_state_manager", None)
     if asm:
         try:
-            checks["async_db"] = await asm.health_check()
-            checks["async_db_summary"] = await asm.get_status_summary()
+            hc = asm.health_check()
+            checks["async_db"] = await hc if asyncio.iscoroutine(hc) else hc
+
+            summ = asm.get_status_summary()
+            checks["async_db_summary"] = await summ if asyncio.iscoroutine(summ) else summ
         except Exception as e:
             checks["async_db"] = {"status": "unavailable", "error": str(e)}
     else:

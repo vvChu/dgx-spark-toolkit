@@ -4,6 +4,22 @@ Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật 
 
 ---
 
+## [2026-09-22] [learn/ops] | Dynamic Version Gate, Audit Chaining & Infrastructure Manager Expansion
+
+- **Nhiệm vụ**: Chuẩn hóa và ban hành các quy tắc kỹ thuật, tri thức phiên làm việc và kỹ năng quản lý hạ tầng theo đề xuất học tập đã phê duyệt (`learning_proposal.md`).
+- **Thành phần**:
+  - Ban hành Rules 13 - 17 trong `.agents/rules/codebase-engineering-rules.md`: Dynamic Version Gate, Audit Chain Continuity & Test Isolation, WAL-Safe SQLite Backup & Alpine Rollback, Zombie Process Elimination, NVIDIA Blackwell GB10 Unified Memory SMI Query.
+  - Bổ sung `RULE-1.9`, `RULE-1.10`, `RULE-5.6`, `RULE-5.7` (High-Density) vào `.md/knowledge/session_learnings.md`, đảm bảo nghiêm ngặt ngân sách bộ nhớ $\le 10.0$ KB (ADR-0030/ADR-0057).
+  - Nâng cấp kỹ năng `.agents/skills/infrastructure-manager/` (`SKILL.md` và `TOOL_REGISTRY.md`): Tích hợp dịch vụ `dgx-chatops` (:8095), Open WebUI (:3001), kịch bản `update-openwebui.sh`, `chatops_daemon.py` và 5 lệnh Telegram.
+- **Xác thực**:
+  - Cú pháp YAML: `scripts/chatops_commands.yaml` & `SKILL.md` frontmatter 100% hợp lệ.
+  - Unit test: `.venv/bin/pytest tests/test_chatops.py` (20/20 passed).
+  - Shift-left cleanliness: `check_spoke_cleanliness.py` & `check_hub_import_depth.py` 100% PASS.
+  - CCBA Harness: `.venv/bin/python -m ccba_harness verify-patch --preset doc` 100% PASS trên `session_learnings.md` và `log.md`.
+  - Ngân sách bộ nhớ: `wc -c < .md/knowledge/session_learnings.md` $\le 10240$ bytes.
+
+---
+
 ## [2026-09-20] [ops/monitoring] | Smart Watchdog Telegram Integration & Daily Digest
 
 - **Nhiệm vụ**: Tích hợp giám sát thời gian thực cho Antigravity Tools (:8045), Quota Pool và Báo cáo hoạt động định kỳ (Daily Digest) kèm thông số phần cứng DGX Spark và Top Models qua Telegram bot `@RAG_Ingestion_Bot`.

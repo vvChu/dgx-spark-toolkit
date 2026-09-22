@@ -77,3 +77,4 @@ tests/*.pdf
 .md/scratch/
 .md/backups/
 scratch/
+backups/

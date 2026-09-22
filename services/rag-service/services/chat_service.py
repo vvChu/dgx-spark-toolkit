@@ -25,22 +25,29 @@ class ChatService:
 
     def __init__(
         self,
-        milvus_repo: MilvusRepository,
-        neo4j_repo: Neo4jRepository,
-        http_client: httpx.AsyncClient,
+        milvus_repo: MilvusRepository | None = None,
+        neo4j_repo: Neo4jRepository | None = None,
+        http_client: httpx.AsyncClient | None = None,
         session_memory=None,
         trace_store=None,
         context_accumulator=None,
         ai_client: AIGatewayClient | None = None,
+        search_pipeline: SearchPipeline | None = None,
     ):
         self.milvus_repo = milvus_repo
         self.neo4j_repo = neo4j_repo
         self.http_client = http_client
-        self.retrieval_service = SearchPipeline(milvus_repo, neo4j_repo)
+        self.ai_client = ai_client or (get_ai_gateway_client(http_client) if http_client else get_ai_gateway_client())
+        if search_pipeline is not None:
+            self.retrieval_service = search_pipeline
+        elif milvus_repo is not None and neo4j_repo is not None:
+            self.retrieval_service = SearchPipeline(milvus_repo, neo4j_repo, ai_client=self.ai_client)
+        else:
+            self.retrieval_service = None
+        self.search_pipeline = self.retrieval_service
         self.session_memory = session_memory
         self.trace_store = trace_store
         self.context_accumulator = context_accumulator
-        self.ai_client = ai_client or get_ai_gateway_client(http_client)
 
     async def generate_response(
         self,

@@ -8,8 +8,11 @@ import datetime
 import os
 import shutil
 import time
-from typing import Dict, Optional
-import docker
+from typing import Any, Dict, List, Optional
+try:
+    import docker
+except ImportError:
+    docker = None
 import requests
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -24,8 +27,13 @@ last_alert_time: Dict[str, float] = {}
 last_digest_date: Optional[str] = None
 
 
+# ChatOps Gateway Integration
+CHATOPS_GATEWAY_URL = os.environ.get("CHATOPS_GATEWAY_URL", "http://172.21.0.1:8095")
+CHATOPS_INTERNAL_SECRET = os.environ.get("CHATOPS_INTERNAL_SECRET", "").strip()
+
+
 def send_telegram_raw(message: str) -> bool:
-    """Sends a raw markdown-formatted message to Telegram."""
+    """Sends a raw markdown-formatted message to Telegram directly."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Missing Telegram Credentials!", flush=True)
         return False
@@ -44,25 +52,79 @@ def send_telegram_raw(message: str) -> bool:
         return False
 
 
+def notify_chatops(title: str, body: str, actions: Optional[List[Dict[str, Any]]] = None, severity: str = "INFO") -> bool:
+    """Dispatches an interactive event to DGX-ChatOps Gateway with fallback to direct Telegram."""
+    if CHATOPS_INTERNAL_SECRET and CHATOPS_GATEWAY_URL:
+        try:
+            payload = {
+                "title": title,
+                "body": body,
+                "severity": severity,
+                "actions": actions or [],
+            }
+            headers = {
+                "Content-Type": "application/json",
+                "X-ChatOps-Secret": CHATOPS_INTERNAL_SECRET,
+            }
+            res = requests.post(f"{CHATOPS_GATEWAY_URL}/api/v1/notify", json=payload, headers=headers, timeout=3)
+            if res.status_code == 200:
+                return True
+            print(f"[Watchdog -> ChatOps Gateway Error] HTTP {res.status_code}: {res.text}. Falling back to direct Telegram...", flush=True)
+        except Exception as e:
+            print(f"[Watchdog -> ChatOps Gateway Error] {e}. Falling back to direct Telegram...", flush=True)
+    else:
+        print("[Watchdog -> ChatOps Gateway] Secret or Gateway URL unconfigured. Falling back to direct Telegram...", flush=True)
+
+    # Fallback to direct raw Telegram message
+    return send_telegram_raw(f"🔔 *{title}*\n\n{body}")
+
+
 def send_telegram_alert(message: str, alert_type: str) -> None:
-    """Sends an incident alert with cooldown protection."""
-    global last_alert_time
+    """Sends an incident alert with cooldown protection and interactive action buttons."""
     now = time.time()
     if alert_type in last_alert_time:
         if now - last_alert_time[alert_type] < COOLDOWN_MINUTES * 60:
             return  # Cooldown active
 
-    text = f"🚨 **CẢNH BÁO TỪ SMART WATCHDOG** 🚨\n\n{message}"
-    if send_telegram_raw(text):
+    actions: List[Dict[str, Any]] = []
+    if "container_down_" in alert_type:
+        svc = alert_type.replace("container_down_", "")
+        actions.append({
+            "action_id": f"restart_{svc}",
+            "label": f"🔄 Khởi Động Lại {svc}",
+            "command": "system.container.restart",
+            "params": {"service": svc},
+        })
+    elif alert_type == "vllm_deadlock":
+        actions.append({
+            "action_id": "restart_qwen36b",
+            "label": "🔄 Khởi Động Lại vLLM (Qwen 35B)",
+            "command": "system.container.restart",
+            "params": {"service": "qwen36b"},
+        })
+
+    title = "CẢNH BÁO SỰ CỐ TỪ SMART WATCHDOG"
+    if notify_chatops(title, message, actions=actions, severity="WARNING"):
         last_alert_time[alert_type] = now
         print(f"Sent alert for: {alert_type}", flush=True)
 
 
 def check_docker_containers() -> None:
     """Checks the status of core docker containers."""
+    if docker is None:
+        print("Docker Python SDK not installed, skipping container check", flush=True)
+        return
     try:
         client = docker.from_env()
-        core_services = ["ai-gateway", "qwen36b", "milvus-standalone", "rag-service"]
+        core_services = [
+            "open-webui",
+            "qwen36b",
+            "ai-gateway",
+            "cloudflared-tunnel",
+            "rag-service",
+            "milvus-standalone",
+            "neo4j-graph",
+        ]
         for service in core_services:
             try:
                 container = client.containers.get(service)
@@ -333,6 +395,58 @@ def check_and_send_daily_digest() -> None:
             print(f"Sent daily digest for {today_str}", flush=True)
 
 
+# Upstream Release Check Tracking
+LAST_UPSTREAM_CHECK: float = 0.0
+UPSTREAM_CHECK_INTERVAL: float = 6 * 3600  # Scan every 6 hours
+
+
+def check_openwebui_updates() -> None:
+    """Checks for new Open WebUI releases safely without quota burnout."""
+    global LAST_UPSTREAM_CHECK
+    now = time.time()
+    if now - LAST_UPSTREAM_CHECK < UPSTREAM_CHECK_INTERVAL:
+        return
+    LAST_UPSTREAM_CHECK = now
+
+    try:
+        cur_res = requests.get("http://open-webui:8080/api/version", timeout=5)
+        if cur_res.status_code != 200:
+            return
+        cur_ver = cur_res.json().get("version", "unknown").lstrip("v")
+
+        gh_res = requests.get(
+            "https://api.github.com/repos/open-webui/open-webui/releases/latest",
+            headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "DGX-Spark-Watchdog"},
+            timeout=10,
+        )
+        if gh_res.status_code == 200:
+            rel = gh_res.json()
+            latest_tag = rel.get("tag_name", "").lstrip("v")
+            html_url = rel.get("html_url", "https://github.com/open-webui/open-webui/releases")
+            pub_date = rel.get("published_at", "")[:10]
+
+            if latest_tag and latest_tag != cur_ver:
+                title = f"CÓ BẢN CẬP NHẬT MỚI: Open WebUI v{latest_tag}"
+                body = (
+                    f"• Phiên bản đang chạy: `v{cur_ver}`\n"
+                    f"• Phiên bản mới nhất: `v{latest_tag}` ({pub_date})\n"
+                    f"• Xem chi tiết: [GitHub Release Notes]({html_url})\n\n"
+                    f"💡 *Nâng cấp an toàn (Zero Data Loss & Auto-Rollback)*"
+                )
+                actions = [
+                    {
+                        "action_id": f"upg_{latest_tag}",
+                        "label": f"🚀 Nâng Cấp v{latest_tag} Ngay",
+                        "command": "system.openwebui.upgrade",
+                        "params": {"target_version": f"v{latest_tag}"},
+                        "ttl_seconds": 86400,
+                    }
+                ]
+                notify_chatops(title, body, actions=actions, severity="WARNING")
+    except Exception as e:
+        print(f"Update check error: {e}", flush=True)
+
+
 def run_watchdog_cycle() -> None:
     """Executes a single check cycle for all monitored components."""
     check_docker_containers()
@@ -341,6 +455,7 @@ def run_watchdog_cycle() -> None:
     check_antigravity_tools()
     check_quota_pool()
     check_and_send_daily_digest()
+    check_openwebui_updates()
 
 
 def main() -> None:

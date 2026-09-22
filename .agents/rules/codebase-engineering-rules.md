@@ -51,3 +51,24 @@ Tài liệu lưu trữ các quy tắc kỹ thuật cố định được rút ra
 ## 12. Kiểm tra Trạng thái Liveness cho LiteLLM Proxy Container
 - **Quy tắc**: Khi kiểm tra trạng thái sống (liveness/health) của container LiteLLM Proxy (`:8090`), **BẮT BUỘC** dùng endpoint `GET /health/liveliness` (hoặc `GET /health/readiness`), tuyệt đối **CẤM** dùng `GET /health`.
 - **Chi tiết**: Endpoint `GET /health` của LiteLLM mặc định kích hoạt kiểm tra đồng thời tất cả các model deployment backend (hơn 100 models), gây độ trễ hàng phút hoặc timeout. Khi proxy bật bảo mật master key, request phải kèm header `Authorization: Bearer $LITELLM_MASTER_KEY` (lấy từ `.env` gốc).
+
+## 13. Chốt Chặn So Khớp Phiên Bản Động Trước Khi Gợi Ý Nâng Cấp (Dynamic Version Gate)
+- **Quy tắc**: Khi thiết kế các công cụ tự động hóa, ChatOps, hoặc CLI có tính năng nâng cấp dịch vụ/container (như Open WebUI, vLLM, RAG), **BẮT BUỘC** thực hiện so khớp phiên bản ngữ nghĩa (`packaging.version.parse`) giữa phiên bản đang chạy (`current_version`) và phiên bản upstream mới nhất (`latest_version`).
+- **Chi tiết**: Chỉ hiển thị menu hoặc nút xác nhận nâng cấp khi `latest_version > current_version`. Nếu `current == latest`, phải hiển thị thông báo dịch vụ đã ở bản mới nhất kèm tùy chọn cứu hộ/cài đặt lại (`reinstall`), tuyệt đối KHÔNG hiển thị hộp thoại nâng cấp lên chính phiên bản đang chạy gây thao tác thừa. Trường hợp không truy vấn được upstream (mất mạng/rate-limit), phải thông báo rõ trạng thái `unknown` và yêu cầu người dùng chỉ định rõ phiên bản qua tham số CLI thay vì tự động đoán định.
+
+## 14. Bảo Toàn Chuỗi Băm Audit Trail & Cô Lập Kiểm Thử (Audit Chain Continuity & Test Isolation)
+- **Quy tắc**: Khi ứng dụng cơ chế nhật ký kiểm toán băm nối tiếp (Chained SHA-256) cho các daemon vận hành dài hạn, lúc khởi động daemon **BẮT BUỘC** nạp lại mã băm bản ghi hợp lệ cuối cùng từ tệp disk (`load_last_audit_hash`), tuyệt đối không khởi tạo lại `prev_hash = "0"*64` làm đứt gãy tính liên tục của chuỗi kiểm toán (Audit Chain Fork).
+- **Chi tiết**: Khi viết unit test, các test kiểm tra luồng nghiệp vụ khác của daemon phải mock hàm ghi đĩa (`patch("scripts.chatops_daemon.append_audit_log")`) để không làm ô nhiễm log production và không gây lệch hash in-memory; riêng các test kiểm tra chính tính năng băm nối tiếp và khôi phục chuỗi kiểm toán **BẮT BUỘC** chuyển hướng đường dẫn `AUDIT_FILE` sang tệp tạm thời cô lập (`tmp_path / "audit.jsonl"`).
+
+## 15. Sao Lưu An Toàn Chuẩn WAL & Rollback Xác Định Cho SQLite Container (WAL-Safe Backup & Alpine Rollback)
+- **Quy tắc**: Khi sao lưu hoặc nâng cấp các container chạy SQLite ở chế độ Write-Ahead Logging (WAL) như Open WebUI, tuyệt đối không sao chép tệp `webui.db` thô khi dịch vụ đang chạy. Bắt buộc kích hoạt API sao lưu trực tuyến (`sqlite3.backup()`) bên trong container đang chạy để gom sạch các giao dịch từ `-wal` và `-shm` vào tệp snapshot đồng nhất trước khi nén tarball (bao gồm cả thư mục `vector_db` và `uploads`).
+- **Chi tiết**: Quy trình rollback khẩn cấp khi container phiên bản mới gặp sự cố migration hoặc timeout healthcheck phải dùng container phụ trợ độc lập (như `alpine:latest`) mount trực tiếp volume dữ liệu để giải nén snapshot và **bắt buộc xóa sạch các tệp lock `-wal`, `-shm` cũ** trước khi khởi động lại container phiên bản trước đó.
+
+## 16. Triệt Tiêu Tiến Trình Zombie & Bảo Vệ Process Group Khi Ngắt Subprocess
+- **Quy tắc**: Trong các daemon điều phối bất đồng bộ (`asyncio`), mọi subprocess chạy ngầm qua `asyncio.create_subprocess_shell` hoặc `asyncio.create_subprocess_exec` **BẮT BUỘC** phải được khởi tạo với cờ `start_new_session=True` để tạo process group độc lập. Khi xử lý ngoại lệ Timeout hoặc Cancelled, sau khi gửi tín hiệu `signal.SIGKILL` tới process group (`os.killpg(os.getpgid(proc.pid), signal.SIGKILL)`), **BẮT BUỘC** phải bọc `await asyncio.wait_for(proc.wait(), timeout=3.0)`.
+- **Chi tiết**: Cờ `start_new_session=True` ngăn ngừa việc `os.killpg` tiêu diệt nhầm chính daemon cha hoặc test runner. Lệnh bọc `proc.wait()` có timeout giải phóng tiến trình con khỏi trạng thái `<defunct>` (zombie) trong bảng tiến trình Linux mà không làm treo vòng lặp sự kiện nếu tiến trình bị kẹt trong trạng thái D-state (Uninterruptible Sleep).
+
+## 17. Truy Vấn Bộ Nhớ GPU Trên Kiến Trúc NVIDIA GB10 Blackwell Unified Memory
+- **Quy tắc**: Trên kiến trúc bộ nhớ hợp nhất (Unified Memory) như NVIDIA Grace Blackwell GB10 (128GB LPDDR5X), lệnh truy vấn `nvidia-smi --query-gpu=memory.total,memory.used` trả về `[N/A]`. Các script giám sát, watchdog hoặc daemon chẩn đoán hệ thống tuyệt đối không dựa vào `query-gpu` để tính toán tỷ lệ tiêu thụ VRAM.
+- **Chi tiết**: Bắt buộc truy vấn qua `nvidia-smi --query-compute-apps=process_name,used_memory --format=csv,noheader`, bóc tách dung lượng của từng tiến trình tính toán (như `VLLM::EngineCore`, `speaches`), tính tổng sử dụng thực tế và gán nhãn tường minh `X GiB / 128.0 GiB (Unified Memory)`.
+
