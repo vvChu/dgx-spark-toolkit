@@ -368,3 +368,59 @@ def test_dispatch_command_callback_handling():
                 mock_answer.assert_called_with("cq_test_2", "❌ Lỗi tham số service!", show_alert=True)
 
     asyncio.run(_test())
+
+
+def test_is_newer_version():
+    """Verify version comparison logic."""
+    assert not daemon.is_newer_version("0.11.4", "0.11.4")
+    assert not daemon.is_newer_version("0.11.3", "0.11.4")
+    assert daemon.is_newer_version("0.11.5", "0.11.4")
+    assert daemon.is_newer_version("0.12.0", "0.11.4")
+    assert daemon.is_newer_version("1.0.0", "0.11.4")
+    assert not daemon.is_newer_version("unknown", "0.11.4")
+    assert not daemon.is_newer_version("0.11.4", "unknown")
+
+
+def test_check_openwebui_versions():
+    """Verify check_openwebui_versions detects updates correctly."""
+    async def _test():
+        # Scenario 1: Already at latest version
+        mock_client = AsyncMock()
+        mock_res_local = MagicMock()
+        mock_res_local.status_code = 200
+        mock_res_local.json.return_value = {"version": "0.11.4"}
+
+        mock_res_gh = MagicMock()
+        mock_res_gh.status_code = 200
+        mock_res_gh.json.return_value = {
+            "tag_name": "v0.11.4",
+            "published_at": "2026-09-21T00:00:00Z",
+            "html_url": "https://github.com/open-webui/open-webui/releases/tag/v0.11.4",
+        }
+
+        mock_client.get = AsyncMock(side_effect=[mock_res_local, mock_res_gh])
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client):
+            info = await daemon.check_openwebui_versions()
+            assert info["current_version"] == "0.11.4"
+            assert info["latest_version"] == "0.11.4"
+            assert not info["has_update"]
+
+        # Scenario 2: Newer version available on GitHub
+        mock_res_gh_newer = MagicMock()
+        mock_res_gh_newer.status_code = 200
+        mock_res_gh_newer.json.return_value = {
+            "tag_name": "v0.11.5",
+            "published_at": "2026-09-22T00:00:00Z",
+            "html_url": "https://github.com/open-webui/open-webui/releases/tag/v0.11.5",
+        }
+
+        mock_client.get = AsyncMock(side_effect=[mock_res_local, mock_res_gh_newer])
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client):
+            info = await daemon.check_openwebui_versions()
+            assert info["current_version"] == "0.11.4"
+            assert info["latest_version"] == "0.11.5"
+            assert info["has_update"]
+
+    asyncio.run(_test())

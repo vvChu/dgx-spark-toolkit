@@ -543,7 +543,7 @@ def get_main_dashboard_markup() -> Dict[str, Any]:
             ],
             [
                 {"text": "🔄 Khởi Động Lại Service", "callback_data": "menu:restart_list"},
-                {"text": "📦 Nâng Cấp Open WebUI", "callback_data": "menu:upgrade_owu"},
+                {"text": "📦 Cập Nhật Open WebUI", "callback_data": "menu:upgrade_owu"},
             ],
             [
                 {"text": "📄 Hàng Đợi RAG Ingestion", "callback_data": "menu:rag_state"},
@@ -640,6 +640,60 @@ async def probe_rag_state() -> str:
 
     lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
     return "\n".join(lines)
+
+
+def is_newer_version(latest: str, current: str) -> bool:
+    """Returns True if latest version is strictly newer than current version."""
+    if not latest or not current or latest == "unknown" or current == "unknown":
+        return False
+    try:
+        from packaging import version as pkg_version
+        return pkg_version.parse(latest) > pkg_version.parse(current)
+    except Exception:
+        p_latest = tuple(map(int, re.findall(r"\d+", latest)))
+        p_current = tuple(map(int, re.findall(r"\d+", current)))
+        return p_latest > p_current
+
+
+async def check_openwebui_versions() -> Dict[str, Any]:
+    """Checks current local running Open WebUI version and upstream GitHub release."""
+    client = get_http_client()
+    cur_ver = "unknown"
+    latest_ver = "unknown"
+    pub_date = ""
+    html_url = "https://github.com/open-webui/open-webui/releases"
+
+    # 1. Query local instance on host port 3001
+    try:
+        res = await client.get("http://127.0.0.1:3001/api/version", timeout=4.0)
+        if res.status_code == 200:
+            cur_ver = str(res.json().get("version", "")).lstrip("v").strip()
+    except Exception as e:
+        print(f"[Version Check] Failed to query local Open WebUI: {e}", flush=True)
+
+    # 2. Query GitHub latest release
+    try:
+        gh_res = await client.get(
+            "https://api.github.com/repos/open-webui/open-webui/releases/latest",
+            headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "DGX-Spark-ChatOps"},
+            timeout=8.0,
+        )
+        if gh_res.status_code == 200:
+            rel = gh_res.json()
+            latest_ver = str(rel.get("tag_name", "")).lstrip("v").strip()
+            pub_date = str(rel.get("published_at", ""))[:10]
+            html_url = str(rel.get("html_url", html_url))
+    except Exception as e:
+        print(f"[Version Check] Failed to query GitHub releases: {e}", flush=True)
+
+    has_update = is_newer_version(latest_ver, cur_ver)
+    return {
+        "current_version": cur_ver,
+        "latest_version": latest_ver,
+        "has_update": has_update,
+        "published_at": pub_date,
+        "release_url": html_url,
+    }
 
 
 async def dispatch_command(
@@ -815,29 +869,76 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             await dispatch_command("system.container.restart", {"service": svc}, chat_id, message_id, title=f"Khởi động lại {svc}", cq_id=cq_id)
             return
         elif data == "menu:upgrade_owu":
-            await answer_callback(cq_id)
-            prompt = (
-                "⚠️ *XÁC NHẬN NÂNG CẤP OPEN WEBUI*\n"
-                "• Lệnh sẽ chạy: `bash scripts/update-openwebui.sh v0.11.4`\n"
-                "• Snapshot database tự động, an toàn 100% (Zero Data Loss).\n"
-                "• Thời gian gián đoạn dự kiến: ~30s.\n\n"
-                "Bạn có chắc chắn muốn thực thi ngay bây giờ?"
+            await answer_callback(cq_id, "Đang kiểm tra phiên bản...")
+            await edit_telegram_msg(
+                chat_id,
+                message_id,
+                "⏳ *Đang kiểm tra phiên bản Open WebUI trên server và GitHub...*\nVui lòng đợi trong giây lát...",
             )
-            nonce = hashlib.sha256(f"upg_owu_{time.time()}".encode()).hexdigest()[:8]
-            action_cache[nonce] = {
-                "command": "system.openwebui.upgrade",
-                "params": {"target_version": "v0.11.4"},
-                "title": "Nâng cấp Open WebUI lên v0.11.4",
-                "timeout": 300,
-                "expires": time.time() + 60,
-            }
-            markup = {
-                "inline_keyboard": [
-                    [{"text": "✅ XÁC NHẬN NÂNG CẤP", "callback_data": f"act:{nonce}"}],
-                    [{"text": "❌ HỦY BỎ", "callback_data": "menu:main"}],
-                ]
-            }
-            await edit_telegram_msg(chat_id, message_id, prompt, reply_markup=markup)
+            info = await check_openwebui_versions()
+            cur_ver = info["current_version"]
+            latest_ver = info["latest_version"]
+            has_update = info["has_update"]
+
+            if has_update:
+                prompt = (
+                    f"🚀 *PHÁT HIỆN BẢN CẬP NHẬT MỚI CHO OPEN WEBUI!*\n\n"
+                    f"• Phiên bản đang chạy: `v{cur_ver}`\n"
+                    f"• Phiên bản mới nhất: `v{latest_ver}` ({info['published_at']})\n"
+                    f"• Xem chi tiết: [GitHub Release Notes]({info['release_url']})\n\n"
+                    f"💡 *Kế hoạch nâng cấp:*\n"
+                    f"• Lệnh sẽ chạy: `bash scripts/update-openwebui.sh v{latest_ver}`\n"
+                    f"• Tự động sao lưu database SQLite (Zero Data Loss).\n"
+                    f"• Tự động rollback nếu container mới khởi động lỗi.\n"
+                    f"• Thời gian gián đoạn dự kiến: ~30s.\n\n"
+                    f"Bạn có chắc chắn muốn thực thi nâng cấp ngay bây giờ?"
+                )
+                nonce = hashlib.sha256(f"upg_owu_{time.time()}_{latest_ver}".encode()).hexdigest()[:8]
+                action_cache[nonce] = {
+                    "command": "system.openwebui.upgrade",
+                    "params": {"target_version": f"v{latest_ver}"},
+                    "title": f"Nâng cấp Open WebUI lên v{latest_ver}",
+                    "timeout": 300,
+                    "expires": time.time() + 60,
+                }
+                markup = {
+                    "inline_keyboard": [
+                        [{"text": f"🚀 XÁC NHẬN NÂNG CẤP (v{latest_ver})", "callback_data": f"act:{nonce}"}],
+                        [{"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"}],
+                    ]
+                }
+                await edit_telegram_msg(chat_id, message_id, prompt, reply_markup=markup)
+            elif cur_ver != "unknown":
+                up_to_date_msg = (
+                    f"✅ *OPEN WEBUI ĐÃ Ở PHIÊN BẢN MỚI NHẤT!*\n\n"
+                    f"• Phiên bản đang chạy: `v{cur_ver}`\n"
+                    f"• Phiên bản trên GitHub: `v{latest_ver}`\n"
+                    f"• Trạng thái: Hệ thống đang vận hành phiên bản mới nhất, không cần cập nhật."
+                )
+                reinstall_nonce = hashlib.sha256(f"reinstall_owu_{time.time()}".encode()).hexdigest()[:8]
+                action_cache[reinstall_nonce] = {
+                    "command": "system.openwebui.upgrade",
+                    "params": {"target_version": f"v{cur_ver}"},
+                    "title": f"Cài đặt lại Open WebUI v{cur_ver}",
+                    "timeout": 300,
+                    "expires": time.time() + 60,
+                }
+                markup = {
+                    "inline_keyboard": [
+                        [{"text": f"🔄 Cài Đặt Lại v{cur_ver} (Reinstall)", "callback_data": f"act:{reinstall_nonce}"}],
+                        [{"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"}],
+                    ]
+                }
+                await edit_telegram_msg(chat_id, message_id, up_to_date_msg, reply_markup=markup)
+            else:
+                err_msg = (
+                    f"⚠️ *KHÔNG THỂ KIỂM TRA PHIÊN BẢN TỰ ĐỘNG*\n\n"
+                    f"• Phiên bản local: `{cur_ver}`\n"
+                    f"• Phiên bản GitHub: `{latest_ver}`\n\n"
+                    f"Bạn có thể chỉ định phiên bản nâng cấp thủ công bằng lệnh:\n"
+                    f"`/upgrade_owu <version>` (ví dụ: `/upgrade_owu v0.11.4`)"
+                )
+                await edit_telegram_msg(chat_id, message_id, err_msg, reply_markup=get_main_dashboard_markup())
             return
         elif data == "menu:help":
             await answer_callback(cq_id)
@@ -946,10 +1047,61 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
         # 6. /upgrade_owu [version]
         if text.startswith("/upgrade_owu"):
             parts = text.split(maxsplit=1)
-            ver = parts[1].strip() if len(parts) > 1 else "v0.11.4"
-            sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị nâng cấp Open WebUI lên {ver}...")
-            if sent_id:
-                await dispatch_command("system.openwebui.upgrade", {"target_version": ver}, chat_id, sent_id, title=f"Nâng cấp Open WebUI lên {ver}")
+            if len(parts) > 1:
+                ver = parts[1].strip()
+                sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị nâng cấp Open WebUI lên {ver}...")
+                if sent_id:
+                    await dispatch_command(
+                        "system.openwebui.upgrade",
+                        {"target_version": ver},
+                        chat_id,
+                        sent_id,
+                        title=f"Nâng cấp Open WebUI lên {ver}",
+                    )
+            else:
+                sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra phiên bản Open WebUI trên server và GitHub...")
+                info = await check_openwebui_versions()
+                cur_ver = info["current_version"]
+                latest_ver = info["latest_version"]
+                has_update = info["has_update"]
+
+                if has_update and sent_id:
+                    prompt = (
+                        f"🚀 *PHÁT HIỆN BẢN CẬP NHẬT MỚI CHO OPEN WEBUI!*\n\n"
+                        f"• Phiên bản đang chạy: `v{cur_ver}`\n"
+                        f"• Phiên bản mới nhất: `v{latest_ver}` ({info['published_at']})\n\n"
+                        f"Bạn có muốn nâng cấp lên `v{latest_ver}` ngay bây giờ?"
+                    )
+                    nonce = hashlib.sha256(f"upg_owu_{time.time()}_{latest_ver}".encode()).hexdigest()[:8]
+                    action_cache[nonce] = {
+                        "command": "system.openwebui.upgrade",
+                        "params": {"target_version": f"v{latest_ver}"},
+                        "title": f"Nâng cấp Open WebUI lên v{latest_ver}",
+                        "timeout": 300,
+                        "expires": time.time() + 60,
+                    }
+                    markup = {
+                        "inline_keyboard": [
+                            [{"text": f"🚀 XÁC NHẬN NÂNG CẤP (v{latest_ver})", "callback_data": f"act:{nonce}"}],
+                            [{"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"}],
+                        ]
+                    }
+                    await edit_telegram_msg(chat_id, sent_id, prompt, reply_markup=markup)
+                elif cur_ver != "unknown" and sent_id:
+                    await edit_telegram_msg(
+                        chat_id,
+                        sent_id,
+                        f"✅ *Open WebUI đã ở phiên bản mới nhất (`v{cur_ver}`). Không cần nâng cấp!*\n\n"
+                        f"Nếu muốn cài đặt lại bản hiện tại, gõ: `/upgrade_owu v{cur_ver}`",
+                        reply_markup=get_main_dashboard_markup(),
+                    )
+                elif sent_id:
+                    await edit_telegram_msg(
+                        chat_id,
+                        sent_id,
+                        "⚠️ Không thể kiểm tra phiên bản tự động. Vui lòng chỉ định: `/upgrade_owu <version>`",
+                        reply_markup=get_main_dashboard_markup(),
+                    )
             return
 
         # 7. /exec <PIN> <command>
