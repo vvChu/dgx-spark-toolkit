@@ -32,7 +32,7 @@ jobs:
       - name: Run unit tests
         env:
           NEO4J_PASSWORD: ci_test_placeholder_safe
-          LITELLM_MASTER_KEY: sk-ci-test-placeholder-safe
+          LITELLM_MASTER_KEY: ci-test-placeholder-safe-key-123
         run: python -m pytest tests/ -v --timeout=60 --cov=. --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage report
@@ -83,3 +83,27 @@ jobs:
 
       - name: Lint RAG service
         run: flake8 services/rag-service/ --config=services/rag-service/.flake8 --count --show-source --statistics
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Backend pip-audit
+        run: uvx pip-audit -r services/rag-service/requirements-ci.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: services/frontend/package-lock.json
+
+      - name: Frontend npm audit
+        working-directory: services/frontend
+        run: npm audit --omit=dev --audit-level=critical
+
