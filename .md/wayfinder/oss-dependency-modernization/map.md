@@ -51,8 +51,8 @@ Thiết lập một hệ thống quản lý, kiểm tra định kỳ và cập n
 
 ## 5. Sương mù chiến trận / Chưa xác định rõ (Not yet specified)
 - **FOG-01 (Kế hoạch Nâng cấp Milvus 3.0 & Neo4j 6.x)**: Server container `milvusdb/milvus:v2.6.14` đang ổn định. Khi có nhu cầu nâng lên 3.0.x (cải tiến sparse index), sẽ cần ticket nghiên cứu quy trình sao lưu metadata trên `etcd`/MinIO và migrate dữ liệu.
-- **FOG-02 (Kế hoạch Đưa Reranker/Embedding lên GPU Blackwell)**: Hiện tại container RAG đang chạy CPU mode (`FORCE_CPU_RERANKER=1`) để dành trọn VRAM cho `vllm-35b`. Khi VRAM scheduler hỗ trợ dynamic paging, sẽ đánh giá lại việc offload sang GPU.
-- **FOG-03 (Internal Mirroring cho Base Docker Image)**: Image `hellohal2064/vllm-qwen3.5-gb10:blackwell-sm121` đang kéo từ Docker Hub công cộng. Cần kế hoạch sao lưu bản image này về private registry nội bộ để phòng ngừa rủi ro tài khoản bị xóa.
+- **FOG-02 (Giải pháp Tách Worker Cô lập Surya-OCR & Pillow 10.4.0)**: Đã ban hành bản thiết kế kiến trúc tại [blueprints/BLUEPRINT-01-ocr-worker-isolation.md](blueprints/BLUEPRINT-01-ocr-worker-isolation.md) giúp giải phóng RAG service lên `pillow>=12.1.1` (sạch 100% 33 CVEs).
+- **FOG-03 (Internal Mirroring cho Base Docker Image)**: Đã hoàn tất sao lưu và gắn thẻ cục bộ `dgx-spark-local/vllm-qwen3.5-gb10:blackwell-sm121` (26.4GB, ID: `534e6a9333e9`) trên Docker daemon máy chủ DGX Spark để phòng chống rủi ro downstream image bị xóa.
 
 ---
 
