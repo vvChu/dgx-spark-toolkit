@@ -16,8 +16,8 @@ os.environ.setdefault("NEO4J_PASSWORD", "ci_test_placeholder_safe")
 os.environ.setdefault("LITELLM_MASTER_KEY", "sk-ci-test-placeholder-safe")
 os.environ.setdefault("ADMIN_SECRET", "test-admin-key-for-ci")
 
-# Stub the heavy embedding module before importing main.py.  This keeps tests
-# independent from optional model/runtime package compatibility issues.
+# Stub the heavy embedding module and sentence_transformers before importing main.py.
+# This keeps unit tests hermetic and allows CI runners to execute without heavy torch/models.
 _fake_embedding_module = types.ModuleType("retrieval.embeddings.bge_m3_hybrid")
 
 
@@ -31,6 +31,25 @@ class _FakeEmbeddingModel:
 
 _fake_embedding_module.BGE_M3_HybridEmbedding = _FakeEmbeddingModel
 sys.modules.setdefault("retrieval.embeddings.bge_m3_hybrid", _fake_embedding_module)
+
+if "sentence_transformers" not in sys.modules:
+    _fake_st_module = types.ModuleType("sentence_transformers")
+
+    class _FakeCrossEncoder:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def predict(self, *args, **kwargs):
+            return [0.5]
+
+    _fake_st_module.CrossEncoder = _FakeCrossEncoder
+    _fake_st_module.SentenceTransformer = _FakeEmbeddingModel
+    sys.modules.setdefault("sentence_transformers", _fake_st_module)
+
+if "FlagEmbedding" not in sys.modules:
+    _fake_fe_module = types.ModuleType("FlagEmbedding")
+    _fake_fe_module.BGEM3FlagModel = _FakeEmbeddingModel
+    sys.modules.setdefault("FlagEmbedding", _fake_fe_module)
 
 import pytest
 from starlette.testclient import TestClient

@@ -78,3 +78,11 @@ tests/*.pdf
 .md/backups/
 scratch/
 backups/
+
+# Hub auto-generated editable links & Spoke Leakage Guard (ADR 0045)
+requirements-hub.txt
+.md/teach/
+.md/data/telemetry_summary.json
+.md/data/*.json
+.tmp/
+.out-of-scope/

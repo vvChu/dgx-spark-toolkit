@@ -17,11 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-nogui \
     && rm -rf /var/lib/apt/lists/*
 
-# Install application dependencies
-COPY requirements.txt .
-# Filter out torch from requirements as it's already in the base image (vLLM version)
-RUN grep -v "torch" requirements.txt > requirements_no_torch.txt && \
-    pip3 install --no-cache-dir -r requirements_no_torch.txt
+# Install application dependencies via deterministic lockfile
+COPY requirements-app.lock ./
+RUN pip3 install --no-cache-dir --no-deps -r requirements-app.lock
 
 # Copy application code
 COPY . .

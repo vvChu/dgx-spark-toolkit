@@ -60,3 +60,15 @@ class TestPreviewEndpoint:
             mock_s.return_value = MagicMock(PDF_DIR="/nonexistent")
             resp = client.get("/preview?source=missing_doc&page=1")
             assert resp.status_code == 404
+
+    def test_pdf_source_dir_override(self, client):
+        with tempfile.TemporaryDirectory() as d:
+            pdf = os.path.join(d, "doc_env.pdf")
+            open(pdf, "w").close()
+            with patch.dict(os.environ, {"PDF_SOURCE_DIR": d}):
+                with patch("api.routers.preview.get_settings") as mock_s:
+                    mock_s.return_value = MagicMock(PDF_DIR="/nonexistent")
+                    resp = client.get("/preview?source=doc_env&page=1")
+                    # 500 render error on 0-byte file verifies 404 was bypassed and file was found
+                    assert resp.status_code == 500
+                    assert "Render error" in resp.json()["detail"]

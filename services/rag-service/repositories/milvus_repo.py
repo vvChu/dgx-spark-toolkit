@@ -164,3 +164,35 @@ class MilvusRepository:
         """Return collection statistics (row_count, etc.) without exposing the raw client."""
         target = collection or self.collection_name
         return await self.client.get_collection_stats(target)
+
+    async def ensure_collection_schema(self) -> bool:
+        """Ensure the legal chunks collection exists with valid schema and is loaded."""
+        try:
+            has_col = await self.client.has_collection(self.collection_name)
+            if has_col:
+                await self.client.load_collection(self.collection_name)
+                logger.info(f"Milvus collection '{self.collection_name}' loaded successfully.")
+                return True
+
+            await self.client.create_collection(
+                collection_name=self.collection_name,
+                dimension=1024,
+                primary_field_name="id",
+                id_type="int",
+                vector_field_name="vector",
+                metric_type="COSINE",
+                auto_id=True,
+            )
+            logger.info(f"Created and loaded Milvus collection '{self.collection_name}'.")
+            return True
+        except Exception as e:
+            logger.warning(f"Could not setup Milvus collection: {e}")
+            return False
+
+    async def close(self) -> None:
+        """Safely close underlying Milvus client."""
+        if self.client:
+            try:
+                await self.client.close()
+            except Exception as e:
+                logger.debug(f"Error closing Milvus client: {e}")

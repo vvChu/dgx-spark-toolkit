@@ -24,6 +24,7 @@ _BOILERPLATE_EXACT = [
 _BOILERPLATE_UPPER = [s.upper() for s in _BOILERPLATE_EXACT]
 
 _BOILERPLATE_REGEX = [
+    re.compile(r'(?i)^\s*Độc\s+lập\s*[-–—]\s*Tự\s+do\s*[-–—]\s*Hạnh\s+phúc\s*$'),
     re.compile(r'(?i)^\s*Số\s*:\s*\d+.*$'),
     re.compile(r'(?i)^\s*V/v\s*:.*$'),
     re.compile(r'(?i)^\s*(?:Hà Nội|Đà Nẵng|TP\.?\s*Hồ Chí Minh|Thành phố\s+\w+),?\s*ngày.*$'),
@@ -197,3 +198,109 @@ def strip_template_dots(text: str) -> str:
     text = re.sub(r'(?:\.\s*){20,}', '', text)
     text = re.sub(r'(?:\.\s){10,}', '', text)
     return text
+
+
+# ---------------------------------------------------------------------------
+# Vision LLM Random Emoji Stripping
+# ---------------------------------------------------------------------------
+
+_INJECTED_EMOJIS = [
+    '\U0001f30b',  # 🌋
+    '\U0001f525',  # 🔥
+    '\U0001f4a5',  # 💥
+    '\u26a1',      # ⚡
+    '\U0001f30a',  # 🌊
+    '\U0001f3af',  # 🎯
+    '\U0001f680',  # 🚀
+    '\U0001f389',  # 🎉
+    '\U0001f3c6',  # 🏆
+    '\U0001f31f',  # 🌟
+    '\U0001f48e',  # 💎
+    '\U0001f3ae',  # 🎮
+    '\u2b50',      # ⭐
+]
+
+
+def strip_random_emojis(text: str) -> str:
+    """Remove random emojis injected by Vision LLM as OCR artifacts."""
+    if not text:
+        return text
+    for emoji in _INJECTED_EMOJIS:
+        text = text.replace(emoji, '')
+    return text
+
+
+# ---------------------------------------------------------------------------
+# AI Monologue and Reasoning Trace Stripping
+# ---------------------------------------------------------------------------
+
+_AI_PATTERNS_VN = [
+    # Introductory/conversational phrases
+    r"(?i)(?:^|\n)\s*Dưới đây là[^.]*[.:]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Xin lỗi[^.]*[.!]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Tôi xin[^.]*[.:]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Theo yêu cầu[^.]*[.:]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Nội dung chính[^.]*[.:]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Bảng dưới đây[^.]*[.:]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Tôi đã[^.]*[.:]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Tôi sẽ[^.]*[.:]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Tóm tắt[^.]*[.:]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Như bạn[^.]*[.:]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Chào bạn[^.]*[.!]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Dạ,[^.]*[.!]?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Vâng,[^.]*[.!]?\s*(?:\n|$)",
+    # Instruction echo patterns
+    r"(?i)(?:^|\n)\s*Trích xuất TOÀN BỘ[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*TUYỆT ĐỐI KHÔNG[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*KHÔNG mô tả font[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*giữ nguyên thứ tự[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*KHÔNG thêm bất kỳ[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Chỉ trả về nội dung[^\n]*(?:\n|$)",
+    # Summary leakage
+    r"(?i)(?:^|\n)\s*Nội dung đã chỉnh sửa:?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Tóm tắt văn bản:?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Here is the corrected text:?\s*(?:\n|$)",
+]
+
+_AI_PATTERNS_EN = [
+    r"(?i)(?:^|\n)\s*Certainly[,!]?\s+(?:here|I|let)[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*I'll\s[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*As an AI[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Here is[^\n]*:\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Here's[^\n]*:\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*I cannot[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*I would[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*I will[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*I need to[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Let me[^\n]*(?:\n|$)",
+    # LLM reasoning traces
+    r"(?i)(?:^|\n)\s*Thinking Process:?[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Analysis:?\s*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*\*\*Plan:\*\*[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*\*\*Structure:[^\n]*\*\*[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*\*\*OCR Text:\*\*[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*\*\*Reconstruct the[^\n]*\*\*[^\n]*(?:\n|$)",
+    r"(?i)(?:^|\n)\s*Based on the visual (?:content|input)[^\n]*(?:\n|$)",
+]
+
+_AI_COMPILED = [re.compile(p) for p in _AI_PATTERNS_VN + _AI_PATTERNS_EN]
+
+
+def strip_ai_monologue(text: str) -> str:
+    """Strip AI monologue phrases, <think> blocks, and reasoning traces from text."""
+    if not text:
+        return text
+
+    # Strip think / thought blocks first
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<thought>.*?</thought>', '', text, flags=re.DOTALL)
+    text = re.sub(r'</think>', '', text)
+    text = re.sub(r'</thought>', '', text)
+
+    for pat in _AI_COMPILED:
+        text = pat.sub("\n", text)
+
+    # Collapse excessive blank lines and trim whitespace
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+

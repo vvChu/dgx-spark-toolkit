@@ -13,10 +13,65 @@ class Neo4jRepository:
     def __init__(self, driver: AsyncDriver):
         self._driver = driver
 
+    async def init_schema(self) -> None:
+        """Initialize Neo4j schema constraints and indexes for Document nodes."""
+        query_constraint = "CREATE CONSTRAINT IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE"
+        query_index = "CREATE INDEX IF NOT EXISTS FOR (d:Document) ON (d.doc_number)"
+        try:
+            async with self._driver.session() as session:
+                await session.run(query_constraint)
+                await session.run(query_index)
+            logger.info("Neo4j schema constraints and indexes initialized successfully.")
+        except Exception as e:
+            logger.warning(f"Neo4j schema initialization skipped: {e}")
+
     @property
     def driver(self) -> AsyncDriver:
-        """Expose the underlying driver for components that need direct access."""
+        """Underlying Neo4j driver connection. Provided for internal graph timeline traversal."""
         return self._driver
+
+    async def close(self) -> None:
+        """Safely close underlying Neo4j driver."""
+        if self._driver:
+            try:
+                await self._driver.close()
+            except Exception as e:
+                logger.debug(f"Error closing Neo4j driver: {e}")
+
+    async def get_legal_timeline(self, doc_number: str, max_hops: int = 10) -> list[dict]:
+        """Iterative Cypher traversal to retrieve legal timeline for a document node."""
+        if not doc_number or not self._driver:
+            return []
+
+        query = """
+        MATCH (start:Document)
+        USING INDEX start:Document(doc_number)
+        WHERE start.doc_number = $doc_number OR start.id = $doc_number
+        MATCH path = (start)-[:AMENDS|REPLACES|REFERENCES*0..10]->(current)
+        WITH path, current
+        ORDER BY length(path) DESC
+        LIMIT 1
+        RETURN
+            [i in range(0, length(path)) | {
+                doc_number: nodes(path)[i].doc_number,
+                id: nodes(path)[i].id,
+                effective_date: coalesce(nodes(path)[i].effective_date, nodes(path)[i].date, 'unknown'),
+                status: coalesce(nodes(path)[i].status, 'UNKNOWN'),
+                relation_to_next: CASE
+                    WHEN i < length(path) THEN type(relationships(path)[i])
+                    ELSE null
+                END
+            }] AS timeline
+        """
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(query, doc_number=doc_number)
+                record = await result.single()
+                if record and "timeline" in record:
+                    return record["timeline"]
+        except Exception as e:
+            logger.error(f"Failed to retrieve legal timeline for {doc_number}: {e}")
+        return []
 
     async def get_document_relations(self, doc_id: str):
         query = """

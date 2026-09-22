@@ -4,14 +4,20 @@ from models.schemas import SyncStatusRequest, SyncStatusResponse
 from core.config import get_settings
 from core.database import get_document_store
 from repositories.document_store import DocumentStore
-from services.lifecycle_service import LifecycleService
+from ingestion.exporter import DataExporter
 
 import asyncio
+import datetime
 import logging
-import subprocess
-import sys
+import os
+
+from scripts.comprehensive_audit import run_comprehensive_audit
 
 logger = logging.getLogger(__name__)
+
+# In-memory lock for pipeline operations (single-process uvicorn worker).
+# For multi-worker deployments (workers > 1), replace with Redis distributed lock.
+_pipeline_lock = asyncio.Lock()
 
 
 async def verify_admin_key(x_admin_key: str = Header(..., alias="X-Admin-Key")):
@@ -29,27 +35,26 @@ router = APIRouter(
 )
 
 
-def _run_subprocess(cmd: list[str], timeout: int = 300) -> str:
-    """Run a subprocess synchronously (called via asyncio.to_thread)."""
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout, cwd="/app",
-    )
-    return result.stdout + result.stderr
-
-
 # ── Admin Script Endpoints ──────────────────────────────────────────────
 @router.get("/audit", response_class=PlainTextResponse)
 async def run_audit():
-    """Run comprehensive_audit.py and return raw output."""
+    """Run comprehensive audit in-process and return formatted report."""
     try:
-        output = await asyncio.to_thread(
-            _run_subprocess,
-            [sys.executable, "/app/scripts/comprehensive_audit.py"],
-            300,
+        settings = get_settings()
+        pdf_source_dir = os.environ.get("PDF_SOURCE_DIR", "/app/data/legal_docs_source")
+        output = await asyncio.wait_for(
+            asyncio.to_thread(
+                run_comprehensive_audit,
+                json_dir=f"{settings.EXPORT_DIR}/json",
+                md_dir=f"{settings.EXPORT_DIR}/markdown",
+                pdf_dir=pdf_source_dir,
+            ),
+            timeout=60.0,
         )
         return output
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Audit timed out (>300s)")
+    except asyncio.TimeoutError:
+        logger.error("Audit execution timed out after 60s")
+        raise HTTPException(status_code=504, detail="Audit timed out after 60s")
     except Exception:
         logger.error("Audit execution failed", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal error running audit")
@@ -57,19 +62,32 @@ async def run_audit():
 
 @router.get("/pipeline/{action}", response_class=PlainTextResponse)
 async def run_pipeline(action: str):
-    """Run export_postprocessor.py with --apply, --revert, or --dry-run."""
+    """Run export postprocessor in-process with apply, revert, or dry-run."""
     if action not in ("apply", "revert", "dry-run"):
         raise HTTPException(status_code=400, detail="action must be: apply, revert, dry-run")
-    try:
-        output = await asyncio.to_thread(
-            _run_subprocess,
-            [sys.executable, "/app/export_postprocessor.py", f"--{action}"],
-            120,
+    if _pipeline_lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail="A pipeline operation is already in progress. Please wait until it completes.",
         )
-        return output
-    except Exception:
-        logger.error("Pipeline execution failed", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal error running pipeline")
+    async with _pipeline_lock:
+        try:
+            settings = get_settings()
+            exporter = DataExporter(settings.EXPORT_DIR)
+            stats = await asyncio.to_thread(exporter.reprocess_exports, action)
+            action_verb = "Would fix" if action == "dry-run" else ("Reverted" if action == "revert" else "Fixed")
+            output = (
+                f"Action: {action}\n"
+                f"{action_verb} {stats.get('md_changed', 0)}/{stats.get('md_total', 0)} markdown files\n"
+                f"{action_verb} {stats.get('json_changed', 0)}/{stats.get('json_total', 0)} JSON files\n"
+                f"Summary: {stats}\n"
+            )
+            return output
+        except HTTPException:
+            raise
+        except Exception:
+            logger.error("Pipeline execution failed", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal error running pipeline")
 
 
 @router.post("/sync-status", response_model=SyncStatusResponse)
@@ -79,8 +97,7 @@ async def sync_document_status(
 ):
     """Cascading update of document validity status across all data stores."""
     try:
-        service = LifecycleService(document_store=document_store)
-        result = await service.sync_document_status(request.doc_id, request.new_status)
+        result = await document_store.sync_status(doc_id=request.doc_id, new_status=request.new_status)
 
         if result["status"] == "partial_success":
             return JSONResponse(status_code=207, content=result)
@@ -96,8 +113,6 @@ async def sync_document_status(
 @router.get("/quota-status")
 async def get_quota_status():
     """Retrieve real-time Google AI Studio Free Tier model quotas & Redis tracking status."""
-    import os
-    import datetime
     try:
         import redis
         redis_url = os.environ.get("REDIS_URL", "redis://litellm-redis:6379/1")

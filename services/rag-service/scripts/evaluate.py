@@ -5,7 +5,7 @@ Usage inside Docker:
     python3 evaluate.py
 
 Or from host:
-    cd /home/vvc/Codebase/dgx-spark-toolkit
+    cd path/to/dgx-spark-toolkit
     docker compose exec rag-service python3 evaluate.py
 
 Output: JSON with overall_score, per-dimension scores, P1-P6 status.

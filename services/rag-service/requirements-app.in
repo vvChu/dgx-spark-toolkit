@@ -1,0 +1,37 @@
+# Application Layer Dependencies for RAG Service
+# Excludes hardware-bound packages (torch, torchvision, torchaudio, vllm, cuda kernels) pre-baked in base image.
+
+# ── Tier B: Database Clients (Khớp với docker-compose.yml) ──
+pymilvus>=2.6.0,<2.7.0
+neo4j>=5.23.0,<5.27.0
+redis>=5.0.0,<6.0.0
+sqlalchemy>=2.0.0,<3.0.0
+psycopg2-binary>=2.9.0,<3.0.0
+asyncpg>=0.29.0,<1.0.0
+
+# ── Tier A: Document Extraction & Text Parsing ──
+pymupdf>=1.24.0,<2.0.0
+pdfplumber>=0.11.0,<1.0.0
+surya-ocr==0.17.1
+pillow<11.0.0
+opencv-python-headless>=4.8.0,<5.0.0
+python-docx>=1.1.0,<2.0.0
+openpyxl>=3.1.0,<4.0.0
+watchdog>=3.0.0,<5.0.0
+
+# ── Tier A: ML/NLP Helper Libraries ──
+FlagEmbedding>=1.2.0,<1.4.0
+sentence-transformers>=3.0.0,<6.0.0
+langchain>=0.3.0,<0.4.0
+langchain-community>=0.3.0,<0.4.0
+
+# ── Tier A: Web Framework & Utilities ──
+fastapi>=0.100.0,<1.0.0
+uvicorn>=0.30.0,<1.0.0
+httpx>=0.27.0,<1.0.0
+pydantic-settings>=2.0.0,<3.0.0
+prometheus-fastapi-instrumentator>=6.0.0,<8.0.0
+prometheus_client>=0.20.0,<1.0.0
+python-dotenv>=1.0.0,<2.0.0
+tqdm>=4.65.0,<5.0.0
+numpy>=1.24.0,<3.0.0

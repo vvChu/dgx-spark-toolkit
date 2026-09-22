@@ -37,7 +37,7 @@ class AdvancedGraphRAG:
         """
         Iterative Cypher traversal to retrieve the chain of amendments, replacements, and references.
         """
-        if not doc_number:
+        if not doc_number or not self._driver:
             return []
 
         query = """

@@ -2,7 +2,8 @@ import os
 import requests
 import json
 
-env_path = "/home/vvc/Codebase/dgx-spark-toolkit/.env"
+project_root = os.environ.get("WORKSPACE_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+env_path = os.environ.get("ENV_FILE") or os.path.join(project_root, ".env")
 proxy_url = "http://100.79.241.120:8045/v1"
 proxy_key = "sk-9a13a60d641a42f9a74b18d58d44a358"
 

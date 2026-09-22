@@ -25,7 +25,13 @@ async def preview_page(
         raise HTTPException(status_code=400, detail="Invalid document ID")
 
     settings = get_settings()
-    pdf_dir = settings.PDF_DIR
+    pdf_source_dir = os.environ.get("PDF_SOURCE_DIR")
+    if pdf_source_dir and os.path.isdir(pdf_source_dir):
+        pdf_dir = pdf_source_dir
+    elif os.path.isdir("/app/data/legal_docs_source"):
+        pdf_dir = "/app/data/legal_docs_source"
+    else:
+        pdf_dir = settings.PDF_DIR
 
     pdf_path = _resolve_pdf(source, pdf_dir)
     if not pdf_path:

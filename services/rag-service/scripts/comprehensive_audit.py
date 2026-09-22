@@ -15,8 +15,12 @@ import json
 import glob
 import statistics
 import hashlib
+import io
+import threading
+import contextlib
 from collections import Counter
 from pathlib import Path
+from typing import Optional
 
 # ── Config ──────────────────────────────────────────────────────────────────
 EXPORT_JSON_DIR = os.environ.get("EXPORT_JSON_DIR", "/app/exports/json")
@@ -24,6 +28,7 @@ EXPORT_MD_DIR = os.environ.get("EXPORT_MD_DIR", "/app/exports/markdown")
 PDF_SOURCE_DIR = os.environ.get("PDF_SOURCE_DIR", "/app/data/legal_docs_source")
 MILVUS_SAMPLE_LIMIT = int(os.environ.get("MILVUS_SAMPLE_LIMIT", "2000"))
 
+_audit_lock = threading.Lock()
 SEPARATOR = "=" * 70
 
 
@@ -394,7 +399,8 @@ def audit_chunking(json_files):
 # ═════════════════════════════════════════════════════════════════════════════
 # DIM D — MILVUS / INGESTION QUALITY
 # ═════════════════════════════════════════════════════════════════════════════
-def audit_milvus():
+def audit_milvus(sample_limit: Optional[int] = None):
+    limit = sample_limit or MILVUS_SAMPLE_LIMIT
     print_section("DIMENSION D: MILVUS INGESTION QUALITY")
 
     try:
@@ -404,29 +410,36 @@ def audit_milvus():
         print("  ⚠  pymilvus or core.config not available, checking via JSON exports only")
         return -1
 
+    client = None
     try:
         s = get_settings()
         connections.connect(host=s.MILVUS_HOST, port=str(s.MILVUS_PORT))
         col = Collection(s.MILVUS_COLLECTION)
         col.load()
         client = MilvusClient(uri=f"http://{s.MILVUS_HOST}:{s.MILVUS_PORT}")
+
+        total = col.num_entities
+        print(f"  Total entities in collection: {total:,}")
+
+        # Sample parents
+        res = client.query(
+            collection_name=s.MILVUS_COLLECTION,
+            filter='chunk_type == "parent"',
+            output_fields=[
+                "text", "source", "page", "doc_type", "source_category",
+                "is_table", "synthetic_queries", "doc_number", "doc_id",
+            ],
+            limit=limit,
+        )
     except Exception as e:
         print(f"  ⚠  Cannot connect to Milvus: {e}")
         return -1
-
-    total = col.num_entities
-    print(f"  Total entities in collection: {total:,}")
-
-    # Sample parents
-    res = client.query(
-        collection_name=s.MILVUS_COLLECTION,
-        filter='chunk_type == "parent"',
-        output_fields=[
-            "text", "source", "page", "doc_type", "source_category",
-            "is_table", "synthetic_queries", "doc_number", "doc_id",
-        ],
-        limit=MILVUS_SAMPLE_LIMIT,
-    )
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
     n = len(res)
     print(f"  Sampled {n:,} parent chunks from Milvus\n")
 
@@ -545,7 +558,10 @@ def audit_fidelity(json_files, pdf_source_dir):
                 pdf_count += 1
 
     exported = len(json_files)
-    coverage = exported / max(pdf_count, 1)
+    if pdf_count == 0:
+        coverage = 0.0
+    else:
+        coverage = exported / pdf_count
     flag_cov = "✅" if coverage >= 0.9 else ("🟡" if coverage >= 0.5 else "🔴")
     print(f"  {flag_cov} Source PDFs found      : {pdf_count:,}")
     print(f"     Exported documents    : {exported}")
@@ -634,54 +650,76 @@ def audit_fidelity(json_files, pdf_source_dir):
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
+def run_comprehensive_audit(
+    json_dir: Optional[str] = None,
+    md_dir: Optional[str] = None,
+    pdf_dir: Optional[str] = None,
+    sample_limit: Optional[int] = None,
+) -> str:
+    """Run all 5 audit dimensions in-process and return the formatted text report.
+
+    Thread-safe stdout redirection without touching sys.stderr.
+    """
+    buf = io.StringIO()
+    with _audit_lock:
+        with contextlib.redirect_stdout(buf):
+            target_json = json_dir or EXPORT_JSON_DIR
+            target_md = md_dir or EXPORT_MD_DIR
+            target_pdf = pdf_dir or PDF_SOURCE_DIR
+
+            print(f"\n{SEPARATOR}")
+            print("  COMPREHENSIVE RAG QUALITY AUDIT")
+            print(f"  JSON: {target_json}")
+            print(f"  MD:   {target_md}")
+            print(f"  PDFs: {target_pdf}")
+            print(SEPARATOR)
+
+            json_files = sorted(glob.glob(os.path.join(target_json, "*.json")))
+            md_files = sorted(glob.glob(os.path.join(target_md, "*.md")))
+            print(f"\n  Found {len(json_files)} JSON exports, {len(md_files)} Markdown exports")
+
+            scores = {}
+            scores["A_markdown"] = audit_markdown(md_files)
+            scores["B_json"] = audit_json(json_files)
+            scores["C_chunking"] = audit_chunking(json_files)
+            scores["D_milvus"] = audit_milvus(sample_limit=sample_limit)
+            scores["E_fidelity"] = audit_fidelity(json_files, target_pdf)
+
+            # Final Report
+            print(f"\n\n{SEPARATOR}")
+            print("  FINAL QUALITY REPORT")
+            print(SEPARATOR)
+
+            valid_scores = {k: v for k, v in scores.items() if v >= 0}
+            for dim, s in sorted(valid_scores.items()):
+                bar = "█" * (s // 5) + "░" * (20 - s // 5)
+                emoji = "✅" if s >= 85 else ("🟡" if s >= 65 else "🔴")
+                dim_name = {
+                    "A_markdown": "Markdown Quality",
+                    "B_json": "JSON Export Quality",
+                    "C_chunking": "Chunking Quality",
+                    "D_milvus": "Milvus Ingestion",
+                    "E_fidelity": "PDF→MD Fidelity",
+                }.get(dim, dim)
+                print(f"  {emoji} {dim_name:25s} {bar} {s:>3}/100")
+
+            if valid_scores:
+                overall = sum(valid_scores.values()) // len(valid_scores)
+                print(f"\n  {'═' * 50}")
+                overall_emoji = "✅" if overall >= 85 else ("🟡" if overall >= 65 else "🔴")
+                print(f"  {overall_emoji} OVERALL QUALITY SCORE: {overall}/100")
+                print(f"  {'═' * 50}")
+
+            if scores.get("D_milvus", 0) < 0:
+                print("\n  ⚠  Milvus dimension skipped (not available). Run inside Docker for full audit.")
+
+            print()
+
+    return buf.getvalue()
+
+
 def main():
-    print(f"\n{SEPARATOR}")
-    print("  COMPREHENSIVE RAG QUALITY AUDIT")
-    print(f"  JSON: {EXPORT_JSON_DIR}")
-    print(f"  MD:   {EXPORT_MD_DIR}")
-    print(f"  PDFs: {PDF_SOURCE_DIR}")
-    print(SEPARATOR)
-
-    json_files = sorted(glob.glob(os.path.join(EXPORT_JSON_DIR, "*.json")))
-    md_files = sorted(glob.glob(os.path.join(EXPORT_MD_DIR, "*.md")))
-    print(f"\n  Found {len(json_files)} JSON exports, {len(md_files)} Markdown exports")
-
-    scores = {}
-    scores["A_markdown"] = audit_markdown(md_files)
-    scores["B_json"] = audit_json(json_files)
-    scores["C_chunking"] = audit_chunking(json_files)
-    scores["D_milvus"] = audit_milvus()
-    scores["E_fidelity"] = audit_fidelity(json_files, PDF_SOURCE_DIR)
-
-    # Final Report
-    print(f"\n\n{SEPARATOR}")
-    print("  FINAL QUALITY REPORT")
-    print(SEPARATOR)
-
-    valid_scores = {k: v for k, v in scores.items() if v >= 0}
-    for dim, s in sorted(valid_scores.items()):
-        bar = "█" * (s // 5) + "░" * (20 - s // 5)
-        emoji = "✅" if s >= 85 else ("🟡" if s >= 65 else "🔴")
-        dim_name = {
-            "A_markdown": "Markdown Quality",
-            "B_json": "JSON Export Quality",
-            "C_chunking": "Chunking Quality",
-            "D_milvus": "Milvus Ingestion",
-            "E_fidelity": "PDF→MD Fidelity",
-        }.get(dim, dim)
-        print(f"  {emoji} {dim_name:25s} {bar} {s:>3}/100")
-
-    if valid_scores:
-        overall = sum(valid_scores.values()) // len(valid_scores)
-        print(f"\n  {'═' * 50}")
-        overall_emoji = "✅" if overall >= 85 else ("🟡" if overall >= 65 else "🔴")
-        print(f"  {overall_emoji} OVERALL QUALITY SCORE: {overall}/100")
-        print(f"  {'═' * 50}")
-
-    if scores.get("D_milvus", 0) < 0:
-        print("\n  ⚠  Milvus dimension skipped (not available). Run inside Docker for full audit.")
-
-    print()
+    sys.stdout.write(run_comprehensive_audit())
 
 
 if __name__ == "__main__":

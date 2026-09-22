@@ -1,6 +1,11 @@
 """Unit tests for ingestion.exporter — Markdown export quality fixes."""
-import sys
+import json
 import os
+import sys
+from pathlib import Path
+
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ingestion.exporter import DataExporter
@@ -311,6 +316,139 @@ class TestBoilerplateStrip:
         result = DataExporter._strip_content_boilerplate(text)
         assert 'Số: 107' not in result
         assert 'Điều 1' in result
+
+
+class TestReprocessExportsAndDocNumber:
+    """Test DataExporter.reprocess_exports and extract_doc_number_from_path."""
+
+    def test_extract_doc_number_from_path(self):
+        from ingestion.exporter import extract_doc_number_from_path
+
+        assert extract_doc_number_from_path("QCVN_01_2021_BXD.md") == "QCVN 01:2021/BXD"
+        assert extract_doc_number_from_path("/app/exports/json/TT01-2023-BTP.json") == "01/2023/TT-BTP"
+        assert extract_doc_number_from_path("QD08-TTg.json") == "08/QĐ-TTg"
+        assert extract_doc_number_from_path("QD08-2023-TTg.json") == "08/2023/QĐ-TTg"
+        assert extract_doc_number_from_path("ND15-2021-CP.json") == "15/2021/NĐ-CP"
+        assert extract_doc_number_from_path("TT01-2023-TTg.json") == "01/2023/TT-TTg"
+        assert extract_doc_number_from_path("/app/exports/json/TT01-2023-BTP.json.bak") == "01/2023/TT-BTP"
+        assert extract_doc_number_from_path("random_notes.md") is None
+        assert extract_doc_number_from_path("") is None
+
+    def test_reprocess_exports_invalid_action(self):
+        import pytest
+        exporter = DataExporter("/tmp/test_exports_nonexistent")
+        with pytest.raises(ValueError, match="Invalid action"):
+            exporter.reprocess_exports(action="bad_action")
+
+    def test_reprocess_exports_lifecycle(self, tmp_path):
+        base_dir = str(tmp_path / "exports")
+        md_dir = os.path.join(base_dir, "markdown")
+        json_dir = os.path.join(base_dir, "json")
+        os.makedirs(md_dir, exist_ok=True)
+        os.makedirs(json_dir, exist_ok=True)
+
+        # 1. Create sample markdown with header metadata and content
+        md_file = os.path.join(md_dir, "TT01-2023-BTP.md")
+        original_md = (
+            "# Thông tư 01/2023/TT-BTP\n"
+            "| Cơ quan | Bộ Tư pháp |\n\n"
+            "## Content\n"
+            "<think>internal thought</think>\n"
+            "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM\n"
+            "Độc lập - Tự do - Hạnh phúc\n"
+            "Điều 1 🔥 Ban hành kèm theo 🚀\n"
+        )
+        Path(md_file).write_text(original_md, encoding="utf-8")
+
+        # 2. Create sample JSON missing doc_number
+        json_file = os.path.join(json_dir, "TT01-2023-BTP.json")
+        sample_json = {
+            "doc_id": "TT01-2023-BTP",
+            "metadata": {"doc_number": ""},
+            "chunks": [{"text": "<think>trace</think>Điều 1 nội dung", "doc_number": ""}],
+        }
+        with open(json_file, "w", encoding="utf-8") as jf:
+            json.dump(sample_json, jf, ensure_ascii=False)
+
+        exporter = DataExporter(base_dir)
+
+        # Step 1: dry-run
+        res_dry = exporter.reprocess_exports(action="dry-run")
+        assert res_dry["md_changed"] == 1
+        assert res_dry["json_changed"] == 1
+        assert Path(md_file).read_text(encoding="utf-8") == original_md
+
+        # Step 2: apply
+        res_apply = exporter.reprocess_exports(action="apply")
+        assert res_apply["md_changed"] == 1
+        assert res_apply["json_changed"] == 1
+        assert os.path.exists(md_file + ".bak")
+        assert os.path.exists(json_file + ".bak")
+
+        cleaned_md = Path(md_file).read_text(encoding="utf-8")
+        assert "| Cơ quan | Bộ Tư pháp |" in cleaned_md
+        assert "<think>" not in cleaned_md
+        assert "🔥" not in cleaned_md
+        assert "CỘNG HÒA" not in cleaned_md
+        assert "Điều 1" in cleaned_md
+
+        cleaned_json = json.loads(Path(json_file).read_text(encoding="utf-8"))
+        assert cleaned_json["metadata"]["doc_number"] == "01/2023/TT-BTP"
+        assert cleaned_json["chunks"][0]["doc_number"] == "01/2023/TT-BTP"
+        assert "<think>" not in cleaned_json["chunks"][0]["text"]
+
+        # Step 3: revert
+        res_revert = exporter.reprocess_exports(action="revert")
+        assert res_revert["md_changed"] == 1
+        assert res_revert["json_changed"] == 1
+        assert Path(md_file).read_text(encoding="utf-8") == original_md
+
+    def test_reprocess_exports_defensive_against_nulls(self, tmp_path):
+        base_dir = str(tmp_path / "exports_null")
+        json_dir = os.path.join(base_dir, "json")
+        os.makedirs(json_dir, exist_ok=True)
+
+        # JSON with null metadata and null chunks
+        bad_json = os.path.join(json_dir, "bad.json")
+        Path(bad_json).write_text('{"metadata": null, "chunks": null}', encoding="utf-8")
+
+        exporter = DataExporter(base_dir)
+        res = exporter.reprocess_exports(action="apply")
+        assert res["json_total"] == 1
+        assert res["json_changed"] == 0
+
+    def test_strip_ai_monologue_and_emojis(self):
+        from ingestion.text_normalizer import strip_ai_monologue, strip_random_emojis
+
+        # Monologue
+        text = "<think>internal reasoning</think>Thinking Process:\n1. do this\nĐiều 1. Nội dung"
+        cleaned = strip_ai_monologue(text)
+        assert "<think>" not in cleaned
+        assert "Thinking Process" not in cleaned
+        assert "Điều 1. Nội dung" in cleaned
+        assert not cleaned.startswith("\n")
+
+        # Heavy monologue (>30% of content) should also strip whitespace cleanly
+        heavy_monologue = "Dưới đây là nội dung:\n" * 5 + "Điều 2. Quy định chung."
+        cleaned_heavy = strip_ai_monologue(heavy_monologue)
+        assert "Dưới đây là" not in cleaned_heavy
+        assert "Điều 2. Quy định chung." in cleaned_heavy
+        assert not cleaned_heavy.startswith("\n")
+
+        # Emojis
+        text_emoji = "Điều 1 🔥 nội dung ⚠️ cảnh báo 🚀"
+        cleaned_emoji = strip_random_emojis(text_emoji)
+        assert "🔥" not in cleaned_emoji
+        assert "🚀" not in cleaned_emoji
+        assert "⚠️" in cleaned_emoji
+
+    def test_fix_table_gfm_v2_loose_pipes(self):
+        from ingestion.text_normalizer import fix_table_gfm_v2
+
+        text = "STT | Tên mục | Giá trị\n1 | Thiết kế | 100\n2 | Thi công | 200"
+        fixed = fix_table_gfm_v2(text)
+        assert "| STT | Tên mục | Giá trị |" in fixed
+        assert "| --- | --- | --- |" in fixed
 
 
 def run_all():

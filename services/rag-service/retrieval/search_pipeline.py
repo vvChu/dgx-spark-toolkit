@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 from prometheus_client import Counter, Histogram
 
@@ -46,6 +46,22 @@ def _safe_json_loads(value: str) -> list:
         return json.loads(value)
     except (json.JSONDecodeError, TypeError):
         return _BBOX_FALLBACK
+
+
+def _get_hit_entity(hit: Any) -> dict:
+    if hasattr(hit, "entity"):
+        return hit.entity
+    if isinstance(hit, dict):
+        return hit.get("entity", hit)
+    return {}
+
+
+def _get_hit_score(hit: Any) -> float:
+    if hasattr(hit, "score"):
+        return float(hit.score)
+    if isinstance(hit, dict):
+        return float(hit.get("score", 0.0))
+    return 0.0
 
 
 def _build_result_item(entity: dict, text: str, score: float) -> dict:
@@ -190,11 +206,18 @@ async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10,
 class SearchPipeline:
     """Deep search pipeline consolidating vector search, multi-hop agentic retrieval, reranking, and Graph RAG."""
 
-    def __init__(self, milvus_repo: MilvusRepository, neo4j_repo: Neo4jRepository, ai_client: Optional[AIGatewayClient] = None):
+    def __init__(
+        self,
+        milvus_repo: MilvusRepository,
+        neo4j_repo: Neo4jRepository,
+        ai_client: Optional[AIGatewayClient] = None,
+        sampler_hook: Optional[Callable[[str, list[dict], str], Any]] = None,
+    ):
         self.milvus = milvus_repo
         self.neo4j = neo4j_repo
         self.ai_client = ai_client or get_ai_gateway_client()
-        driver = getattr(neo4j_repo, "driver", None)
+        self._sampler_hook = sampler_hook
+        driver = getattr(neo4j_repo, "driver", None) or getattr(neo4j_repo, "_driver", None)
         self.graph_timeline = AdvancedGraphRAG(driver, ai_client=self.ai_client) if driver is not None else None
 
     async def get_legal_timeline(self, doc_number_or_id: str) -> list[dict]:
@@ -286,11 +309,11 @@ class SearchPipeline:
                 _semantic_cache.get().set(ctx.search_query or ctx.raw_query, ctx.query_vector_np, ctx.top_results, filter_key=ctx.cache_filter_key)
 
             # HITL Sampling
-            try:
-                from services.hitl_service import get_hitl_service
-                get_hitl_service().maybe_sample(ctx.raw_query, ctx.top_results, session_id=ctx.session_id or "")
-            except Exception as _hitl_err:
-                logger.debug(f"HITL sampling skipped: {_hitl_err}")
+            if self._sampler_hook:
+                try:
+                    self._sampler_hook(ctx.raw_query, ctx.top_results, ctx.session_id or "")
+                except Exception as _hitl_err:
+                    logger.debug(f"Sampler hook failed: {_hitl_err}")
 
             trace_data = ctx.tracer.finalize(result_count=len(ctx.top_results))
             return {
@@ -422,7 +445,7 @@ class SearchPipeline:
         for res in hop1_results:
             if isinstance(res, list):
                 for hit in res:
-                    txt = hit.entity.get("text", "")[:200]
+                    txt = _get_hit_entity(hit).get("text", "")[:200]
                     if txt and txt not in seen_texts:
                         seen_texts.add(txt)
                         all_hits.append(hit)
@@ -435,8 +458,9 @@ class SearchPipeline:
             ctx.tracer.start_step("agentic_evaluate")
             preview_chunks = []
             for hit in all_hits[:8]:
-                doc_num = hit.entity.get("doc_number", "")
-                txt = hit.entity.get("text", "")[:300]
+                ent = _get_hit_entity(hit)
+                doc_num = ent.get("doc_number", "")
+                txt = ent.get("text", "")[:300]
                 preview_chunks.append(f"[{doc_num}] {txt}")
             context_preview = "\n".join(preview_chunks)
 
@@ -463,7 +487,7 @@ class SearchPipeline:
                     _, dense_vec, sparse_vec = await self._embed_query(follow_up)
                     hop2_hits = await self._retrieve_raw_hits(dense_vec, sparse_vec, limit=initial_limit, expr=ctx.filter_expr)
                     for hit in hop2_hits:
-                        txt = hit.entity.get("text", "")[:200]
+                        txt = _get_hit_entity(hit).get("text", "")[:200]
                         if txt and txt not in seen_texts:
                             seen_texts.add(txt)
                             all_hits.append(hit)
@@ -480,7 +504,7 @@ class SearchPipeline:
 
         if ctx.use_reranker:
             ctx.tracer.start_step("rerank")
-            docs = [hit.entity.get("text") for hit in ctx.raw_hits]
+            docs = [_get_hit_entity(hit).get("text", "") for hit in ctx.raw_hits]
 
             # Stage 1: Fast batch filtering using Flash Lite 250K TPM -> Gemma 4 fallback
             if len(docs) > ctx.limit:
@@ -496,7 +520,7 @@ class SearchPipeline:
 
             hit_map = {}
             for hit in ctx.raw_hits:
-                t = hit.entity.get("text")
+                t = _get_hit_entity(hit).get("text", "")
                 if t not in hit_map:
                     hit_map[t] = hit
 
@@ -505,22 +529,22 @@ class SearchPipeline:
                 hit = hit_map.get(doc_text)
                 if hit is None:
                     continue
-                ent = hit.entity
+                ent = _get_hit_entity(hit)
                 table_boost = settings.TABLE_BOOST if ent.get("is_table", False) else 0.0
                 status = ent.get("validity_status", "ACTIVE")
                 validity_boost = (
                     settings.VALIDITY_BOOST_ACTIVE if status == "ACTIVE"
                     else (settings.VALIDITY_PENALTY_OUTDATED if status == "OUTDATED" else 0.0)
                 )
-                hybrid_score = (float(score) * settings.RERANK_WEIGHT) + (float(hit.score) * settings.MILVUS_WEIGHT) + table_boost + validity_boost
+                hybrid_score = (float(score) * settings.RERANK_WEIGHT) + (_get_hit_score(hit) * settings.MILVUS_WEIGHT) + table_boost + validity_boost
                 ctx.top_results.append(_build_result_item(ent, doc_text, hybrid_score))
 
             ctx.top_results.sort(key=lambda x: x["score"], reverse=True)
             ctx.tracer.end_step(input_count=len(docs), output_count=len(ctx.top_results))
         else:
             for hit in ctx.raw_hits:
-                ent = hit.entity
-                ctx.top_results.append(_build_result_item(ent, ent.get("text"), float(hit.score)))
+                ent = _get_hit_entity(hit)
+                ctx.top_results.append(_build_result_item(ent, ent.get("text", ""), _get_hit_score(hit)))
 
     async def _stage_graph_enrichment(self, ctx: SearchContext):
         if not ctx.top_results:
@@ -548,17 +572,21 @@ class SearchPipeline:
         # Graph RAG Timeline Traversal
         ctx.tracer.start_step("graph_timeline")
         timeline_count = 0
-        for r in ctx.top_results[:2]:
-            doc_num = r.get("doc_number")
-            if doc_num:
-                timeline = await self.graph_timeline.get_legal_timeline(doc_num)
-                if timeline and len(timeline) > 1:
-                    TIMELINE_GEN_COUNT.inc()
-                    GRAPH_TIMELINE_HOPS.observe(len(timeline))
-                    summary = await self.graph_timeline.generate_timeline_summary(timeline, ctx.raw_query)
-                    r["legal_timeline_summary"] = summary
-                    r["text"] = f"[LEGAL TIMELINE]: {summary}\n\n[CONTENT]: {r['text']}"
-                    timeline_count += 1
+        if self.graph_timeline is not None:
+            try:
+                for r in ctx.top_results[:2]:
+                    doc_num = r.get("doc_number")
+                    if doc_num:
+                        timeline = await self.graph_timeline.get_legal_timeline(doc_num)
+                        if timeline and len(timeline) > 1:
+                            TIMELINE_GEN_COUNT.inc()
+                            GRAPH_TIMELINE_HOPS.observe(len(timeline))
+                            summary = await self.graph_timeline.generate_timeline_summary(timeline, ctx.raw_query)
+                            r["legal_timeline_summary"] = summary
+                            r["text"] = f"[LEGAL TIMELINE]: {summary}\n\n[CONTENT]: {r['text']}"
+                            timeline_count += 1
+            except Exception as e:
+                logger.warning(f"Graph timeline enrichment failed gracefully: {e}")
         ctx.tracer.end_step(timelines_generated=timeline_count)
 
 

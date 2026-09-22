@@ -1,19 +1,20 @@
-project:
-  name: dgx-spark-toolkit
-  archetype: specialized_extension
-  type: Phần mềm
-  mode: software
-  qc_mode: null
-  hub_path: /home/vvc/ccba/ccba-agent-platform
-  description: CCBA Spoke Workspace for dgx-spark-toolkit
+acknowledgment_format: 'Tôi đã đọc workspace_context.yaml. Dự án dgx-spark-toolkit
+  thuộc Archetype specialized_extension, loại Phần mềm (mode: software).'
+acknowledgment_required: true
+do_not_touch:
+- .env
+hub_path: /home/vvc/ccba/ccba-agent-platform  # ccba:allow-machine-path
 must_read:
   always:
   - path: .md/workspace_context.yaml
     why: Workspace configuration & bootstrap
   - path: .md/INDEX.md
     why: Ubiquitous Language & Knowledge Base Index
-do_not_touch:
-- .env
-acknowledgment_required: true
-acknowledgment_format: 'Tôi đã đọc workspace_context.yaml. Dự án dgx-spark-toolkit
-  thuộc Archetype specialized_extension, loại Phần mềm (mode: software).'
+project:
+  archetype: specialized_extension
+  description: CCBA Spoke Workspace for dgx-spark-toolkit
+  hub_path: /home/vvc/ccba/ccba-agent-platform  # ccba:allow-machine-path
+  mode: software
+  name: dgx-spark-toolkit
+  qc_mode: null
+  type: Phần mềm

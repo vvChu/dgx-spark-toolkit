@@ -107,3 +107,17 @@ class TestMilvusRepository:
         client.get_collection_stats = AsyncMock(return_value={"row_count": 10})
         result = _run(repo.get_collection_stats("other_collection"))
         client.get_collection_stats.assert_called_with("other_collection")
+
+    def test_ensure_collection_schema(self):
+        repo, client = self._make_repo()
+        client.has_collection = AsyncMock(return_value=False)
+        client.create_collection = AsyncMock()
+        res = _run(repo.ensure_collection_schema())
+        assert res is True
+        client.create_collection.assert_called_once()
+
+    def test_close(self):
+        repo, client = self._make_repo()
+        client.close = AsyncMock()
+        _run(repo.close())
+        client.close.assert_called_once()
