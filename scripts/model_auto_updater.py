@@ -13,7 +13,7 @@ import subprocess
 from typing import Dict, List, Optional, Set, Tuple
 import requests
 
-WORKSPACE_DIR = "/home/vvc/Codebase/dgx-spark-toolkit"
+WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_PATH = os.path.join(WORKSPACE_DIR, ".env")
 CONFIG_PATH = os.path.join(WORKSPACE_DIR, "services", "ai-gateway", "litellm_config.yaml")
 

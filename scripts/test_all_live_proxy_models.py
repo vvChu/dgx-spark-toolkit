@@ -12,7 +12,7 @@ import time
 from typing import Any, Dict, List
 import requests
 
-WORKSPACE_DIR = "/home/vvc/Codebase/dgx-spark-toolkit"
+WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_PATH = os.path.join(WORKSPACE_DIR, ".env")
 
 

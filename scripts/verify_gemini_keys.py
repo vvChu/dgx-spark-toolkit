@@ -3,7 +3,8 @@ import urllib.request
 import urllib.error
 import json
 
-env_path = "/home/vvc/Codebase/dgx-spark-toolkit/.env"
+project_root = os.environ.get("WORKSPACE_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+env_path = os.environ.get("ENV_FILE") or os.path.join(project_root, ".env")
 keys_to_test = {}
 
 # 1. Parse keys from .env
