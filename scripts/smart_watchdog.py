@@ -8,7 +8,7 @@ import datetime
 import os
 import shutil
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 import docker
 import requests
 
@@ -24,8 +24,13 @@ last_alert_time: Dict[str, float] = {}
 last_digest_date: Optional[str] = None
 
 
+# ChatOps Gateway Integration
+CHATOPS_GATEWAY_URL = os.environ.get("CHATOPS_GATEWAY_URL", "http://172.21.0.1:8095")
+CHATOPS_INTERNAL_SECRET = os.environ.get("CHATOPS_INTERNAL_SECRET", "dgx_spark_chatops_secret_2026")
+
+
 def send_telegram_raw(message: str) -> bool:
-    """Sends a raw markdown-formatted message to Telegram."""
+    """Sends a raw markdown-formatted message to Telegram directly."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Missing Telegram Credentials!", flush=True)
         return False
@@ -44,16 +49,56 @@ def send_telegram_raw(message: str) -> bool:
         return False
 
 
+def notify_chatops(title: str, body: str, actions: Optional[List[Dict[str, Any]]] = None, severity: str = "INFO") -> bool:
+    """Dispatches an interactive event to DGX-ChatOps Gateway with fallback to direct Telegram."""
+    try:
+        payload = {
+            "title": title,
+            "body": body,
+            "severity": severity,
+            "actions": actions or [],
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "X-ChatOps-Secret": CHATOPS_INTERNAL_SECRET,
+        }
+        res = requests.post(f"{CHATOPS_GATEWAY_URL}/api/v1/notify", json=payload, headers=headers, timeout=3)
+        if res.status_code == 200:
+            return True
+    except Exception as e:
+        print(f"[Watchdog -> ChatOps Gateway Error] {e}. Falling back to direct Telegram...", flush=True)
+
+    # Fallback to direct raw Telegram message
+    return send_telegram_raw(f"🔔 *{title}*\n\n{body}")
+
+
 def send_telegram_alert(message: str, alert_type: str) -> None:
-    """Sends an incident alert with cooldown protection."""
+    """Sends an incident alert with cooldown protection and interactive action buttons."""
     global last_alert_time
     now = time.time()
     if alert_type in last_alert_time:
         if now - last_alert_time[alert_type] < COOLDOWN_MINUTES * 60:
             return  # Cooldown active
 
-    text = f"🚨 **CẢNH BÁO TỪ SMART WATCHDOG** 🚨\n\n{message}"
-    if send_telegram_raw(text):
+    actions: List[Dict[str, Any]] = []
+    if "container_down_" in alert_type:
+        svc = alert_type.replace("container_down_", "")
+        actions.append({
+            "action_id": f"restart_{svc}",
+            "label": f"🔄 Khởi Động Lại {svc}",
+            "command": "system.container.restart",
+            "params": {"service": svc},
+        })
+    elif alert_type == "vllm_deadlock":
+        actions.append({
+            "action_id": "restart_qwen36b",
+            "label": "🔄 Khởi Động Lại vLLM (Qwen 35B)",
+            "command": "system.container.restart",
+            "params": {"service": "qwen36b"},
+        })
+
+    title = "CẢNH BÁO SỰ CỐ TỪ SMART WATCHDOG"
+    if notify_chatops(title, message, actions=actions, severity="WARNING"):
         last_alert_time[alert_type] = now
         print(f"Sent alert for: {alert_type}", flush=True)
 
@@ -364,15 +409,23 @@ def check_openwebui_updates() -> None:
             pub_date = rel.get("published_at", "")[:10]
 
             if latest_tag and latest_tag != cur_ver:
-                msg = (
-                    f"🚀 *CÓ BẢN CẬP NHẬT MỚI: Open WebUI v{latest_tag}* 🚀\n\n"
+                title = f"CÓ BẢN CẬP NHẬT MỚI: Open WebUI v{latest_tag}"
+                body = (
                     f"• Phiên bản đang chạy: `v{cur_ver}`\n"
                     f"• Phiên bản mới nhất: `v{latest_tag}` ({pub_date})\n"
                     f"• Xem chi tiết: [GitHub Release Notes]({html_url})\n\n"
-                    f"💡 *Nâng cấp an toàn 1-click (Zero Data Loss & Auto-Rollback):*\n"
-                    f"`bash scripts/update-openwebui.sh v{latest_tag}`"
+                    f"💡 *Nâng cấp an toàn (Zero Data Loss & Auto-Rollback)*"
                 )
-                send_telegram_alert(msg, f"openwebui_update_{latest_tag}")
+                actions = [
+                    {
+                        "action_id": f"upg_{latest_tag}",
+                        "label": f"🚀 Nâng Cấp v{latest_tag} Ngay",
+                        "command": "system.openwebui.upgrade",
+                        "params": {"target_version": f"v{latest_tag}"},
+                        "ttl_seconds": 86400,
+                    }
+                ]
+                notify_chatops(title, body, actions=actions, severity="WARNING")
     except Exception as e:
         print(f"Update check error: {e}", flush=True)
 
