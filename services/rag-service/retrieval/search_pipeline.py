@@ -180,14 +180,22 @@ async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10,
         messages = [{"role": "user", "content": prompt}]
         res_data = await client.complete_json(
             messages,
-            model="gemini-3.5-flash-lite",
-            model_chain=["gemini-3.5-flash-lite", "openai/gemma-4-26b-a4b-it", "rag-core"],
+            model="rag-core",
+            model_chain=["rag-core", "gemini-3.5-flash-lite"],
             timeout=8.0,
+            retries=1,
         )
-        indices = res_data.get("top_indices", [])
+        if isinstance(res_data, list):
+            indices = res_data
+        elif isinstance(res_data, dict):
+            indices = res_data.get("top_indices", res_data.get("indices", []))
+        else:
+            indices = []
+
         filtered_docs = []
         if isinstance(indices, list):
-            for idx in indices:
+            for item in indices:
+                idx = item.get("index") if isinstance(item, dict) else item
                 if isinstance(idx, int) and 1 <= idx <= len(docs):
                     filtered_docs.append(docs[idx - 1])
         if filtered_docs:
@@ -198,9 +206,12 @@ async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10,
                     filtered_docs.append(d)
             return filtered_docs[:top_k]
     except Exception as e:
-        logger.warning(f"Stage 1 Fast Batch Rerank skipped ({e}). Using raw candidate set.")
+        logger.warning(
+            "Stage 1 Fast Batch Rerank skipped (%s). Using top-%d candidate fallback.", e, top_k
+        )
+        return docs[:top_k]
 
-    return docs
+    return docs[:top_k]
 
 
 class SearchPipeline:
@@ -509,7 +520,7 @@ class SearchPipeline:
             # Stage 1: Fast batch filtering using Flash Lite 250K TPM -> Gemma 4 fallback
             if len(docs) > ctx.limit:
                 candidate_docs = await stage1_fast_batch_rerank(
-                    ctx.raw_query, docs, top_k=min(ctx.limit * 2, len(docs)), ai_client=ctx.ai_client
+                    ctx.raw_query, docs, top_k=min(max(ctx.limit * 2, 5), len(docs), 10), ai_client=ctx.ai_client
                 )
             else:
                 candidate_docs = docs

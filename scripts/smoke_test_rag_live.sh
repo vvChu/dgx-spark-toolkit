@@ -83,12 +83,47 @@ wait_for_service() {
     return 1
 }
 
+test_chat_stream_endpoint() {
+    local path="/chat/stream"
+    local data='{"query": "xin chào"}'
+    local description="Chat Stream Endpoint (SSE)"
+
+    echo -n "Checking ${description} (POST ${path})... "
+
+    local raw_output
+    raw_output=$(curl -s -N --max-time 25 \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d "${data}" \
+        "${BASE_URL}${path}" 2>&1 | head -n 10) || {
+        echo "FAILED (Network/Connection error)"
+        echo "Details: ${raw_output}"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        return 1
+    }
+
+    if echo "${raw_output}" | grep -q "data:"; then
+        echo "✅ PASS (SSE Stream active)"
+        local snippet
+        snippet=$(echo "${raw_output}" | grep "data:" | head -n 1 | head -c 120)
+        echo "   First event: ${snippet}..."
+        return 0
+    else
+        echo "❌ FAIL (No SSE data stream received)"
+        echo "   Output: ${raw_output}"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        return 1
+    fi
+}
+
 echo ""
 wait_for_service || true
 test_endpoint "GET" "/health" "" "Health Check" || true
 test_endpoint "GET" "/stats" "" "System Stats" || true
 test_endpoint "POST" "/search" '{"query": "luat xay dung", "limit": 2, "use_reranker": false}' "Search Endpoint (Fast Hybrid)" || true
 test_endpoint "POST" "/search" '{"query": "luat xay dung", "limit": 2}' "Search Endpoint (Full Pipeline)" || true
+test_endpoint "POST" "/chat" '{"query": "xin chào", "use_agentic": false}' "Chat Endpoint (JSON)" || true
+test_chat_stream_endpoint || true
 
 echo ""
 echo "================================================================"

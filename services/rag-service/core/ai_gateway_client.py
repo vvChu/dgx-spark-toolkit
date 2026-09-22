@@ -163,6 +163,7 @@ class AIGatewayClient:
         """Send a chat completion request with automatic fallback chain retries."""
         chain = model_chain or [model or self.settings.VLLM_MODEL, "rag-core", "rag-light"]
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        max_retries = int(kwargs.pop("retries", 3))
 
         last_error = None
         for target_model in chain:
@@ -182,7 +183,7 @@ class AIGatewayClient:
                 payload.update(kwargs)
 
             client = self._get_client()
-            for attempt in range(3):
+            for attempt in range(max_retries):
                 try:
                     resp = await client.post(self.gateway_url, json=payload, headers=headers, timeout=timeout or 300.0)
                     if getattr(resp, "status_code", 200) == 429:
@@ -198,7 +199,12 @@ class AIGatewayClient:
                     return (msg.get("content") or "").strip()
                 except Exception as e:
                     last_error = e
-                    logger.warning(f"AIGatewayClient completion error on model {target_model} (attempt {attempt+1}): {e}")
+                    err_name = type(e).__name__
+                    err_detail = str(e) or "Timeout or empty response"
+                    logger.warning(
+                        "AIGatewayClient completion error on model %s (attempt %d/%d): %s: %s",
+                        target_model, attempt + 1, max_retries, err_name, err_detail
+                    )
                     await asyncio.sleep(1)
 
         raise RuntimeError(f"AIGatewayClient failed all model fallbacks in chain {chain}: {last_error}") from last_error

@@ -76,20 +76,18 @@ class ChatService:
         # 1. Session Memory
         session_context = await self._load_session_context(session_id, tracer)
 
-        # 2. Build messages
-        messages = self._build_messages(query, history, session_context, language)
-
-        # 3. Retrieve
+        # 2. Retrieve
         all_context = await self._retrieve_context(query, tracer, session_id, use_agentic)
 
-        # 4. Accumulate
+        # 3. Accumulate
         all_context = await self._accumulate_context(session_id, all_context, tracer)
 
+        # 4. Build messages (single unified system message at beginning)
+        messages = self._build_messages(
+            query, history, session_context, language, all_context=all_context
+        )
+
         # 5. Generate
-        messages.append({
-            "role": "system",
-            "content": self._format_context(all_context),
-        })
         answer = await self._generate_answer(messages, target_model, tracer)
 
         # 6. Store turn + trace
@@ -124,11 +122,16 @@ class ChatService:
     def _build_messages(
         self, query: str, history: list[dict] | None,
         session_context: str, language: str,
+        all_context: list[dict] | None = None,
     ) -> list[dict]:
-        """Construct the OpenAI-style messages array."""
-        messages = [{"role": "system", "content": get_system_prompt(language)}]
+        """Construct the OpenAI-style messages array with a single consolidated system message."""
+        system_sections = [get_system_prompt(language)]
         if session_context:
-            messages.append({"role": "system", "content": session_context})
+            system_sections.append(f"Ngữ cảnh lịch sử hội thoại trước đó:\n{session_context}")
+        if all_context:
+            system_sections.append(self._format_context(all_context))
+
+        messages = [{"role": "system", "content": "\n\n---\n\n".join(system_sections)}]
         # Add client-sent history only when no session context
         if history and not session_context:
             messages.extend(history[-6:])
@@ -260,12 +263,10 @@ class ChatService:
             # Yield context as first SSE event
             yield f"data: {json.dumps({'type': 'context', 'data': all_context[:10]}, ensure_ascii=False, default=str)}\n\n"
 
-            # 4. Build Messages
-            messages = self._build_messages(query, history, session_context, language)
-            messages.append({
-                "role": "system",
-                "content": self._format_context(all_context),
-            })
+            # 4. Build Messages (single unified system message at beginning)
+            messages = self._build_messages(
+                query, history, session_context, language, all_context=all_context
+            )
 
             # 5. Stream tokens from LLM via AIGatewayClient seam
             tracer.start_step("generate_stream")
