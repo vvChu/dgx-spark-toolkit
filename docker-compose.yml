@@ -28,7 +28,7 @@ services:
       - OMP_NUM_THREADS=4
       - OPENBLAS_NUM_THREADS=4
       - MKL_NUM_THREADS=4
-      - REDIS_URL=redis://litellm-redis:6379/1
+      - REDIS_URL=${REDIS_QUEUE_URL}
       - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-ocr-primary}
       - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-ocr-fallback}
       - IMAGE_PREPROCESS=${IMAGE_PREPROCESS:-1}
@@ -106,7 +106,7 @@ services:
       - FORCE_CPU_EMBEDDING=1
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - REDIS_URL=redis://litellm-redis:6379/1
+      - REDIS_URL=${REDIS_QUEUE_URL}
       - PRIMARY_VISION_MODEL=${PRIMARY_VISION_MODEL:-ocr-primary}
       - FALLBACK_VISION_MODEL=${FALLBACK_VISION_MODEL:-ocr-fallback}
       - IMAGE_PREPROCESS=${IMAGE_PREPROCESS:-1}
@@ -178,8 +178,8 @@ services:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
       - LITELLM_LOG=INFO
       - PROXY_BASE_URL=http://100.83.192.30:8090
-      - DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm
-      - REDIS_URL=redis://litellm-redis:6379/0
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_CACHE_URL}
       - STORE_MODEL_IN_DB=True
       - PYTHONPATH=/app
     volumes:
@@ -491,14 +491,14 @@ services:
     restart: "no"
 
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:${OPEN_WEBUI_VERSION:-v0.9.1}
     container_name: open-webui
     volumes:
       - open-webui_data:/app/backend/data
     environment:
       - OPENAI_API_BASE_URL=http://ai-gateway:4000/v1
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY}
-      - WEBUI_AUTH=False
+      - WEBUI_AUTH=True
       - ENABLE_SIGNUP=False
       - WEBUI_SECRET_KEY=spark_dgx_secure_key_2026
       - DEFAULT_MODELS=qwen-local-primary
@@ -511,6 +511,19 @@ services:
     restart: unless-stopped
     networks:
       - rag-network
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-tunnel
+    restart: unless-stopped
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate run
+    networks:
+      - rag-network
+    depends_on:
+      ai-gateway:
+        condition: service_healthy
 
   smart-watchdog:
     image: python:3.11-alpine
