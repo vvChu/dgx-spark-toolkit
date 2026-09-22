@@ -13,7 +13,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.config import get_settings
 from core.database import state, lifespan
 from ingestion.state_manager import PostgresStateManager
-from services.lifecycle_service import LifecycleService
+from repositories.document_store import DocumentStore
 from repositories.neo4j_repo import Neo4jRepository
 from repositories.milvus_repo import MilvusRepository
 
@@ -51,7 +51,7 @@ async def migrate(dry_run=True):
         state_mgr = app.state.state_manager
         neo4j_repo = Neo4jRepository(app.state.neo4j_driver)
         milvus_repo = MilvusRepository(app.state.milvus_client)
-        lifecycle = LifecycleService(state_mgr, milvus_repo, neo4j_repo)
+        doc_store = DocumentStore(milvus_repo=milvus_repo, neo4j_repo=neo4j_repo, state_manager=state_mgr)
 
         logger.info(f"=== Starting Migration Utility (Dry Run: {dry_run}) ===")
 
@@ -117,7 +117,7 @@ async def migrate(dry_run=True):
                     logger.info(f"  Document {old_id} (replaced by {new_id}) is currently {current_status}. Syncing to OUTDATED...")
                     if not dry_run:
                         try:
-                            res = await lifecycle.sync_document_status(old_id, "OUTDATED")
+                            res = await doc_store.sync_status(old_id, "OUTDATED")
                             logger.info(f"  Sync Result: {res.get('status')}")
                         except Exception as e:
                             logger.error(f"  Failed to sync status for {old_id}: {e}")

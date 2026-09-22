@@ -89,41 +89,45 @@ class TestNeo4jVersioningRelations:
         assert isinstance(result, list)
 
 
-class TestLifecycleServiceVersioning:
-    """Test the new notify_new_document_ingested() method."""
+class TestDocumentStoreVersioning:
+    """Test the notify_version_update() method on DocumentStore."""
 
-    def _make_service(self):
-        from services.lifecycle_service import LifecycleService
+    def _make_store(self):
+        from repositories.document_store import DocumentStore
         state_mgr = MagicMock()
         milvus_repo = AsyncMock()
         neo4j_repo = AsyncMock()
-        return LifecycleService(state_mgr, milvus_repo, neo4j_repo)
+        return DocumentStore(
+            milvus_repo=milvus_repo,
+            neo4j_repo=neo4j_repo,
+            state_manager=state_mgr,
+        )
 
     def test_supersedes_calls_sync_and_neo4j(self):
-        svc = self._make_service()
-        result = _run(svc.notify_new_document_ingested(
+        store = self._make_store()
+        result = _run(store.notify_version_update(
             new_doc_id="BXD/01-2025",
             supersedes=["BXD/01-2023"],
         ))
         assert result["status"] == "success"
         assert "BXD/01-2023" in result["superseded"]
-        svc.milvus_repo.update_doc_validity.assert_awaited()
-        svc.neo4j_repo.create_supersedes_relation.assert_awaited_once_with("BXD/01-2025", "BXD/01-2023")
+        store.milvus_repo.update_doc_validity.assert_awaited()
+        store.neo4j_repo.create_supersedes_relation.assert_awaited_once_with("BXD/01-2025", "BXD/01-2023")
 
     def test_amends_marks_outdated(self):
-        svc = self._make_service()
-        result = _run(svc.notify_new_document_ingested(
+        store = self._make_store()
+        result = _run(store.notify_version_update(
             new_doc_id="BXD/02-2025",
             amends=["BXD/02-2023"],
         ))
         assert result["status"] == "success"
         assert "BXD/02-2023" in result["amended"]
-        svc.neo4j_repo.create_amends_relation.assert_awaited_once_with("BXD/02-2025", "BXD/02-2023")
+        store.neo4j_repo.create_amends_relation.assert_awaited_once_with("BXD/02-2025", "BXD/02-2023")
 
     def test_partial_failure_neo4j_supersedes(self):
-        svc = self._make_service()
-        svc.neo4j_repo.create_supersedes_relation.side_effect = Exception("neo4j down")
-        result = _run(svc.notify_new_document_ingested(
+        store = self._make_store()
+        store.neo4j_repo.create_supersedes_relation.side_effect = Exception("neo4j down")
+        result = _run(store.notify_version_update(
             new_doc_id="BXD/01-2025",
             supersedes=["BXD/01-2023"],
         ))
@@ -131,11 +135,12 @@ class TestLifecycleServiceVersioning:
         assert any("neo4j_supersedes" in e for e in result["errors"])
 
     def test_multiple_supersedes(self):
-        svc = self._make_service()
-        result = _run(svc.notify_new_document_ingested(
+        store = self._make_store()
+        result = _run(store.notify_version_update(
             new_doc_id="BXD/NEW",
             supersedes=["BXD/OLD-1", "BXD/OLD-2", "BXD/OLD-3"],
         ))
         assert result["status"] == "success"
         assert len(result["superseded"]) == 3
-        assert svc.neo4j_repo.create_supersedes_relation.await_count == 3
+        assert store.neo4j_repo.create_supersedes_relation.await_count == 3
+

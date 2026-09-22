@@ -29,6 +29,8 @@ from ingestion.normalizers.boilerplate import (  # noqa: F401
     strip_digital_signature,
     strip_date_page_noise,
     strip_template_dots,
+    strip_ai_monologue,
+    strip_random_emojis,
 )
 
 from ingestion.normalizers.structure import (  # noqa: F401
@@ -43,6 +45,7 @@ from ingestion.normalizers.tables import (  # noqa: F401
     detect_garbled_table,
     is_table_chunk,
     fix_raw_pipe_tables,
+    fix_table_gfm_v2,
 )
 
 
@@ -77,6 +80,10 @@ class TextNormalizer:
             prefix = f"[{strip_doc_id_prefix}] "
             if text.startswith(prefix):
                 text = text[len(prefix):]
+
+        # Step 0-pre: Strip random emojis & AI monologue
+        text = strip_random_emojis(text)
+        text = strip_ai_monologue(text)
 
         # Step 0a: Normalize OCR spacing (must be FIRST, before any regex)
         text = normalize_ocr_spacing(text)
@@ -126,6 +133,7 @@ class TextNormalizer:
         if self.config.table_recovery:
             # Step 2b: [P1-FIX] Fix raw pipe tables missing separator rows
             text = fix_raw_pipe_tables(text)
+            text = fix_table_gfm_v2(text)
 
         # Step 3: Rejoin broken ALL-CAPS headings
         text = rejoin_broken_headings(text)

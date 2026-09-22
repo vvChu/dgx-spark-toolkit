@@ -1,7 +1,9 @@
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 from core.database import (
     get_compliance_service,
+    get_document_store,
     get_http_client,
     get_legal_analysis_engine,
     get_legal_analysis_service,
@@ -172,19 +174,145 @@ def test_evaluate_endpoint(client):
 def test_admin_sync_status_endpoint(client):
     _install_common_overrides()
 
-    with patch("api.routers.admin.LifecycleService") as service_cls:
-        service = AsyncMock()
-        service.sync_document_status.return_value = {"status": "ok", "doc_id": "doc-1", "new_status": "ACTIVE", "updates": {}}
-        service_cls.return_value = service
+    mock_doc_store = AsyncMock()
+    mock_doc_store.sync_status.return_value = {
+        "status": "success",
+        "doc_id": "doc-1",
+        "new_status": "ACTIVE",
+        "updates": {},
+    }
+    app.dependency_overrides[get_document_store] = lambda: mock_doc_store
 
-        response = client.post(
-            "/admin/sync-status",
-            json={"doc_id": "doc-1", "new_status": "ACTIVE"},
-            headers={"X-Admin-Key": "test-admin-key-for-ci"},
-        )
+    response = client.post(
+        "/admin/sync-status",
+        json={"doc_id": "doc-1", "new_status": "ACTIVE"},
+        headers={"X-Admin-Key": "test-admin-key-for-ci"},
+    )
 
     assert response.status_code == 200
     assert response.json()["doc_id"] == "doc-1"
+
+
+def test_admin_sync_status_partial_failure(client):
+    _install_common_overrides()
+
+    mock_doc_store = AsyncMock()
+    mock_doc_store.sync_status.return_value = {
+        "status": "partial_success",
+        "doc_id": "doc-partial",
+        "new_status": "OUTDATED",
+        "errors": ["Milvus update failed: timeout"],
+    }
+    app.dependency_overrides[get_document_store] = lambda: mock_doc_store
+
+    response = client.post(
+        "/admin/sync-status",
+        json={"doc_id": "doc-partial", "new_status": "OUTDATED"},
+        headers={"X-Admin-Key": "test-admin-key-for-ci"},
+    )
+
+    assert response.status_code == 207
+    body = response.json()
+    assert body["status"] == "partial_success"
+    assert body["doc_id"] == "doc-partial"
+    assert body["new_status"] == "OUTDATED"
+    assert len(body["errors"]) == 1
+
+
+def test_admin_pipeline_actions(client):
+    _install_common_overrides()
+
+    with patch("api.routers.admin.DataExporter.reprocess_exports") as mock_reprocess:
+        mock_reprocess.return_value = {
+            "action": "dry-run",
+            "md_changed": 2,
+            "json_changed": 1,
+            "md_total": 5,
+            "json_total": 5,
+        }
+
+        # 1. dry-run
+        res = client.get(
+            "/admin/pipeline/dry-run",
+            headers={"X-Admin-Key": "test-admin-key-for-ci"},
+        )
+        assert res.status_code == 200
+        assert "Would fix 2/5 markdown files" in res.text
+        mock_reprocess.assert_called_with("dry-run")
+
+        # 2. apply
+        mock_reprocess.return_value = {
+            "action": "apply",
+            "md_changed": 3,
+            "json_changed": 2,
+            "md_total": 5,
+            "json_total": 5,
+        }
+        res = client.get(
+            "/admin/pipeline/apply",
+            headers={"X-Admin-Key": "test-admin-key-for-ci"},
+        )
+        assert res.status_code == 200
+        assert "Fixed 3/5 markdown files" in res.text
+        mock_reprocess.assert_called_with("apply")
+
+        # 3. revert
+        mock_reprocess.return_value = {
+            "action": "revert",
+            "md_changed": 3,
+            "json_changed": 2,
+            "md_total": 5,
+            "json_total": 5,
+        }
+        res = client.get(
+            "/admin/pipeline/revert",
+            headers={"X-Admin-Key": "test-admin-key-for-ci"},
+        )
+        assert res.status_code == 200
+        assert "Reverted 3/5 markdown files" in res.text
+        mock_reprocess.assert_called_with("revert")
+
+        # 4. invalid action
+        res = client.get(
+            "/admin/pipeline/unknown-action",
+            headers={"X-Admin-Key": "test-admin-key-for-ci"},
+        )
+        assert res.status_code == 400
+
+
+def test_admin_pipeline_concurrency_lock(client):
+    _install_common_overrides()
+    from api.routers.admin import _pipeline_lock
+    with patch.object(_pipeline_lock, "locked", return_value=True):
+        res = client.get(
+            "/admin/pipeline/dry-run",
+            headers={"X-Admin-Key": "test-admin-key-for-ci"},
+        )
+        assert res.status_code == 409
+        assert "already in progress" in res.text
+
+
+def test_admin_audit_endpoint(client):
+    _install_common_overrides()
+    with patch("api.routers.admin.run_comprehensive_audit") as mock_audit:
+        mock_audit.return_value = "COMPREHENSIVE RAG QUALITY AUDIT\nOVERALL QUALITY SCORE: 95/100"
+        res = client.get(
+            "/admin/audit",
+            headers={"X-Admin-Key": "test-admin-key-for-ci"},
+        )
+        assert res.status_code == 200
+        assert "OVERALL QUALITY SCORE: 95/100" in res.text
+
+
+def test_admin_audit_timeout(client):
+    _install_common_overrides()
+    with patch("api.routers.admin.run_comprehensive_audit", side_effect=asyncio.TimeoutError):
+        res = client.get(
+            "/admin/audit",
+            headers={"X-Admin-Key": "test-admin-key-for-ci"},
+        )
+        assert res.status_code == 504
+        assert "Audit timed out" in res.text
 
 
 def test_analysis_endpoints(client):

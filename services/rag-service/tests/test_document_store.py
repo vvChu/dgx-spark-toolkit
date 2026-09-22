@@ -188,3 +188,78 @@ class TestDocumentStore:
             assert mock_milvus.update_doc_validity.call_count == 2
 
         asyncio.run(_test())
+
+
+class TestDocumentStoreSyncAndFailures:
+    """Test DocumentStore.sync_status error handling across multiple data stores."""
+
+    def _make_store(self):
+        state_mgr = MagicMock()
+        milvus_repo = AsyncMock()
+        neo4j_repo = AsyncMock()
+        store = DocumentStore(
+            milvus_repo=milvus_repo,
+            neo4j_repo=neo4j_repo,
+            state_manager=state_mgr,
+        )
+        return store, state_mgr, milvus_repo, neo4j_repo
+
+    def test_sync_all_success(self):
+        import asyncio
+        store, state_mgr, milvus_repo, neo4j_repo = self._make_store()
+        result = asyncio.run(store.sync_status("BXD/01-2024", "OUTDATED"))
+        assert result["status"] == "success"
+        assert result["doc_id"] == "BXD/01-2024"
+        assert result["new_status"] == "OUTDATED"
+        state_mgr.update_validity_status.assert_called_once_with("BXD/01-2024", "OUTDATED")
+        milvus_repo.update_doc_validity.assert_awaited_once_with("BXD/01-2024", "OUTDATED")
+        neo4j_repo.update_node_status.assert_awaited_once_with("BXD/01-2024", "OUTDATED")
+
+    def test_partial_failure_postgres(self):
+        import asyncio
+        store, state_mgr, milvus_repo, neo4j_repo = self._make_store()
+        state_mgr.update_validity_status.side_effect = Exception("DB down")
+        result = asyncio.run(store.sync_status("BXD/01-2024", "ACTIVE"))
+        assert result["status"] == "partial_success"
+        assert result["doc_id"] == "BXD/01-2024"
+        assert result["new_status"] == "ACTIVE"
+        assert len(result["errors"]) == 1
+        assert "Postgres" in result["errors"][0]
+
+    def test_partial_failure_milvus(self):
+        import asyncio
+        store, state_mgr, milvus_repo, neo4j_repo = self._make_store()
+        milvus_repo.update_doc_validity.side_effect = Exception("Milvus timeout")
+        result = asyncio.run(store.sync_status("BXD/01-2024", "REPLACED"))
+        assert result["status"] == "partial_success"
+        assert result["doc_id"] == "BXD/01-2024"
+        assert result["new_status"] == "REPLACED"
+        assert any("Milvus" in e for e in result["errors"])
+        neo4j_repo.update_node_status.assert_awaited_once_with("BXD/01-2024", "REPLACED")
+
+    def test_all_stores_fail(self):
+        import asyncio
+        store, state_mgr, milvus_repo, neo4j_repo = self._make_store()
+        state_mgr.update_validity_status.side_effect = Exception("pg")
+        milvus_repo.update_doc_validity.side_effect = Exception("mv")
+        neo4j_repo.update_node_status.side_effect = Exception("n4j")
+        result = asyncio.run(store.sync_status("X/Y", "OUTDATED"))
+        assert result["status"] == "partial_success"
+        assert result["doc_id"] == "X/Y"
+        assert result["new_status"] == "OUTDATED"
+        assert len(result["errors"]) == 3
+
+    def test_notify_new_document_ingested_via_document_store(self):
+        import asyncio
+        store = InMemoryDocumentStore()
+        res = asyncio.run(store.notify_version_update(
+            new_doc_id="VBPL/NEW_2025",
+            supersedes=["VBPL/OLD_2020"],
+            amends=["VBPL/AMENDED_2022"],
+        ))
+        assert res["status"] == "success"
+        assert "VBPL/OLD_2020" in res["superseded"]
+        assert "VBPL/AMENDED_2022" in res["amended"]
+        assert store.document_statuses["VBPL/OLD_2020"] == "SUPERSEDED"
+        assert store.document_statuses["VBPL/AMENDED_2022"] == "OUTDATED"
+

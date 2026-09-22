@@ -1,38 +1,95 @@
-import os
+import glob
 import json
-import re
 import logging
-from typing import List, Dict, Any
+import os
+from pathlib import Path
+import re
+import shutil
+from typing import Any, Dict, List, Optional
 
-from ingestion.text_normalizer import normalize_chunk_text, detect_garbled_table
+from ingestion.text_normalizer import (
+    detect_garbled_table,
+    fix_common_ocr_typos,
+    fix_generic_stuck_words,
+    fix_stuck_vietnamese_words,
+    fix_table_gfm_v2,
+    fix_vietnamese_syllable_boundaries,
+    normalize_chunk_text,
+    normalize_ocr_spacing,
+    strip_ai_monologue,
+    strip_digital_signature,
+    strip_document_boilerplate,
+    strip_noi_nhan_block,
+    strip_random_emojis,
+)
 
 logger = logging.getLogger(__name__)
 
-# ── P5: Boilerplate patterns to strip from Content section ───────────────
-# [P5-FIX] Tolerant of OCR word-merges: "HỘICHỦ" instead of "HỘI CHỦ"
-_CONTENT_BOILERPLATE_RE = re.compile(
-    r'(?:^|\n)'
-    r'(?:CỘNG\s*HÒA\s*XÃ\s*HỘI\s*CHỦ\s*NGHĨA\s*VIỆT\s*NAM\s*'
-    r'(?:Độc\s*lập\s*[-–—]\s*Tự\s*do\s*[-–—]\s*Hạnh\s*phúc)?'
-    r'|Độc\s*lập\s*[-–—]\s*Tự\s*do\s*[-–—]\s*Hạnh\s*phúc)'
-    r'\s*(?:\n|$)',
-    re.IGNORECASE | re.MULTILINE
+# QCVN pattern: QCVN_01_2021_BXD → QCVN 01:2021/BXD
+# Legal document filename patterns for doc_number extraction
+_QCVN_FILENAME_RE = re.compile(
+    r"QCVN[_\s-]?(\d+)[_\s-](\d{4})[_\s-]([A-Za-z]+)"
 )
+
+# Standard doc pattern: TT01-2023-BTP → 01/2023/TT-BTP, QD08-2023-TTg → 08/2023/QĐ-TTg
+_DOC_NUM_FILENAME_RE = re.compile(
+    r"([A-Z]{2,4})(\d+)[-_/](\d{4})[-_/]([A-Za-z]+)"
+)
+
+# Simpler pattern: QD08-TTg → 08/QĐ-TTg
+_DOC_NUM_SIMPLE_RE = re.compile(
+    r"([A-Z]{2,4})(\d+)[-_/]([A-Za-z]+)"
+)
+
+_DOC_TYPE_MAP = {
+    "QD": "QĐ",
+    "ND": "NĐ",
+    "CD": "CĐ",
+}
+
+
+def extract_doc_number_from_path(filepath: str) -> Optional[str]:
+    """[P4] Extract doc_number from filename/path when missing from content.
+
+    Handles QCVN patterns and standard Vietnamese legal document IDs.
+    """
+    if not filepath:
+        return None
+    basename = re.sub(r"(\.json|\.md|\.bak)+$", "", os.path.basename(filepath))
+
+    # QCVN special handling
+    m = _QCVN_FILENAME_RE.search(basename)
+    if m:
+        return f"QCVN {m.group(1)}:{m.group(2)}/{m.group(3)}"
+
+    # Standard full pattern: TT01-2023-BTP → 01/2023/TT-BTP, QD08-2023-TTg → 08/2023/QĐ-TTg
+    m = _DOC_NUM_FILENAME_RE.search(basename)
+    if m:
+        doc_type = _DOC_TYPE_MAP.get(m.group(1), m.group(1))
+        return f"{m.group(2)}/{m.group(3)}/{doc_type}-{m.group(4)}"
+
+    # Simple pattern: QD08-TTg → 08/QĐ-TTg
+    m = _DOC_NUM_SIMPLE_RE.search(basename)
+    if m:
+        doc_type = _DOC_TYPE_MAP.get(m.group(1), m.group(1))
+        return f"{m.group(2)}/{doc_type}-{m.group(3)}"
+
+    return None
 
 
 class DataExporter:
-    def __init__(self, export_dir: str = "/app/exports"):
-        self.export_dir = export_dir
-        self.json_dir = os.path.join(export_dir, "json")
-        self.md_dir = os.path.join(export_dir, "markdown")
+    def __init__(self, export_dir: Optional[str] = None):
+        self.export_dir = export_dir or os.environ.get("EXPORT_DIR", "/app/exports")
+        self.json_dir = os.path.join(self.export_dir, "json")
+        self.md_dir = os.path.join(self.export_dir, "markdown")
 
-        # Create directories if they don't exist
+        # Create directories if possible
         try:
             os.makedirs(self.json_dir, exist_ok=True)
             os.makedirs(self.md_dir, exist_ok=True)
-            logger.info(f"Initialized DataExporter at {export_dir}")
+            logger.info(f"Initialized DataExporter at {self.export_dir}")
         except Exception as e:
-            logger.error(f"Failed to create export directories: {e}")
+            logger.debug(f"Could not create export directories ({self.export_dir}): {e}")
 
     def export(self, rel_path: str, doc_id: str, meta: Dict[str, Any], summary: str, chunks: List[Dict[str, Any]]):
         """Export processed document data to JSON and Markdown."""
@@ -120,90 +177,13 @@ class DataExporter:
 
     @staticmethod
     def _fix_table_gfm(text: str) -> str:
-        """[P1] Fix broken GFM table markup by inserting missing separator rows.
-
-        A valid GFM table requires a separator row (|---|---|) immediately
-        after the header row. This method detects header-like pipe rows
-        NOT followed by a separator and inserts one.
-
-        Header heuristic refinements (v2):
-        - Reject rows where the first cell is a plain number (data row, not header)
-        - Reject rows where ALL cells are short words/abbreviations like "B", "K", ""
-          (compliance checkmark rows)
-        - Reset table state on blank-line gaps between consecutive tables
-        """
-        if '|' not in text:
-            return text
-
-        lines = text.split('\n')
-        fixed: list[str] = []
-        in_table = False  # Track if we've already seen/inserted a separator
-
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            is_pipe_row = (
-                stripped.startswith('|') and stripped.endswith('|')
-                and stripped.count('|') >= 3
-            )
-
-            if not is_pipe_row:
-                # Reset table state on non-pipe lines (gap between tables)
-                in_table = False
-                fixed.append(line)
-                continue
-
-            # Check if the NEXT line is already a separator
-            next_line = lines[i + 1].strip() if i + 1 < len(lines) else ''
-            is_next_sep = bool(re.match(r'^\|[\s:-]+\|', next_line))
-
-            if is_next_sep:
-                in_table = True  # Existing separator found
-                fixed.append(line)
-                continue
-
-            if in_table:
-                # Already inside a table (separator was seen/inserted) — data row
-                fixed.append(line)
-                continue
-
-            # First pipe row without a following separator — header detection
-            cells = [c.strip() for c in stripped.split('|')[1:-1]]
-
-            # Reject: first cell is a plain number (data row like "| 1 | Name | XX |")
-            first_cell = cells[0] if cells else ''
-            first_cell_is_number = bool(re.match(r'^\d+\.?$', first_cell.strip()))
-
-            # Reject: all cells are empty or single-char abbreviations
-            all_trivial = all(len(c) <= 2 for c in cells)
-
-            is_header = (
-                cells
-                and not first_cell_is_number
-                and not all_trivial
-                and all(len(c) < 60 for c in cells)
-                and any(re.search(r'[a-zA-Z\u00c0-\u1ef9]', c) for c in cells)
-                and not all(re.match(r'^[\d.,\s%]+$', c) for c in cells if c)
-            )
-            if is_header:
-                sep = '| ' + ' | '.join('---' for _ in cells) + ' |'
-                fixed.append(line)
-                fixed.append(sep)
-                in_table = True
-            else:
-                fixed.append(line)
-
-        return '\n'.join(fixed)
+        """[P1] Fix broken GFM table markup by delegating to fix_table_gfm_v2."""
+        return fix_table_gfm_v2(text)
 
     @staticmethod
     def _strip_content_boilerplate(text: str) -> str:
-        """[P5] Strip government header boilerplate from content text."""
-        text = _CONTENT_BOILERPLATE_RE.sub('\n', text)
-        # Also strip standalone "Số: xxx/QĐ-BXD" lines that leak into content
-        text = re.sub(
-            r'(?:^|\n)\s*Số\s*:\s*[\d/]+\s*[A-ZĐ]{2,}[-][A-ZĐ]+\s*(?:\n|$)',
-            '\n', text
-        )
-        return text.strip()
+        """[P5] Strip government header boilerplate by delegating to strip_document_boilerplate."""
+        return strip_document_boilerplate(text)
 
     @staticmethod
     def _dedup_parent_chunks(parent_chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -260,89 +240,10 @@ class DataExporter:
 
         return False
 
-    # ── [P2-FIX] Vietnamese word-merge spacing correction ─────────────
-    # OCR output often strips spaces between Vietnamese words, producing
-    # artifacts like: "vềcải cách", "doBộ trưởng", "làcơ sở".
-    # This regex detects lowercase-to-uppercase transitions and inserts a space.
-    _VN_LOWER = (
-        r'a-zàáạảãăắằẳẵặâấầẩẫậđèéẹẻẽêếềểễệìíịỉĩ'
-        r'òóọỏõôốồổỗộơớờởỡợùúụủũưứừửữựỳýỵỷỹ'
-    )
-    _VN_UPPER = (
-        r'A-ZÀÁẠẢÃĂẮẰẲẴẶÂẤẦẨẪẬĐÈÉẸẺẼÊẾỀỂỄỆÌÍỊỈĨ'
-        r'ÒÓỌỎÕÔỐỒỔỖỘƠỚỜỞỠỢÙÚỤỦŨƯỨỪỬỮỰỲÝỴỶỸ'
-    )
-    _SPACING_RE = re.compile(
-        rf'([{_VN_LOWER}])([{_VN_UPPER}])'
-    )
-    # Also fix ALL-CAPS merges like "ĐÔTHỊVÀ" → "ĐÔ THỊ VÀ"
-    _ALLCAPS_MERGE_RE = re.compile(
-        rf'([{_VN_UPPER}]{{2,}})([{_VN_UPPER}][{_VN_LOWER}])'
-    )
-
-    # [P2-FIX-v2] Common Vietnamese word-merge patterns (lowercase→lowercase)
-    # that the regex approach cannot detect reliably.
-    # These are high-frequency merge artifacts found in OCR output of legal docs.
-    _WORD_MERGE_FIXES = [
-        # Preposition/conjunction merges (sorted longest first to avoid partial matches)
-        ('vềcác', 'về các'), ('vềcán', 'về cán'), ('vềcác', 'về các'),
-        ('vềnhà', 'về nhà'), ('vền hà', 'về nhà'),  # split-merge artifact
-        ('docơ', 'do cơ'), ('của', 'của'), ('vàtên', 'và tên'),
-        ('vàtài', 'và tài'), ('vàmối', 'và mối'), ('vàmức', 'và mức'),
-        ('đãkê', 'đã kê'), ('đãkế', 'đã kế'),
-        ('cócấp', 'có cấp'), ('cóảnh', 'có ảnh'),
-        ('cón hà', 'có nhà'),  # split-merge artifact
-        ('đầy đủcác', 'đầy đủ các'),
-        ('sở hữucủa', 'sở hữu của'), ('ởcủa', 'ở của'),
-        ('củatôi', 'của tôi'), ('têncủa', 'tên của'), ('cáccon', 'các con'),
-        ('mẹcủa', 'mẹ của'),
-        ('hợp lệc ho', 'hợp lệ cho'), ('nhà ởc ho', 'nhà ở cho'),
-        ('mởc ho', 'mở cho'),
-        ('phục vụtại', 'phục vụ tại'),
-        ('đăng kýtạm', 'đăng ký tạm'), ('đăng kýtại', 'đăng ký tại'),
-        ('nghề nghiệp3', 'nghề nghiệp'), ('đối tượng5', 'đối tượng'),
-        ('đơn vịnơi', 'đơn vị nơi'),
-        ('yêucầu', 'yêu cầu'), ('đápứng', 'đáp ứng'),
-        ('Đạitá', 'Đại tá'), ('phụcấp', 'phụ cấp'),
-        ('tổ chức cơ yếu hưởng', 'tổ chức cơ yếu hưởng'),
-        ('thiết kếkỹ', 'thiết kế kỹ'), ('thiết kếcơ', 'thiết kế cơ'),
-        ('quản lýn hà', 'quản lý nhà'), ('quản lýc hi', 'quản lý chi'),
-        ('XÃHỘI', 'XÃ HỘI'), ('HỘICHỦ', 'HỘI CHỦ'), ('BỐHỢP', 'BỐ HỢP'),
-        ('dovi phạm', 'do vi phạm'), ('phá dỡn hà', 'phá dỡ nhà'),
-        ('hỗ trợn hà', 'hỗ trợ nhà'), ('hỗ trợcải', 'hỗ trợ cải'),
-        ('bịảnh', 'bị ảnh'),
-        ('cấp xãnơi', 'cấp xã nơi'),
-        ('làcơ', 'là cơ'), ('làtài', 'là tài'), ('làkế', 'là kế'),
-        ('làcác', 'là các'), ('làmcơ', 'làm cơ'),
-        ('vớiquy', 'với quy'),
-        ('đápứngcác', 'đáp ứng các'), ('đápứngcácmục', 'đáp ứng các mục'),
-        ('yêucầucủa', 'yêu cầu của'),
-        ('Hồ sơYêu', 'Hồ sơ Yêu'), ('sơYêu', 'sơ Yêu'),
-    ]
-
     @classmethod
     def _fix_vietnamese_spacing(cls, text: str) -> str:
-        """Fix OCR word-merge artifacts by inserting missing spaces."""
-        if not text:
-            return text
-        # Don't modify table rows or markdown headings with REGEX fix
-        # but DO apply dictionary fixes to all lines (safe exact replacements)
-        lines = text.split('\n')
-        fixed = []
-        for line in lines:
-            s = line.strip()
-            # [P2-FIX-v2] Apply dictionary fixes to ALL lines (safe for tables)
-            for wrong, correct in cls._WORD_MERGE_FIXES:
-                if wrong in line:
-                    line = line.replace(wrong, correct)
-            # Skip regex fix for table rows and markdown headings
-            if s.startswith('|') or s.startswith('#'):
-                fixed.append(line)
-                continue
-            # Fix lowercase→uppercase transitions: "vềcải" → "về cải"
-            line = cls._SPACING_RE.sub(r'\1 \2', line)
-            fixed.append(line)
-        return '\n'.join(fixed)
+        """Fix OCR word-merge artifacts by delegating to TextNormalizer."""
+        return fix_vietnamese_syllable_boundaries(fix_stuck_vietnamese_words(text))
 
     @staticmethod
     def _wrap_xml_blocks(text: str) -> str:
@@ -585,3 +486,163 @@ class DataExporter:
             final_lines.append(line)
 
         return "\n".join(final_lines)
+
+    extract_doc_number_from_path = staticmethod(extract_doc_number_from_path)
+
+    def reprocess_exports(self, action: str = "apply", export_dir: Optional[str] = None) -> dict:
+        """Reprocess exported JSON and Markdown files in-place or dry-run/revert.
+
+        Args:
+            action: One of 'apply', 'dry-run', 'revert'.
+            export_dir: Directory containing 'json' and 'markdown' folders. Defaults to self.export_dir.
+
+        Returns:
+            Dict summarizing statistics: {action, md_changed, json_changed, md_total, json_total}.
+        """
+        if action not in ("apply", "dry-run", "revert"):
+            raise ValueError(f"Invalid action '{action}'. Must be 'apply', 'dry-run', or 'revert'.")
+
+        base_dir = export_dir or self.export_dir
+        md_dir = os.path.join(base_dir, "markdown")
+        json_dir = os.path.join(base_dir, "json")
+
+        md_files = sorted(glob.glob(os.path.join(md_dir, "*.md"))) if os.path.exists(md_dir) else []
+        json_files = sorted(glob.glob(os.path.join(json_dir, "*.json"))) if os.path.exists(json_dir) else []
+
+        # Filter out .bak files from file lists
+        md_files = [f for f in md_files if not f.endswith(".bak")]
+        json_files = [f for f in json_files if not f.endswith(".bak")]
+
+        if action == "revert":
+            md_restored = 0
+            json_restored = 0
+            if os.path.exists(md_dir):
+                for bak in glob.glob(os.path.join(md_dir, "*.bak")):
+                    orig = bak[:-4] if bak.endswith(".bak") else bak
+                    if orig.endswith(".md"):
+                        shutil.copy2(bak, orig)
+                        md_restored += 1
+            if os.path.exists(json_dir):
+                for bak in glob.glob(os.path.join(json_dir, "*.bak")):
+                    orig = bak[:-4] if bak.endswith(".bak") else bak
+                    if orig.endswith(".json"):
+                        shutil.copy2(bak, orig)
+                        json_restored += 1
+            logger.info(f"Reverted {md_restored} markdown and {json_restored} JSON files from backups.")
+            return {
+                "action": "revert",
+                "md_changed": md_restored,
+                "json_changed": json_restored,
+                "md_total": len(md_files),
+                "json_total": len(json_files),
+            }
+
+        # Backup files if action == "apply"
+        if action == "apply":
+            for f in md_files + json_files:
+                bak = f + ".bak"
+                if not os.path.exists(bak):
+                    shutil.copy2(f, bak)
+
+        md_changed = 0
+        json_changed = 0
+
+        # Process Markdown files
+        for f in md_files:
+            try:
+                text = Path(f).read_text(encoding="utf-8", errors="replace")
+            except Exception as e:
+                logger.warning(f"Error reading {f}: {e}")
+                continue
+
+            original = text
+
+            # Isolate ## Content section to protect Metadata and Summary sections
+            content_match = re.search(r"(## Content\s*\n)(.*)", text, re.DOTALL)
+            if content_match:
+                pre = text[: content_match.start(2)]
+                content = content_match.group(2)
+
+                content = strip_random_emojis(content)
+                content = strip_ai_monologue(content)
+                content = fix_table_gfm_v2(content)
+                content = normalize_ocr_spacing(content)
+                content = fix_common_ocr_typos(content)
+                content = fix_stuck_vietnamese_words(content)
+                content = fix_generic_stuck_words(content)
+                content = fix_vietnamese_syllable_boundaries(content)
+                content = strip_noi_nhan_block(content)
+                content = strip_digital_signature(content)
+                content = strip_document_boilerplate(content)
+
+                new_text = pre + content
+            else:
+                new_text = strip_random_emojis(text)
+                new_text = strip_ai_monologue(new_text)
+                new_text = fix_table_gfm_v2(new_text)
+
+            if new_text != original:
+                md_changed += 1
+                if action == "apply":
+                    Path(f).write_text(new_text, encoding="utf-8")
+
+        # Process JSON files
+        for f in json_files:
+            try:
+                data = json.loads(Path(f).read_text(encoding="utf-8", errors="replace"))
+            except Exception as e:
+                logger.warning(f"Error parsing JSON {f}: {e}")
+                continue
+
+            if not isinstance(data, dict):
+                continue
+
+            changed = False
+            meta = data.get("metadata")
+            if not isinstance(meta, dict):
+                meta = {}
+                data["metadata"] = meta
+
+            current_dn = meta.get("doc_number", "")
+            if not current_dn or not str(current_dn).strip():
+                extracted = extract_doc_number_from_path(f)
+                if extracted:
+                    meta["doc_number"] = extracted
+                    for c in (data.get("chunks") or []):
+                        if isinstance(c, dict):
+                            c["doc_number"] = extracted
+                    changed = True
+
+            for c in (data.get("chunks") or []):
+                if not isinstance(c, dict):
+                    continue
+                old_text = c.get("text", "")
+                if not old_text:
+                    continue
+                new_text = strip_random_emojis(old_text)
+                new_text = strip_ai_monologue(new_text)
+                new_text = strip_document_boilerplate(new_text)
+                new_text = strip_noi_nhan_block(new_text)
+                new_text = strip_digital_signature(new_text)
+                if new_text != old_text:
+                    c["text"] = new_text
+                    changed = True
+
+            if changed:
+                json_changed += 1
+                if action == "apply":
+                    with open(f, "w", encoding="utf-8") as jf:
+                        json.dump(data, jf, ensure_ascii=False, indent=2)
+
+        action_label = "Would fix" if action == "dry-run" else "Fixed"
+        logger.info(f"{action_label} {md_changed}/{len(md_files)} markdown files")
+        logger.info(f"{action_label} {json_changed}/{len(json_files)} JSON files")
+
+        return {
+            "action": action,
+            "md_changed": md_changed,
+            "json_changed": json_changed,
+            "md_total": len(md_files),
+            "json_total": len(json_files),
+        }
+

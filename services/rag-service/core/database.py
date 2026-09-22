@@ -233,8 +233,10 @@ async def get_search_pipeline(
     """Dependency to inject deep SearchPipeline."""
     from retrieval.search_pipeline import SearchPipeline
     from core.ai_gateway_client import get_ai_gateway_client
+    from services.hitl_service import get_hitl_service
     ai_client = get_ai_gateway_client(http_client)
-    return SearchPipeline(milvus_repo, neo4j_repo, ai_client=ai_client)
+    sampler_hook = getattr(get_hitl_service(), "maybe_sample", None)
+    return SearchPipeline(milvus_repo, neo4j_repo, ai_client=ai_client, sampler_hook=sampler_hook)
 
 
 async def get_retrieval_service(

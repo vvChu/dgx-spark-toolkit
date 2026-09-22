@@ -129,3 +129,96 @@ def fix_raw_pipe_tables(text: str) -> str:
             i += 1
 
     return '\n'.join(result)
+
+
+def fix_table_gfm_v2(text: str) -> str:
+    """[P1] Enhanced GFM table fixer for multi-line and nested tables.
+
+    Improvements:
+    - Handles tables where header row doesn't start/end with |
+    - Better detection of header vs data rows (looks at content patterns)
+    - Handles multi-line cell content by detecting table boundaries
+    - Fixes orphaned separator rows (|---|---| without header above)
+    """
+    if "|" not in text:
+        return text
+
+    lines = text.split("\n")
+    fixed: list[str] = []
+    in_table = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Count pipes in the line
+        pipe_count = stripped.count("|")
+
+        # A pipe-row: starts with | and has at least 3 | characters
+        is_pipe_row = (
+            stripped.startswith("|") and stripped.endswith("|")
+            and pipe_count >= 3
+        )
+
+        # Also catch rows that have pipes but don't start/end with them
+        # e.g., "STT | Tên | Giá trị" (common in OCR output)
+        is_loose_pipe_row = (
+            not is_pipe_row
+            and pipe_count >= 2
+            and bool(re.match(r"^\s*\S.*\|.*\S\s*$", stripped))
+            and len(stripped) > 10
+        )
+
+        if not is_pipe_row and not is_loose_pipe_row:
+            in_table = False
+            fixed.append(line)
+            continue
+
+        # For loose pipe rows, normalize them to proper pipe format
+        if is_loose_pipe_row and not is_pipe_row:
+            parts = [p.strip() for p in stripped.split("|")]
+            if parts and parts[0] == "":
+                parts = parts[1:]
+            if parts and parts[-1] == "":
+                parts = parts[:-1]
+            stripped = "| " + " | ".join(parts) + " |"
+            line = stripped
+            is_pipe_row = True
+
+        # Check if the NEXT line is a separator
+        next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        is_next_sep = bool(re.match(r"^\|[\s:\-|]+\|$", next_line))
+
+        if is_next_sep:
+            in_table = True
+            fixed.append(line)
+            continue
+
+        if in_table:
+            # Already inside a table (separator was seen/inserted) — this is a data row
+            fixed.append(line)
+            continue
+
+        # First pipe row without a following separator — check if it's a header
+        cells = [c.strip() for c in stripped.split("|")[1:-1]]
+        first_cell = cells[0] if cells else ""
+        first_cell_is_number = bool(re.match(r"^\d+\.?$", first_cell.strip()))
+        all_trivial = all(len(c) <= 2 for c in cells)
+
+        is_header = (
+            cells
+            and not first_cell_is_number
+            and not all_trivial
+            and all(len(c) < 80 for c in cells)
+            and any(re.search(r"[a-zA-Z\u00c0-\u1ef9]", c) for c in cells)
+            and not all(re.match(r"^[\d.,\s%]+$", c) for c in cells if c)
+        )
+        if is_header:
+            sep = "| " + " | ".join("---" for _ in cells) + " |"
+            fixed.append(line)
+            fixed.append(sep)
+            in_table = True
+        else:
+            fixed.append(line)
+
+    return "\n".join(fixed)
+
