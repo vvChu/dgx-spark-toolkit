@@ -1,4 +1,4 @@
-"""Unit tests for DGX-ChatOps Universal Gateway enhancements."""
+"""Comprehensive unit tests for DGX-ChatOps Universal Gateway."""
 
 import asyncio
 import hashlib
@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import yaml
 
 from fastapi.testclient import TestClient
+import httpx
 
 import scripts.chatops_daemon as daemon
 
@@ -73,22 +74,23 @@ def test_restart_service_markup():
 
 
 def test_audit_hash_chain_restoration(tmp_path, monkeypatch):
-    """Verify hash chain restoration from existing audit.jsonl file."""
+    """Verify hash chain restoration from existing audit.jsonl file with corruption resilience."""
     fake_audit = tmp_path / "audit.jsonl"
     monkeypatch.setattr(daemon, "AUDIT_FILE", fake_audit)
 
     # When file does not exist
     assert daemon.load_last_audit_hash() == "0" * 64
 
-    # Create fake audit file with chained records
+    # Create fake audit file with chained records and trailing corrupted line
     rec1_hash = hashlib.sha256(b"record_1").hexdigest()
     rec2_hash = hashlib.sha256(b"record_2").hexdigest()
 
     with open(fake_audit, "w", encoding="utf-8") as f:
         f.write(json.dumps({"record_hash": rec1_hash}) + "\n")
         f.write(json.dumps({"record_hash": rec2_hash}) + "\n")
+        f.write("corrupted trailing json line without closing brace\n")
 
-    # Should restore rec2_hash
+    # Should skip the corrupted trailing line and restore rec2_hash
     restored = daemon.load_last_audit_hash()
     assert restored == rec2_hash
 
@@ -105,15 +107,16 @@ def test_audit_hash_chain_restoration(tmp_path, monkeypatch):
     )
 
     with open(fake_audit, "r", encoding="utf-8") as f:
-        lines = [json.loads(line) for line in f if line.strip()]
+        lines = [line.strip() for line in f if line.strip()]
 
-    assert len(lines) == 3
-    assert lines[2]["prev_hash"] == rec2_hash
-    assert lines[2]["record_hash"] == daemon.last_audit_hash
+    # Last line should be the newly appended record
+    last_rec = json.loads(lines[-1])
+    assert last_rec["prev_hash"] == rec2_hash
+    assert last_rec["record_hash"] == daemon.last_audit_hash
 
 
 def test_anti_replay_protection():
-    """Verify updates older than 120s are dropped."""
+    """Verify updates older than 120s are dropped and logged to audit trail."""
     async def _test():
         now = time.time()
 
@@ -141,28 +144,79 @@ def test_anti_replay_protection():
 
         with patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
             with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
-                mock_send.return_value = 999
-                # Stale update should be dropped
-                await daemon.process_telegram_update(stale_update)
-                mock_dispatch.assert_not_called()
+                with patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+                    mock_send.return_value = 999
 
-                # Fresh update should be processed
-                await daemon.process_telegram_update(fresh_update)
-                mock_dispatch.assert_called_once()
+                    # Stale update should be dropped and logged
+                    await daemon.process_telegram_update(stale_update)
+                    mock_dispatch.assert_not_called()
+                    mock_audit.assert_called_once()
+                    assert mock_audit.call_args[1]["status"] == "STALE_DROPPED"
+
+                    # Fresh update should be processed
+                    mock_audit.reset_mock()
+                    await daemon.process_telegram_update(fresh_update)
+                    mock_dispatch.assert_called_once()
+
+    asyncio.run(_test())
+
+
+def test_failed_pin_attempt_audit_logging(tmp_path, monkeypatch):
+    """Verify failed PIN attempts (< 3) are logged to audit trail."""
+    fake_lockout = tmp_path / "chatops_lockout.json"
+    monkeypatch.setattr(daemon, "LOCKOUT_FILE", fake_lockout)
+    monkeypatch.setattr(daemon, "CHATOPS_EMERGENCY_PIN", "654321")
+
+    async def _test():
+        update = {
+            "update_id": 2001,
+            "message": {
+                "message_id": 601,
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "text": "/exec 111111 ls -la",
+                "date": int(time.time()),
+            },
+        }
+
+        with patch("scripts.chatops_daemon.delete_telegram_msg", new_callable=AsyncMock):
+            with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
+                with patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+                    await daemon.process_telegram_update(update)
+
+                    # Should report invalid PIN
+                    assert mock_send.call_count == 1
+                    assert "SAI MÃ PIN" in mock_send.call_args[0][1]
+
+                    # Should record AUTH_FAILED audit log
+                    mock_audit.assert_called_once()
+                    assert mock_audit.call_args[0][4] == "AUTH_FAILED"
 
     asyncio.run(_test())
 
 
 def test_persistent_http_client():
-    """Verify get_http_client creates and reuses client."""
+    """Verify get_http_client creates, reuses, and re-binds across loops."""
+    # 1. Reuse in same loop
     c1 = daemon.get_http_client()
     c2 = daemon.get_http_client()
     assert c1 is c2
     assert not c1.is_closed
 
+    # 2. Recreate cleanly across different event loops
+    async def _check_in_loop():
+        c_loop = daemon.get_http_client()
+        assert not c_loop.is_closed
+        return c_loop
+
+    loop_client_1 = asyncio.run(_check_in_loop())
+    loop_client_2 = asyncio.run(_check_in_loop())
+    assert loop_client_1 is not loop_client_2
+    assert not loop_client_2.is_closed
+
 
 def test_action_cache_cleanup():
-    """Verify expired nonces are purged from action_cache."""
+    """Verify purge_expired_action_cache directly removes expired nonces."""
     now = time.time()
     daemon.action_cache.clear()
 
@@ -170,11 +224,9 @@ def test_action_cache_cleanup():
     daemon.action_cache["expired_2"] = {"expires": now - 1, "cmd": "old2"}
     daemon.action_cache["valid_1"] = {"expires": now + 60, "cmd": "valid"}
 
-    # Simulate cleanup logic
-    expired_keys = [k for k, v in daemon.action_cache.items() if now > v.get("expires", 0)]
-    for k in expired_keys:
-        daemon.action_cache.pop(k, None)
-
+    # Invoke real production purge function
+    purged_count = daemon.purge_expired_action_cache()
+    assert purged_count == 2
     assert "expired_1" not in daemon.action_cache
     assert "expired_2" not in daemon.action_cache
     assert "valid_1" in daemon.action_cache
@@ -214,7 +266,24 @@ def test_probe_rag_state():
     asyncio.run(_test())
 
 
-def test_internal_notify_security():
+def test_probe_rag_state_offline():
+    """Verify probe_rag_state handles offline rag-service without hanging on stats."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = httpx.ConnectError("Connection refused")
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client):
+            result = await daemon.probe_rag_state()
+
+        assert "Không thể kết nối" in result
+        assert "Bỏ qua do `rag-service` không khả dụng" in result
+        # Only 1 request attempted (short-circuited stats)
+        assert mock_client.get.call_count == 1
+
+    asyncio.run(_test())
+
+
+def test_internal_notify_security(monkeypatch):
     """Verify /api/v1/notify rejects requests with invalid or missing secret header."""
     client = TestClient(daemon.app, client=("127.0.0.1", 50000))
 
@@ -230,24 +299,34 @@ def test_internal_notify_security():
     )
     assert res.status_code == 401
 
+    # When CHATOPS_INTERNAL_SECRET is unconfigured / empty
+    monkeypatch.setattr(daemon, "CHATOPS_INTERNAL_SECRET", "")
+    res = client.post(
+        "/api/v1/notify",
+        json={"title": "Test", "body": "Alert"},
+        headers={"X-ChatOps-Secret": ""},
+    )
+    assert res.status_code == 401
+    monkeypatch.setattr(daemon, "CHATOPS_INTERNAL_SECRET", "dgx_test_secret_123")
+
     # With correct header
     with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = 8888
         res = client.post(
             "/api/v1/notify",
             json={"title": "Test Valid", "body": "Alert Content", "severity": "WARNING"},
-            headers={"X-ChatOps-Secret": daemon.CHATOPS_INTERNAL_SECRET},
+            headers={"X-ChatOps-Secret": "dgx_test_secret_123"},
         )
         assert res.status_code == 200
         assert res.json()["status"] == "dispatched"
 
 
 def test_execute_shell_job_timeout_reaping():
-    """Verify execute_shell_job handles timeout without leaving zombie processes."""
+    """Verify execute_shell_job kills process group and reaps child process on timeout."""
     async def _test():
         with patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit:
             with patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
-                # Run a command that exceeds timeout (sleep 5 with timeout 1)
+                start = time.time()
                 await daemon.execute_shell_job(
                     cmd="sleep 5",
                     job_id="test_timeout",
@@ -256,6 +335,9 @@ def test_execute_shell_job_timeout_reaping():
                     title="Test Sleep",
                     timeout=1,
                 )
+                elapsed = time.time() - start
+                # Timeout was 1s, should exit cleanly within ~2.5s without waiting for sleep 5
+                assert elapsed < 3.5
                 assert mock_edit.call_count >= 2
                 last_call_text = mock_edit.call_args[0][2]
                 assert "TIMEOUT" in last_call_text
@@ -264,3 +346,25 @@ def test_execute_shell_job_timeout_reaping():
 
     asyncio.run(_test())
 
+
+def test_dispatch_command_callback_handling():
+    """Verify dispatch_command answers callback queries on invalid command or params."""
+    async def _test():
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer:
+            with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock):
+                # 1. Invalid command
+                await daemon.dispatch_command("nonexistent.command", {}, 123, 456, cq_id="cq_test_1")
+                mock_answer.assert_called_with("cq_test_1", "❌ Lệnh không tồn tại!", show_alert=True)
+
+                # 2. Invalid parameter violating regex
+                mock_answer.reset_mock()
+                await daemon.dispatch_command(
+                    "system.container.restart",
+                    {"service": "invalid_container;rm -rf /"},
+                    123,
+                    456,
+                    cq_id="cq_test_2",
+                )
+                mock_answer.assert_called_with("cq_test_2", "❌ Lỗi tham số service!", show_alert=True)
+
+    asyncio.run(_test())

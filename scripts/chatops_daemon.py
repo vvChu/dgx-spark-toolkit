@@ -27,7 +27,7 @@ import shutil
 import signal
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -89,6 +89,7 @@ action_cache: Dict[str, Dict[str, Any]] = {}
 heavy_op_lock = asyncio.Lock()
 service_locks: Dict[str, asyncio.Lock] = {}
 http_client: Optional[httpx.AsyncClient] = None
+client_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def load_last_audit_hash() -> str:
@@ -96,15 +97,19 @@ def load_last_audit_hash() -> str:
     if not AUDIT_FILE.exists():
         return "0" * 64
     try:
-        with open(AUDIT_FILE, "r", encoding="utf-8") as f:
+        with open(AUDIT_FILE, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
             for line in reversed(lines):
                 line = line.strip()
-                if line:
+                if not line:
+                    continue
+                try:
                     record = json.loads(line)
                     h = record.get("record_hash")
                     if h and isinstance(h, str) and len(h) == 64:
                         return h
+                except json.JSONDecodeError:
+                    continue
     except Exception as e:
         print(f"[Audit Warning] Failed to restore audit hash chain from {AUDIT_FILE}: {e}", flush=True)
     return "0" * 64
@@ -121,13 +126,19 @@ def get_service_lock(service_name: str) -> asyncio.Lock:
 
 
 def get_http_client() -> httpx.AsyncClient:
-    """Returns or initializes the persistent httpx client with connection pooling."""
-    global http_client
-    if http_client is None or http_client.is_closed:
+    """Returns or initializes the persistent httpx client with connection pooling and loop safety."""
+    global http_client, client_loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if http_client is None or http_client.is_closed or (current_loop is not None and client_loop != current_loop):
         http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(45.0, connect=10.0),
             limits=httpx.Limits(max_keepalive_connections=20, max_connections=50, keepalive_expiry=60.0),
         )
+        client_loop = current_loop
     return http_client
 
 
@@ -431,6 +442,16 @@ async def execute_shell_job(
             )
             append_audit_log("exec", cmd, {"job_id": job_id}, ADMIN_USER_ID, "TIMEOUT", dur, -1, "Process killed on timeout")
             return
+        except asyncio.CancelledError:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=3.0)
+            except Exception:
+                pass
+            raise
 
         duration_ms = int((time.time() - start_time) * 1000)
         exit_code = proc.returncode or 0
@@ -574,13 +595,17 @@ async def probe_rag_state() -> str:
     client = get_http_client()
 
     # 1. Health & Database Connectivity
+    is_service_reachable = False
     try:
         res = await client.get("http://127.0.0.1:8005/health", timeout=5.0)
         if res.status_code in [200, 503]:
+            is_service_reachable = True
             data = res.json()
             st_text = "🟢 Khả dụng" if data.get("status") == "ok" else "🟡 Hoạt động giảm tải (Degraded)"
             lines.append(f"• Dịch vụ `rag-service`: {st_text} (Port 8005)")
-            lines.append(f"• Phiên bản: `v{data.get('version', '2.0.0')}`")
+            ver_raw = str(data.get("version", "2.0.0"))
+            ver_str = ver_raw if ver_raw.startswith("v") else f"v{ver_raw}"
+            lines.append(f"• Phiên bản: `{ver_str}`")
             checks = data.get("checks", {})
             for db_name, db_st in checks.items():
                 st_icon = "🟢" if db_st in ("ok", "reconnected") else "🔴"
@@ -591,24 +616,27 @@ async def probe_rag_state() -> str:
         lines.append(f"• Dịch vụ `rag-service`: 🔴 Không thể kết nối ({e})")
 
     # 2. Vector & Graph Stats
-    try:
-        res_stats = await client.get("http://127.0.0.1:8005/stats", timeout=5.0)
-        if res_stats.status_code == 200:
-            stats = res_stats.json()
-            neo4j_docs = stats.get("neo4j_docs", 0)
-            neo4j_rels = stats.get("neo4j_rels", 0)
-            milvus_entities = stats.get("milvus_entities", 0)
-            total_target = stats.get("total_target", 8870)
-            pct = (neo4j_docs / total_target * 100) if total_target > 0 else 0.0
+    if is_service_reachable:
+        try:
+            res_stats = await client.get("http://127.0.0.1:8005/stats", timeout=5.0)
+            if res_stats.status_code == 200:
+                stats = res_stats.json()
+                neo4j_docs = stats.get("neo4j_docs", 0)
+                neo4j_rels = stats.get("neo4j_rels", 0)
+                milvus_entities = stats.get("milvus_entities", 0)
+                total_target = stats.get("total_target", 8870)
+                pct = (neo4j_docs / total_target * 100) if total_target > 0 else 0.0
 
-            lines.append("\n📊 *SỐ LIỆU CHỈ MỤC & CƠ SỞ DỮ LIỆU:*")
-            lines.append(f"• Tài liệu pháp lý (Neo4j): `{neo4j_docs}/{total_target}` ({pct:.1f}%)")
-            lines.append(f"• Quan hệ pháp lý (Neo4j): `{neo4j_rels:,}` liên kết")
-            lines.append(f"• Thực thể vector (Milvus): `{milvus_entities:,}` chunks")
-        else:
-            lines.append(f"\n• Thống kê cơ sở dữ liệu: ⚠️ HTTP {res_stats.status_code}")
-    except Exception as e:
-        lines.append(f"\n• Thống kê cơ sở dữ liệu: ⚠️ Lỗi truy vấn stats ({e})")
+                lines.append("\n📊 *SỐ LIỆU CHỈ MỤC & CƠ SỞ DỮ LIỆU:*")
+                lines.append(f"• Tài liệu pháp lý (Neo4j): `{neo4j_docs}/{total_target}` ({pct:.1f}%)")
+                lines.append(f"• Quan hệ pháp lý (Neo4j): `{neo4j_rels:,}` liên kết")
+                lines.append(f"• Thực thể vector (Milvus): `{milvus_entities:,}` chunks")
+            else:
+                lines.append(f"\n• Thống kê cơ sở dữ liệu: ⚠️ HTTP {res_stats.status_code}")
+        except Exception as e:
+            lines.append(f"\n• Thống kê cơ sở dữ liệu: ⚠️ Lỗi truy vấn stats ({e})")
+    else:
+        lines.append("\n• Thống kê cơ sở dữ liệu: ⚠️ Bỏ qua do `rag-service` không khả dụng")
 
     lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
     return "\n".join(lines)
@@ -635,6 +663,8 @@ async def dispatch_command(
     cmd_def = registry.get(command_id)
 
     if not cmd_def:
+        if cq_id:
+            await answer_callback(cq_id, "❌ Lệnh không tồn tại!", show_alert=True)
         err_text = f"❌ *[LỖI]* Lệnh `{command_id}` chưa được định nghĩa trong `chatops_commands.yaml`!"
         if not await edit_telegram_msg(chat_id, message_id, err_text, reply_markup=get_main_dashboard_markup()):
             await send_telegram_msg(chat_id, err_text, reply_markup=get_main_dashboard_markup())
@@ -651,6 +681,8 @@ async def dispatch_command(
     for p_name, p_pattern in param_rules.items():
         p_val = str(params.get(p_name, ""))
         if not re.match(p_pattern, p_val):
+            if cq_id:
+                await answer_callback(cq_id, f"❌ Lỗi tham số {p_name}!", show_alert=True)
             err_msg = f"❌ *[LỖI THAM SỐ]* Giá trị `{p_val}` của tham số `{p_name}` không thỏa mãn mẫu an toàn `{p_pattern}`!"
             if not await edit_telegram_msg(chat_id, message_id, err_msg, reply_markup=get_main_dashboard_markup()):
                 await send_telegram_msg(chat_id, err_msg, reply_markup=get_main_dashboard_markup())
@@ -762,7 +794,8 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
         # 1. Main Navigation Menu callbacks
         if data == "menu:main":
             await answer_callback(cq_id)
-            await edit_telegram_msg(chat_id, message_id, "🖥️ *BẢNG ĐIỀU KHIỂN DGX SPARK CHATOPS*\nVui lòng chọn tác vụ bên dưới:", reply_markup=get_main_dashboard_markup())
+            main_menu_text = "🖥️ *BẢNG ĐIỀU KHIỂN DGX SPARK CHATOPS*\nVui lòng chọn tác vụ bên dưới:"
+            await edit_telegram_msg(chat_id, message_id, main_menu_text, reply_markup=get_main_dashboard_markup())
             return
         elif data == "menu:status":
             await dispatch_command("system.status", {}, chat_id, message_id, cq_id=cq_id)
@@ -853,7 +886,18 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
         # Anti-Replay Protection for Stale Telegram Updates
         msg_date = msg.get("date", 0)
         if msg_date and (time.time() - msg_date > 120):
-            print(f"[Anti-Replay] Dropping stale update/message {message_id} (age: {int(time.time() - msg_date)}s > 120s)", flush=True)
+            age_sec = int(time.time() - msg_date)
+            print(f"[Anti-Replay] Dropping stale update/message {message_id} (age: {age_sec}s > 120s)", flush=True)
+            append_audit_log(
+                trigger_type="message",
+                command=text,
+                params={"message_id": message_id, "msg_date": msg_date, "age_seconds": age_sec},
+                user_id=user_id or 0,
+                status="STALE_DROPPED",
+                duration_ms=0,
+                exit_code=-1,
+                details=f"Stale update dropped by anti-replay protection (age: {age_sec}s > 120s)",
+            )
             return
 
         # Strict ACL
@@ -937,6 +981,7 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                     append_audit_log("exec", shell_cmd, {"attempts": attempts}, ADMIN_USER_ID, "LOCKED", 0, -1, "Brute force lockout triggered")
                 else:
                     await send_telegram_msg(chat_id, f"❌ *SAI MÃ PIN BẢO MẬT!* (Lần thử {attempts}/3)")
+                    append_audit_log("exec", shell_cmd, {"attempts": attempts}, ADMIN_USER_ID, "AUTH_FAILED", 0, -1, f"Failed PIN attempt ({attempts}/3)")
                 return
 
             reset_failed_pin_attempts()
@@ -1005,17 +1050,23 @@ async def telegram_polling_loop() -> None:
             await asyncio.sleep(5)
 
 
-async def cleanup_action_cache_loop() -> None:
+def purge_expired_action_cache() -> int:
+    """Purges expired nonces from action_cache to prevent memory leaks. Returns count of purged items."""
+    now = time.time()
+    expired_keys = [k for k, v in action_cache.items() if now > v.get("expires", 0)]
+    for k in expired_keys:
+        action_cache.pop(k, None)
+    return len(expired_keys)
+
+
+async def cleanup_action_cache_loop(interval_seconds: int = 600) -> None:
     """Periodically purges expired nonces from action_cache to prevent memory leaks."""
     while True:
         try:
-            await asyncio.sleep(600)  # Check every 10 minutes
-            now = time.time()
-            expired_keys = [k for k, v in action_cache.items() if now > v.get("expires", 0)]
-            for k in expired_keys:
-                action_cache.pop(k, None)
-            if expired_keys:
-                print(f"[ChatOps Cache] Purged {len(expired_keys)} expired action nonce(s).", flush=True)
+            await asyncio.sleep(interval_seconds)
+            purged = purge_expired_action_cache()
+            if purged:
+                print(f"[ChatOps Cache] Purged {purged} expired action nonce(s).", flush=True)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -1057,10 +1108,11 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-    global http_client
+    global http_client, client_loop
     if http_client and not http_client.is_closed:
         await http_client.aclose()
         http_client = None
+        client_loop = None
 
     print("[ChatOps] Daemon shutdown complete.", flush=True)
 
