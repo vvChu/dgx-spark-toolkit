@@ -125,6 +125,23 @@ def get_service_lock(service_name: str) -> asyncio.Lock:
     return service_locks[service_name]
 
 
+def is_kernel_runner_locked(lock_path: str = "/tmp/ccba_nightly_runner.lock") -> bool:
+    """Checks whether the CCBA Nightly Auto-Tuner file lock is held."""
+    p = Path(lock_path)
+    if not p.exists():
+        return False
+    try:
+        with open(p, "r") as f:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                return False
+            except (BlockingIOError, OSError):
+                return True
+    except Exception:
+        return False
+
+
 def get_http_client() -> httpx.AsyncClient:
     """Returns or initializes the persistent httpx client with connection pooling and loop safety."""
     global http_client, client_loop
@@ -427,11 +444,12 @@ async def execute_shell_job(
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=3.0)
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    await asyncio.wait_for(proc.wait(), timeout=3.0)
             except Exception:
                 pass
             dur = int((time.time() - start_time) * 1000)
@@ -444,11 +462,12 @@ async def execute_shell_job(
             return
         except asyncio.CancelledError:
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=3.0)
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    await asyncio.wait_for(proc.wait(), timeout=3.0)
             except Exception:
                 pass
             raise
@@ -751,6 +770,14 @@ async def dispatch_command(
             svc_lock_name = service_lock_tmpl
 
     # 3. Check Mutex Locks
+    if command_id == "ccba.skill.boost" and is_kernel_runner_locked():
+        if cq_id:
+            await answer_callback(cq_id, "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!", show_alert=True)
+        warn_msg = "⚠️ *Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!*"
+        if not await edit_telegram_msg(chat_id, message_id, warn_msg, reply_markup=get_main_dashboard_markup()):
+            await send_telegram_msg(chat_id, warn_msg, reply_markup=get_main_dashboard_markup())
+        return False
+
     if is_heavy and heavy_op_lock.locked():
         if cq_id:
             await answer_callback(cq_id, "⚠️ Đang có một tác vụ nặng khác đang chạy!", show_alert=True)
@@ -971,6 +998,12 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             params = entry.get("params", {})
             title = entry.get("title", "")
             timeout = entry.get("timeout")
+
+            if cmd == "ccba.skill.boost" and is_kernel_runner_locked():
+                action_cache[nonce] = entry
+                await answer_callback(cq_id, "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!", show_alert=True)
+                return
+
             await answer_callback(cq_id, f"🚀 Khởi chạy {title}...")
             status_msg_id = await send_telegram_msg(chat_id, f"⏳ *[ĐANG CHẠY]* `{title}`\nVui lòng đợi...")
             dispatched = await dispatch_command(cmd, params, chat_id, status_msg_id or message_id, title=title, cq_id=cq_id, timeout=timeout)
@@ -1181,6 +1214,9 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 await send_telegram_msg(chat_id, "Cú pháp: `/boost <skill_name>` (Ví dụ: `/boost bigbim-risk`)")
                 return
             skill_arg = parts[1].strip()
+            if is_kernel_runner_locked():
+                await send_telegram_msg(chat_id, "⚠️ *Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!*")
+                return
             sent_id = await send_telegram_msg(chat_id, f"⏳ *[ĐANG CHẠY]* `🚀 /boost {skill_arg}`\nVui lòng đợi...")
             if sent_id:
                 await dispatch_command(

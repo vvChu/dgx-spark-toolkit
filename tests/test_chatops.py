@@ -65,6 +65,7 @@ def test_command_registry_service_lock_and_whitelist():
     boost_cmd = cmds["ccba.skill.boost"]
     assert boost_cmd["slash"] == "/boost"
     assert boost_cmd["service_lock"] == "ccba-tuner"
+    assert boost_cmd.get("is_heavy_op") is True
     assert boost_cmd["timeout_seconds"] == 600
     assert boost_cmd["runner"] == "host_script"
     skill_regex = re.compile(boost_cmd["param_rules"]["skill"])
@@ -766,4 +767,163 @@ def test_watchdog_core_services_monitoring():
     ]
     for c in expected_containers:
         assert f'"{c}"' in src, f"Expected container {c} to be in check_docker_containers core_services"
+
+
+def test_is_kernel_runner_locked(tmp_path):
+    """Verify is_kernel_runner_locked accurately reflects file lock status."""
+    import fcntl
+
+    lock_file = tmp_path / "test_kernel.lock"
+    assert not daemon.is_kernel_runner_locked(str(lock_file))
+
+    # Create file but don't lock
+    lock_file.write_text("12345")
+    assert not daemon.is_kernel_runner_locked(str(lock_file))
+
+    # Lock file with fcntl
+    with open(lock_file, "r") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            assert daemon.is_kernel_runner_locked(str(lock_file))
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+    assert not daemon.is_kernel_runner_locked(str(lock_file))
+
+
+def test_three_tier_defense_against_kernel_lock(monkeypatch):
+    """Verify Three-Tier Defense blocks ccba.skill.boost when kernel lock is active."""
+    monkeypatch.setattr(daemon, "is_kernel_runner_locked", lambda *args, **kwargs: True)
+
+    async def _test():
+        daemon.action_cache.clear()
+
+        # --- Tier 1: act: callback ---
+        entry = {
+            "command": "ccba.skill.boost",
+            "params": {"skill": "bigbim-risk"},
+            "title": "🚀 /boost bigbim-risk",
+            "timeout": 600,
+            "expires": time.time() + 3600,
+        }
+        daemon.action_cache["tier1_nonce"] = entry
+
+        cq_update = {
+            "callback_query": {
+                "id": "cq_tier1",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"message_id": 999, "chat": {"id": daemon.ADMIN_USER_ID}},
+                "data": "act:tier1_nonce",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
+             patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+            await daemon.process_telegram_update(cq_update)
+            # Tier 1 blocks: answers callback with alert, restores nonce, does not dispatch
+            mock_answer.assert_called_once_with(
+                "cq_tier1",
+                "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!",
+                show_alert=True,
+            )
+            assert "tier1_nonce" in daemon.action_cache
+            mock_send.assert_not_called()
+            mock_dispatch.assert_not_called()
+
+        # --- Tier 2: /boost slash command ---
+        msg_update = {
+            "message": {
+                "message_id": 888,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/boost bigbim-risk",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+            await daemon.process_telegram_update(msg_update)
+            # Tier 2 blocks: sends warning message immediately, does not dispatch
+            mock_send.assert_called_once()
+            assert "Nightly Auto-Tuner" in mock_send.call_args[0][1]
+            mock_dispatch.assert_not_called()
+
+        # --- Tier 3: dispatch_command direct call ---
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
+            mock_edit.return_value = True
+            dispatched = await daemon.dispatch_command(
+                "ccba.skill.boost",
+                {"skill": "bigbim-risk"},
+                daemon.ADMIN_USER_ID,
+                777,
+                cq_id="cq_tier3",
+            )
+            assert dispatched is False
+            mock_answer.assert_called_once_with(
+                "cq_tier3",
+                "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!",
+                show_alert=True,
+            )
+            mock_edit.assert_called_once()
+            assert "Nightly Auto-Tuner" in mock_edit.call_args[0][2]
+
+    asyncio.run(_test())
+
+
+def test_execute_shell_job_two_phase_termination_sigkill_escalation():
+    """Verify execute_shell_job escalates to SIGKILL if SIGTERM times out."""
+    import signal
+
+    async def _test():
+        with patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock), \
+             patch("scripts.chatops_daemon.append_audit_log"), \
+             patch("os.killpg") as mock_killpg:
+
+            mock_proc = MagicMock()
+            mock_proc.pid = 99999
+
+            async def mock_wait():
+                return 0
+
+            mock_proc.wait = mock_wait
+
+            with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_subproc, \
+                 patch("os.getpgid", return_value=99999):
+                mock_subproc.return_value = mock_proc
+
+                call_count = 0
+
+                async def custom_wait_for(fut, timeout):
+                    nonlocal call_count
+                    call_count += 1
+                    if call_count == 1:
+                        if asyncio.iscoroutine(fut):
+                            fut.close()
+                        raise asyncio.TimeoutError()
+                    elif call_count == 2:
+                        if asyncio.iscoroutine(fut):
+                            fut.close()
+                        raise asyncio.TimeoutError()
+                    else:
+                        if asyncio.iscoroutine(fut):
+                            fut.close()
+                        return 0
+
+                with patch("asyncio.wait_for", side_effect=custom_wait_for):
+                    await daemon.execute_shell_job(
+                        cmd="stub",
+                        job_id="test_escalate",
+                        chat_id=daemon.ADMIN_USER_ID,
+                        status_msg_id=123,
+                        title="Test Escalate",
+                        timeout=1,
+                    )
+
+            assert mock_killpg.call_count == 2
+            mock_killpg.assert_any_call(99999, signal.SIGTERM)
+            mock_killpg.assert_any_call(99999, signal.SIGKILL)
+
+    asyncio.run(_test())
 
