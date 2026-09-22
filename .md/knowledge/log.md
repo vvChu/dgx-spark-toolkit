@@ -4,6 +4,57 @@ Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật 
 
 ---
 
+## [2026-09-22] [refactor/arch] | Architecture Refactoring & Quality Hardening (Phase 1 & Phase 2)
+
+- **Nhiệm vụ**: Tối ưu hóa kiến trúc theo chuẩn `/ccba-codebase-design`, hoàn thành trọn vẹn Phase 1 (3 Deepening Opportunities) và Phase 2 (3 Follow-up Hardening & Cleanliness recommendations) sau các vòng kiểm chứng đối kháng `/boost` (`DeepInvestigator`).
+- **Thành phần**:
+  - `Phase 1`:
+    - DocumentStore SSOT: Xóa bỏ hoàn toàn `LifecycleService` (53 LOC shallow wrapper) và `test_lifecycle_service.py`. Hợp nhất luồng `sync_status` vào `DocumentStore`.
+    - Export Normalization SSOT: Hợp nhất `strip_ai_monologue`, `strip_random_emojis`, `fix_table_gfm_v2`, `_VN_STUCK_WORDS` vào `normalizers/`. Bổ sung `DataExporter.reprocess_exports()` in-process method. Archive legacy scripts sang `.md/archive/legacy_scripts/`.
+    - Layer Decoupling: Triệt tiêu inverted import `from services.hitl_service...` trong `retrieval/search_pipeline.py` bằng Functional Seam `sampler_hook`.
+  - `Phase 2`:
+    - In-Process Audit Seam: Bổ sung `run_comprehensive_audit()` thread-safe (chỉ redirect `sys.stdout`), timeout 60s qua `asyncio.wait_for(...)` trả về `HTTP 504`, vá lỗi coverage false-positive 7300%, đóng kết nối socket Milvus an toàn trong `finally:`. Xóa bỏ 100% lệnh gọi subprocess khỏi router `admin.py`.
+    - Spoke Cleanliness Exit Code 0: Thay thế 4 đường dẫn máy cứng trong `scripts/` bằng `os.path.dirname(...)` động; gắn nhãn `# ccba:allow-machine-path` cho model GPU và `hub_path`. `check_spoke_cleanliness.py` đạt Exit Code 0.
+    - Concurrency Fast-Fail: Thêm `_pipeline_lock = asyncio.Lock()` tại `/admin/pipeline/{action}` trả về `HTTP 409 Conflict` khi đang có tác vụ chạy, bảo vệ file backup `.bak`.
+- **Xác thực**:
+  - `check_spoke_cleanliness.py`: Exit code 0 (12/15 scripts, 0 machine-state leaks).
+  - Flake8: 0 errors, 0 warnings.
+  - Test suite `rag-service`: 411/411 passed in 2.37s.
+  - Root test suite: 24/24 passed in 4.54s.
+  - Hub Import Depth: 18 files scanned, 0 violations.
+
+## [2026-09-22] [refactor/deps] | Hoàn thành MAP-SPARK-OSS-DEPENDENCY-20260922 (Modernizing OSS Dependencies)
+
+- **Nhiệm vụ**: Triển khai toàn diện bản đồ định hướng `MAP-SPARK-OSS-DEPENDENCY-20260922` nhằm tối ưu hóa quản lý dependency, bảo vệ kernel phần cứng Blackwell GB10, tăng tốc CI và bịt kín các vết rò rỉ kiến trúc.
+- **Thành phần**:
+  - `TICK-01`: Tạo `requirements-app.in` và biên dịch `requirements-app.lock` bằng `uv pip compile` với cờ `--no-emit-package` loại trừ hoàn toàn các gói phần cứng (`torch`, `torchvision`, `vllm`, `triton`, `nvidia-*`). Cập nhật `Dockerfile` dùng `pip3 install --no-deps -r requirements-app.lock`.
+  - `TICK-02`: Hoàn thiện stubbing `sentence_transformers` và `FlagEmbedding` trong `conftest.py`, gỡ bỏ ~800MB torch khỏi `requirements-ci.txt`, biên dịch `requirements-ci.lock`. Tốc độ test đạt 408 tests trong 1.95s.
+  - `TICK-03`: Bịt kín 100% Leaky Seams Milvus & Neo4j trong `pipeline.py`. Thu hồi raw driver export `@property def driver` khỏi `Neo4jRepository`. Đưa toàn bộ việc khởi tạo schema/collection và vòng đời vào `MilvusRepository`, `Neo4jRepository` và `DocumentStore`.
+  - `TICK-04`: Tạo script chuẩn hóa `scripts/check_dependency_updates.sh` hỗ trợ kiểm tra outdated theo mô hình 3 Tiers và quét an ninh tự động (`pip-audit` + `npm audit --omit=dev --audit-level=critical`). Tích hợp job `security-audit` vào `.github/workflows/ci.yml`.
+- **Xác thực**:
+  - 408/408 unit tests pass 100% trong 1.95s.
+  - Flake8 0 lỗi, ESLint 0 lỗi, Vite build frontend thành công trong 2.43s.
+  - `scripts/check_dependency_updates.sh --audit` và `--outdated` chạy thành công (exit 0).
+  - Bản đồ định hướng `map.md` đạt 100% hoàn thành (4/4 tickets đóng).
+
+---
+
+## [2026-09-22] [release/proposal] | Merged PR #324 (Deep Seam Legal OCR Normalizer) into Hub
+
+
+- **Nhiệm vụ**: Hoàn tất quy trình đóng góp tính năng từ Spoke `dgx-spark-toolkit` lên Central Hub `ccba-agent-platform`, nghiệm thu và phát hành PR #324 theo quy chuẩn OKF v2.0 & ADR-0045/ADR-0058.
+- **Thành phần**:
+  - Double-Pass Adversarial Review: Thẩm định 3 ứng viên, loại bỏ DGX-ChatOps (Bounded Context) và Governance Rules (leaks), phê duyệt và cắt tỉa dead-wood cho Deep Seam Legal OCR Normalizer.
+  - Porting & Facade: Chuyển giao 5 module chuẩn hóa OCR văn bản pháp luật vào `packages/ccba-legal-intel/src/ccba_legal/normalizers/`, nâng cấp facade `Cleaners.normalize_legal_text()`.
+  - Issue & PR: Mở Hub Issue #322 và PR #324 (`proposal/legal-ocr-normalizer`), vượt qua 7/7 CI checks 100% Green, Squash & Merge vào `main` (commit `d2bcc09f`).
+  - Downstream Closed-Loop Sync: Đồng bộ Hub `main` về Spoke qua `sync_spoke.py --apply` (1 mới, 22 cập nhật), cài đặt editable `ccba-legal-intel` tại Spoke venv, kiểm chuẩn shift-left.
+- **Xác thực**:
+  - Test suite Hub: 40/40 tests `test_text_normalizer.py` 100% PASS.
+  - Spoke import: `from ccba_legal.normalizers import TextNormalizer` & `Cleaners.normalize_legal_text` hoạt động chính xác.
+  - Shift-left gate: `check_hub_import_depth.py` 100% PASS (0 vi phạm).
+
+---
+
 ## [2026-09-22] [learn/ops] | Dynamic Version Gate, Audit Chaining & Infrastructure Manager Expansion
 
 - **Nhiệm vụ**: Chuẩn hóa và ban hành các quy tắc kỹ thuật, tri thức phiên làm việc và kỹ năng quản lý hạ tầng theo đề xuất học tập đã phê duyệt (`learning_proposal.md`).
