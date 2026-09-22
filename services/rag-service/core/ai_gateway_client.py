@@ -158,6 +158,7 @@ class AIGatewayClient:
         stop: Optional[List[str]] = None,
         timeout: Optional[float] = None,
         model_chain: Optional[List[str]] = None,
+        **kwargs: Any,
     ) -> str:
         """Send a chat completion request with automatic fallback chain retries."""
         chain = model_chain or [model or self.settings.VLLM_MODEL, "rag-core", "rag-light"]
@@ -177,6 +178,8 @@ class AIGatewayClient:
                 payload["stop"] = stop
             if extra_body:
                 payload.update(extra_body)
+            if kwargs:
+                payload.update(kwargs)
 
             client = self._get_client()
             for attempt in range(3):

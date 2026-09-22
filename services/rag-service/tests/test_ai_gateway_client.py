@@ -67,6 +67,22 @@ class TestAIGatewayClient:
         assert "title" in data
         assert "category" in data
 
+    def test_mock_client_extract_json_with_model_chain_and_kwargs(self):
+        mock_client = MockAIGatewayClient()
+        data = asyncio.run(
+            mock_client.extract_json(
+                [{"role": "user", "content": "Extract"}],
+                schema=SampleMetadata,
+                model_chain=["test-model-1", "test-model-2"],
+                custom_option="foo_bar",
+            )
+        )
+        assert isinstance(data, dict)
+        assert len(mock_client.call_history) == 1
+        assert mock_client.call_history[0]["kwargs"]["model_chain"] == ["test-model-1", "test-model-2"]
+        assert mock_client.call_history[0]["kwargs"]["custom_option"] == "foo_bar"
+
+
     def test_tiered_router_estimation_text_and_vision(self):
         import sys
         from pathlib import Path

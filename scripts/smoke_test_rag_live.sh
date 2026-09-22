@@ -66,7 +66,25 @@ test_endpoint() {
     fi
 }
 
+wait_for_service() {
+    local max_wait="${WAIT_TIMEOUT_SECONDS:-60}"
+    local elapsed=0
+    echo -n "Waiting for RAG service readiness at ${BASE_URL}/health... "
+    while [ "${elapsed}" -lt "${max_wait}" ]; do
+        if curl -s -f -m 3 "${BASE_URL}/health" >/dev/null 2>&1; then
+            echo "Ready (${elapsed}s)."
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+        echo -n "."
+    done
+    echo " Timed out waiting for service readiness (${max_wait}s)."
+    return 1
+}
+
 echo ""
+wait_for_service || true
 test_endpoint "GET" "/health" "" "Health Check" || true
 test_endpoint "GET" "/stats" "" "System Stats" || true
 test_endpoint "POST" "/search" '{"query": "luat xay dung", "limit": 2, "use_reranker": false}' "Search Endpoint (Fast Hybrid)" || true
