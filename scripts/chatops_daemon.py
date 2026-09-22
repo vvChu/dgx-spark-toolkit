@@ -502,6 +502,178 @@ def get_restart_service_markup() -> Dict[str, Any]:
     return {"inline_keyboard": keyboard}
 
 
+def load_command_registry() -> Dict[str, Dict[str, Any]]:
+    """Loads command specifications from scripts/chatops_commands.yaml."""
+    if not COMMANDS_FILE.exists():
+        return {}
+    try:
+        with open(COMMANDS_FILE, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+            cmds = data.get("commands", [])
+            return {c["id"]: c for c in cmds if "id" in c}
+    except Exception as e:
+        print(f"[ChatOps Config Error] Failed to load {COMMANDS_FILE}: {e}", flush=True)
+        return {}
+
+
+async def probe_rag_state() -> str:
+    """Probes RAG pipeline service health and vector store connections."""
+    lines = ["📄 *TIẾN ĐỘ & TRẠNG THÁI RAG INGESTION PIPELINE* 📄\n"]
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            res = await client.get("http://127.0.0.1:8005/health")
+            if res.status_code == 200:
+                data = res.json()
+                lines.append("• Dịch vụ `rag-service`: 🟢 Khả dụng (Port 8005)")
+                lines.append(f"• Phiên bản: `{data.get('version', '2.0.0')}`")
+                checks = data.get("checks", {})
+                for db_name, db_st in checks.items():
+                    st_icon = "🟢" if db_st == "ok" else "🔴"
+                    lines.append(f"  └─ `{db_name}`: {st_icon} {db_st}")
+            else:
+                lines.append(f"• Dịch vụ `rag-service`: ⚠️ Phản hồi HTTP {res.status_code}")
+    except Exception as e:
+        lines.append(f"• Dịch vụ `rag-service`: 🔴 Không thể kết nối ({e})")
+
+    # Ingestion queue or status files
+    ingest_dir = PROJECT_ROOT / "data" / "raw"
+    processed_dir = PROJECT_ROOT / "data" / "processed"
+    if ingest_dir.exists():
+        raw_count = len(list(ingest_dir.glob("*.*")))
+        lines.append(f"• Tệp chờ xử lý (`data/raw`): `{raw_count}` tệp")
+    if processed_dir.exists():
+        proc_count = len(list(processed_dir.glob("*.*")))
+        lines.append(f"• Tệp đã lập chỉ mục (`data/processed`): `{proc_count}` tệp")
+
+    lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
+    return "\n".join(lines)
+
+
+async def dispatch_command(
+    command_id: str,
+    params: Dict[str, Any],
+    chat_id: int,
+    message_id: int,
+    title: str = "",
+    cq_id: Optional[str] = None,
+    timeout: Optional[int] = None,
+) -> None:
+    """Universal dispatcher for commands defined in chatops_commands.yaml or emergency shell."""
+    # Special handling for emergency shell execution
+    if command_id == "system.emergency.exec":
+        shell_cmd = params.get("cmd", "")
+        job_id = hashlib.md5(f"exec_{time.time()}".encode()).hexdigest()[:6]
+        await execute_shell_job(shell_cmd, job_id, chat_id, message_id, title or f"Khẩn cấp: {shell_cmd[:30]}", timeout=timeout or 60)
+        return
+
+    registry = load_command_registry()
+    cmd_def = registry.get(command_id)
+
+    if not cmd_def:
+        err_text = f"❌ *[LỖI]* Lệnh `{command_id}` chưa được định nghĩa trong `chatops_commands.yaml`!"
+        if not await edit_telegram_msg(chat_id, message_id, err_text, reply_markup=get_main_dashboard_markup()):
+            await send_telegram_msg(chat_id, err_text, reply_markup=get_main_dashboard_markup())
+        return
+
+    runner = cmd_def.get("runner", "internal")
+    title = title or cmd_def.get("description", command_id)
+    cmd_timeout = timeout or cmd_def.get("timeout_seconds", 120)
+    is_heavy = cmd_def.get("is_heavy_op", False)
+    service_lock_tmpl = cmd_def.get("service_lock")
+
+    # 1. Parameter Validation
+    param_rules = cmd_def.get("param_rules", {})
+    for p_name, p_pattern in param_rules.items():
+        p_val = str(params.get(p_name, ""))
+        if not re.match(p_pattern, p_val):
+            err_msg = f"❌ *[LỖI THAM SỐ]* Giá trị `{p_val}` của tham số `{p_name}` không thỏa mãn mẫu an toàn `{p_pattern}`!"
+            if not await edit_telegram_msg(chat_id, message_id, err_msg, reply_markup=get_main_dashboard_markup()):
+                await send_telegram_msg(chat_id, err_msg, reply_markup=get_main_dashboard_markup())
+            return
+
+    # 2. Resolve Service Lock Name
+    svc_lock_name = None
+    if service_lock_tmpl:
+        try:
+            svc_lock_name = service_lock_tmpl.format(**params)
+        except KeyError:
+            svc_lock_name = service_lock_tmpl
+
+    # 3. Check Mutex Locks
+    if is_heavy and heavy_op_lock.locked():
+        if cq_id:
+            await answer_callback(cq_id, "⚠️ Đang có một tác vụ nặng khác đang chạy!", show_alert=True)
+        warn_msg = "⚠️ *Đang có một tác vụ nặng khác đang chạy trên server. Vui lòng thử lại sau!*"
+        if not await edit_telegram_msg(chat_id, message_id, warn_msg, reply_markup=get_main_dashboard_markup()):
+            await send_telegram_msg(chat_id, warn_msg, reply_markup=get_main_dashboard_markup())
+        return
+
+    if svc_lock_name:
+        s_lock = get_service_lock(svc_lock_name)
+        if s_lock.locked():
+            if cq_id:
+                await answer_callback(cq_id, f"⚠️ Dịch vụ {svc_lock_name} đang bận!", show_alert=True)
+            busy_msg = f"⚠️ *Dịch vụ `{svc_lock_name}` đang có tác vụ khác thực thi. Vui lòng thử lại sau!*"
+            if not await edit_telegram_msg(chat_id, message_id, busy_msg, reply_markup=get_main_dashboard_markup()):
+                await send_telegram_msg(chat_id, busy_msg, reply_markup=get_main_dashboard_markup())
+            return
+
+    # 4. Executor implementation
+    async def _execute_action():
+        if runner == "internal":
+            if cq_id:
+                await answer_callback(cq_id)
+            if command_id == "system.status":
+                text = await probe_hardware_and_containers()
+                if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
+                    await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
+                append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed system status")
+            elif command_id == "host.gpu":
+                text = await probe_blackwell_gpu()
+                if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
+                    await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
+                append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed GPU")
+            elif command_id == "rag.ingestion.state":
+                text = await probe_rag_state()
+                if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
+                    await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
+                append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed RAG state")
+            else:
+                unhandled = f"⚠️ Chưa xử lý runner internal cho lệnh `{command_id}`"
+                if not await edit_telegram_msg(chat_id, message_id, unhandled, reply_markup=get_main_dashboard_markup()):
+                    await send_telegram_msg(chat_id, unhandled, reply_markup=get_main_dashboard_markup())
+        elif runner in ["docker_cli", "host_script"]:
+            target_tmpl = cmd_def.get("target", "")
+            try:
+                rendered_cmd = target_tmpl.format(**params)
+            except KeyError as ke:
+                err_text = f"❌ *[LỖI CẤU HÌNH]* Thiếu tham số `{ke}` cho lệnh `{command_id}`!"
+                if not await edit_telegram_msg(chat_id, message_id, err_text):
+                    await send_telegram_msg(chat_id, err_text)
+                return
+
+            job_id = hashlib.md5(f"{command_id}_{time.time()}".encode()).hexdigest()[:6]
+            await execute_shell_job(rendered_cmd, job_id, chat_id, message_id, title, timeout=cmd_timeout)
+        else:
+            invalid_runner = f"❌ *[LỖI]* Runner `{runner}` không hợp lệ!"
+            if not await edit_telegram_msg(chat_id, message_id, invalid_runner):
+                await send_telegram_msg(chat_id, invalid_runner)
+
+    # 5. Run with proper locks
+    if is_heavy and svc_lock_name:
+        async with heavy_op_lock:
+            async with get_service_lock(svc_lock_name):
+                await _execute_action()
+    elif is_heavy:
+        async with heavy_op_lock:
+            await _execute_action()
+    elif svc_lock_name:
+        async with get_service_lock(svc_lock_name):
+            await _execute_action()
+    else:
+        await _execute_action()
+
+
 # --- 8. TELEGRAM LONG POLLER ENGINE ---
 async def process_telegram_update(update: Dict[str, Any]) -> None:
     """Processes an incoming Telegram update with strict ACL and atomic actions."""
@@ -528,16 +700,13 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             await edit_telegram_msg(chat_id, message_id, "🖥️ *BẢNG ĐIỀU KHIỂN DGX SPARK CHATOPS*\nVui lòng chọn tác vụ bên dưới:", reply_markup=get_main_dashboard_markup())
             return
         elif data == "menu:status":
-            await answer_callback(cq_id)
-            await edit_telegram_msg(chat_id, message_id, "⏳ Đang kiểm tra trạng thái toàn bộ dịch vụ...")
-            status_text = await probe_hardware_and_containers()
-            await edit_telegram_msg(chat_id, message_id, status_text, reply_markup=get_main_dashboard_markup())
+            await dispatch_command("system.status", {}, chat_id, message_id, cq_id=cq_id)
             return
         elif data == "menu:gpu":
-            await answer_callback(cq_id)
-            await edit_telegram_msg(chat_id, message_id, "⏳ Đang truy vấn thông số GPU Blackwell GB10...")
-            gpu_text = await probe_blackwell_gpu()
-            await edit_telegram_msg(chat_id, message_id, gpu_text, reply_markup=get_main_dashboard_markup())
+            await dispatch_command("host.gpu", {}, chat_id, message_id, cq_id=cq_id)
+            return
+        elif data == "menu:rag_state":
+            await dispatch_command("rag.ingestion.state", {}, chat_id, message_id, cq_id=cq_id)
             return
         elif data == "menu:restart_list":
             await answer_callback(cq_id)
@@ -545,14 +714,7 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             return
         elif data.startswith("rst:"):
             svc = data.split(":", 1)[1]
-            await answer_callback(cq_id, f"Đang khởi động lại {svc}...")
-            job_id = hashlib.md5(f"{svc}_{time.time()}".encode()).hexdigest()[:6]
-            lock = get_service_lock(svc)
-            if lock.locked():
-                await answer_callback(cq_id, f"⚠️ Dịch vụ {svc} đang có tác vụ khác chạy!", show_alert=True)
-                return
-            async with lock:
-                await execute_shell_job(f"docker restart {svc}", job_id, chat_id, message_id, f"Khởi động lại {svc}", timeout=60)
+            await dispatch_command("system.container.restart", {"service": svc}, chat_id, message_id, title=f"Khởi động lại {svc}", cq_id=cq_id)
             return
         elif data == "menu:upgrade_owu":
             await answer_callback(cq_id)
@@ -566,10 +728,9 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             nonce = hashlib.sha256(f"upg_owu_{time.time()}".encode()).hexdigest()[:8]
             action_cache[nonce] = {
                 "command": "system.openwebui.upgrade",
-                "target": "bash scripts/update-openwebui.sh v0.11.4",
+                "params": {"target_version": "v0.11.4"},
                 "title": "Nâng cấp Open WebUI lên v0.11.4",
-                "service": "openwebui",
-                "is_heavy": True,
+                "timeout": 300,
                 "expires": time.time() + 60,
             }
             markup = {
@@ -580,11 +741,6 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             }
             await edit_telegram_msg(chat_id, message_id, prompt, reply_markup=markup)
             return
-        elif data == "menu:rag_state":
-            await answer_callback(cq_id)
-            rag_info = "📄 *TIẾN ĐỘ RAG INGESTION PIPELINE:*\n• Dịch vụ `rag-service`: Đang lắng nghe trên cổng 8000\n• Hàng đợi Ingestion: 0 tệp đang chờ\n• Trạng thái ChromaDB / Vector Store: Khả dụng"
-            await edit_telegram_msg(chat_id, message_id, rag_info, reply_markup=get_main_dashboard_markup())
-            return
         elif data == "menu:help":
             await answer_callback(cq_id)
             help_text = (
@@ -592,7 +748,9 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 "• `/menu` hoặc `/start`: Bật bảng điều khiển cảm ứng.\n"
                 "• `/status`: Kiểm tra nhanh phần cứng & containers.\n"
                 "• `/gpu`: Xem nhiệt độ, VRAM GPU Blackwell GB10.\n"
+                "• `/rag_state`: Xem tiến độ hàng đợi RAG Ingestion.\n"
                 "• `/restart <service>`: Khởi động lại container.\n"
+                "• `/upgrade_owu`: Nâng cấp Open WebUI.\n"
                 "• `/exec <PIN> <command>`: Thực thi lệnh khẩn cấp (có 2-step confirmation).\n"
             )
             await edit_telegram_msg(chat_id, message_id, help_text, reply_markup=get_main_dashboard_markup())
@@ -604,31 +762,17 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             entry = action_cache.pop(nonce, None)
             if not entry or time.time() > entry.get("expires", 0):
                 await answer_callback(cq_id, "⚠️ Nút bấm đã hết hạn hoặc đã được thực thi!", show_alert=True)
-                await edit_telegram_msg(chat_id, message_id, "⚠️ *Thao tác đã hết hạn hoặc đã được thực thi trước đó.*", reply_markup=get_main_dashboard_markup())
+                expired_msg = "⚠️ *Thao tác đã hết hạn hoặc đã được thực thi trước đó.*"
+                if not await edit_telegram_msg(chat_id, message_id, expired_msg, reply_markup=get_main_dashboard_markup()):
+                    await send_telegram_msg(chat_id, expired_msg, reply_markup=get_main_dashboard_markup())
                 return
 
-            await answer_callback(cq_id, "Đang tiến hành thực thi lệnh...")
-            job_id = hashlib.md5(f"{entry['command']}_{time.time()}".encode()).hexdigest()[:6]
-            cmd = entry["target"]
-            title = entry.get("title", entry["command"])
-            svc = entry.get("service", "common")
-
-            # Check heavy operation lock
-            if entry.get("is_heavy", False):
-                if heavy_op_lock.locked():
-                    await answer_callback(cq_id, "⚠️ Đang có một tác vụ nặng khác chạy trên server!", show_alert=True)
-                    return
-                async with heavy_op_lock:
-                    svc_lock = get_service_lock(svc)
-                    async with svc_lock:
-                        await execute_shell_job(cmd, job_id, chat_id, message_id, title, timeout=entry.get("timeout", 300))
-            else:
-                svc_lock = get_service_lock(svc)
-                if svc_lock.locked():
-                    await answer_callback(cq_id, f"⚠️ Dịch vụ {svc} đang bận!", show_alert=True)
-                    return
-                async with svc_lock:
-                    await execute_shell_job(cmd, job_id, chat_id, message_id, title, timeout=entry.get("timeout", 120))
+            await answer_callback(cq_id, "Đang xử lý tác vụ...")
+            cmd = entry["command"]
+            params = entry.get("params", {})
+            title = entry.get("title", "")
+            timeout = entry.get("timeout")
+            await dispatch_command(cmd, params, chat_id, message_id, title=title, cq_id=cq_id, timeout=timeout)
             return
 
         return
@@ -655,37 +799,45 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
         if text == "/status":
             sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra trạng thái...")
             if sent_id:
-                status_text = await probe_hardware_and_containers()
-                await edit_telegram_msg(chat_id, sent_id, status_text, reply_markup=get_main_dashboard_markup())
+                await dispatch_command("system.status", {}, chat_id, sent_id)
             return
 
         # 3. /gpu
         if text == "/gpu":
             sent_id = await send_telegram_msg(chat_id, "⏳ Đang truy vấn GPU Blackwell...")
             if sent_id:
-                gpu_text = await probe_blackwell_gpu()
-                await edit_telegram_msg(chat_id, sent_id, gpu_text, reply_markup=get_main_dashboard_markup())
+                await dispatch_command("host.gpu", {}, chat_id, sent_id)
             return
 
-        # 4. /restart <service>
+        # 4. /rag_state
+        if text == "/rag_state":
+            sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra hàng đợi RAG...")
+            if sent_id:
+                await dispatch_command("rag.ingestion.state", {}, chat_id, sent_id)
+            return
+
+        # 5. /restart <service>
         if text.startswith("/restart"):
             parts = text.split(maxsplit=1)
             if len(parts) < 2:
                 await send_telegram_msg(chat_id, "Cú pháp: `/restart <service_name>` (Ví dụ: `/restart open-webui`)")
                 return
             svc = parts[1].strip()
-            allowed_svcs = ["open-webui", "qwen36b", "ai-gateway", "smart-watchdog", "cloudflared-tunnel", "rag-service"]
-            if svc not in allowed_svcs:
-                await send_telegram_msg(chat_id, f"❌ Dịch vụ không hợp lệ. Chỉ cho phép: `{', '.join(allowed_svcs)}`")
-                return
             sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị khởi động lại {svc}...")
             if sent_id:
-                job_id = hashlib.md5(f"{svc}_{time.time()}".encode()).hexdigest()[:6]
-                async with get_service_lock(svc):
-                    await execute_shell_job(f"docker restart {svc}", job_id, chat_id, sent_id, f"Khởi động lại {svc}", timeout=60)
+                await dispatch_command("system.container.restart", {"service": svc}, chat_id, sent_id, title=f"Khởi động lại {svc}")
             return
 
-        # 5. /exec <PIN> <command>
+        # 6. /upgrade_owu [version]
+        if text.startswith("/upgrade_owu"):
+            parts = text.split(maxsplit=1)
+            ver = parts[1].strip() if len(parts) > 1 else "v0.11.4"
+            sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị nâng cấp Open WebUI lên {ver}...")
+            if sent_id:
+                await dispatch_command("system.openwebui.upgrade", {"target_version": ver}, chat_id, sent_id, title=f"Nâng cấp Open WebUI lên {ver}")
+            return
+
+        # 7. /exec <PIN> <command>
         if text.startswith("/exec"):
             # Immediately delete message to purge PIN from history
             await delete_telegram_msg(chat_id, message_id)
@@ -729,9 +881,8 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             nonce = hashlib.sha256(f"exec_{time.time()}_{shell_cmd}".encode()).hexdigest()[:8]
             action_cache[nonce] = {
                 "command": "system.emergency.exec",
-                "target": shell_cmd,
+                "params": {"cmd": shell_cmd},
                 "title": f"Lệnh khẩn cấp: {shell_cmd[:30]}",
-                "service": "emergency",
                 "expires": time.time() + 60,
                 "timeout": 60,
             }
@@ -860,19 +1011,11 @@ async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Opti
         params = act.get("params", {})
         timeout = act.get("timeout", 120)
 
-        # Build target command from params
-        target = cmd
-        if cmd == "system.openwebui.upgrade":
-            target_ver = params.get("target_version", "v0.11.4")
-            target = f"bash scripts/update-openwebui.sh {target_ver}"
-
         nonce = hashlib.sha256(f"{action_id}_{time.time()}_{label}".encode()).hexdigest()[:8]
         action_cache[nonce] = {
             "command": cmd,
-            "target": target,
+            "params": params,
             "title": label,
-            "service": "openwebui" if "openwebui" in cmd else "common",
-            "is_heavy": "upgrade" in cmd,
             "timeout": timeout,
             "expires": time.time() + act.get("ttl_seconds", 3600),
         }
