@@ -26,7 +26,7 @@ last_digest_date: Optional[str] = None
 
 # ChatOps Gateway Integration
 CHATOPS_GATEWAY_URL = os.environ.get("CHATOPS_GATEWAY_URL", "http://172.21.0.1:8095")
-CHATOPS_INTERNAL_SECRET = os.environ.get("CHATOPS_INTERNAL_SECRET", "dgx_spark_chatops_secret_2026")
+CHATOPS_INTERNAL_SECRET = os.environ.get("CHATOPS_INTERNAL_SECRET", "").strip()
 
 
 def send_telegram_raw(message: str) -> bool:
@@ -74,7 +74,6 @@ def notify_chatops(title: str, body: str, actions: Optional[List[Dict[str, Any]]
 
 def send_telegram_alert(message: str, alert_type: str) -> None:
     """Sends an incident alert with cooldown protection and interactive action buttons."""
-    global last_alert_time
     now = time.time()
     if alert_type in last_alert_time:
         if now - last_alert_time[alert_type] < COOLDOWN_MINUTES * 60:

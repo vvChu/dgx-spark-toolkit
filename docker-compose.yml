@@ -535,6 +535,8 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - CHATOPS_INTERNAL_SECRET=${CHATOPS_INTERNAL_SECRET}
+      - CHATOPS_GATEWAY_URL=http://172.21.0.1:8095
     command: >
       sh -c "pip install requests docker && python /app/smart_watchdog.py"
     restart: unless-stopped
