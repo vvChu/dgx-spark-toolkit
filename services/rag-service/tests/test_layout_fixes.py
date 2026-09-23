@@ -47,6 +47,25 @@ class TestIsBlankPage:
         img_bytes = self._make_img(240)
         assert is_blank_page(img_bytes, surya_text='Logo') is True  # 4 chars < 60
 
+    def test_ocr_raw_none_never_blank(self):
+        """When worker failed (ocr_raw=None), is_blank_page must return False to prevent data loss."""
+        from ingestion.vision import is_blank_page
+        img_bytes = self._make_img(245)  # 100% white image
+        assert is_blank_page(img_bytes, surya_text='', ocr_raw=None) is False
+
+    def test_marginal_white_ratio_protected(self):
+        """Image with ~88% white pixels should NOT be detected as blank under 90% threshold."""
+        from ingestion.vision import is_blank_page
+        # Create an image where exactly 88% of pixels are white (245) and 12% are dark (50)
+        arr = np.full((100, 100), 245, dtype=np.uint8)
+        arr[:12, :] = 50  # 12% dark rows
+        buf = io.BytesIO()
+        Image.fromarray(arr, mode='L').save(buf, format='JPEG')
+        img_bytes = buf.getvalue()
+
+        # At 88% white ratio, it would have failed under old 85% threshold, but now safe under 90%
+        assert is_blank_page(img_bytes, surya_text='', ocr_raw=[]) is False
+
 
 # ─────────────────────────────────────────────
 # Fix #2: is_toc_page()

@@ -1,36 +1,15 @@
 import logging
 import os
 import sys
-import types
 import time
 import io
+from typing import Any, Optional
 import numpy as np
 try:
     import cv2
 except ImportError:
     cv2 = None
 import re
-
-# --- LangChain Legacy Shims (Fix for PaddleOCR/PaddleX) ---
-try:
-    from langchain_core.documents import Document
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-    # docstore shim
-    ms_docstore = types.ModuleType('langchain.docstore')
-    sys.modules['langchain.docstore'] = ms_docstore
-    ms_document = types.ModuleType('langchain.docstore.document')
-    sys.modules['langchain.docstore.document'] = ms_document
-    ms_document.Document = Document
-
-    # text_splitter shim
-    ms_splitter = types.ModuleType('langchain.text_splitter')
-    sys.modules['langchain.text_splitter'] = ms_splitter
-    ms_splitter.RecursiveCharacterTextSplitter = RecursiveCharacterTextSplitter
-
-    logging.info("LangChain legacy shims applied successfully.")
-except ImportError as e:
-    logging.warning(f"Failed to apply LangChain shims: {e}")
 
 from ingestion.rag_router import RAGRouter
 from ingestion.ocr_client import RemoteSuryaClient
@@ -157,17 +136,20 @@ def evaluate_ocr_quality(ocr_raw, page_num, total_pages):
     return final_score, avg_conf
 
 
-def is_blank_page(img_bytes: bytes, surya_text: str = "") -> bool:
+def is_blank_page(img_bytes: bytes, surya_text: str = "", ocr_raw: Any = "NOT_PASSED") -> bool:
     """[Fix #1] Detect near-blank pages (signature, spacer) to prevent LLM prompt leakage.
 
     A page is considered blank if:
-    - Image has >85% near-white pixels (pixel value > 230), AND
+    - ocr_raw is not None (if worker failed, ocr_raw is None -> never consider blank), AND
+    - Image has >90% near-white pixels (pixel value > 230), AND
     - Surya OCR extracted fewer than 60 meaningful characters
 
     Edge case: pages with small watermark/logo in corner may have ~75-80% white ratio
     — the combination of pixel check + text length check handles this gracefully:
     if Surya extracted >60 chars from the watermark, we safely skip blank detection.
     """
+    if ocr_raw is None:
+        return False
     try:
         if len(surya_text.strip()) > 60:
             return False  # Enough text — definitely not blank
@@ -177,7 +159,7 @@ def is_blank_page(img_bytes: bytes, surya_text: str = "") -> bool:
         if arr.size == 0:
             return True
         white_ratio = float((arr > 230).mean())
-        return white_ratio > 0.85
+        return white_ratio > 0.90
     except Exception:
         return False  # Fail-safe: assume not blank
 
@@ -341,11 +323,13 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
     img_pil = Image.open(io.BytesIO(enhanced_bytes))
 
     # 1. Primary OCR Pass (Remote Surya Worker Microservice)
-    ocr_raw = []
-    layout = []
+    ocr_raw = None
+    layout = None
     ocr_engine = _get_ocr_engine()
     if ocr_engine and ocr_engine.available:
         ocr_raw, layout = ocr_engine.process_page(enhanced_bytes, page_num=page_num)
+    else:
+        logger.warning(f"Page {page_num}: OCR engine unavailable or not initialized.")
 
     bbox_list = [line[0] for line in ocr_raw] if ocr_raw else []
 
@@ -458,28 +442,37 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
     if looks_like_annex_table:
         threshold = 80  # Higher threshold to strongly incentivize fallback for likely tables
 
-    # [Fix #1] Blank page guard — prevent prompt leakage on signature/spacer pages
-    if is_blank_page(img_bytes, surya_text=full_text):
-        logger.info(f"Page {page_num}: Detected near-blank page (signature/spacer). Skipping Vision LLM.")
-        return {"text": "", "bbox": bbox_list, "layout": layout_segments, "score": 0.0}
-
-    # [Fix #2] TOC page guard — exclude table of contents from content
-    if is_toc_page(full_text):
-        logger.info(f"Page {page_num}: Detected TOC (Mục lục) page. Skipping to prevent noise in content.")
-        return {"text": "", "bbox": bbox_list, "layout": layout_segments, "score": score}
-
-    if score < threshold or looks_like_annex_table:
-        logger.info(f"Page {page_num} score {score:.1f} < {threshold} (or seems like annex table). Triggering Primary Vision Fallback (gemini-3-flash).")
+    if ocr_raw is None:
+        logger.warning(
+            f"Page {page_num}: Remote OCR worker failed (ocr_raw is None). "
+            "Bypassing blank page detection to prevent data loss and triggering Vision Fallback directly."
+        )
         if VISION_FALLBACK_COUNT:
             VISION_FALLBACK_COUNT.inc()
-        vision_text = call_vision_fallback(llm_enhanced_bytes, ocr_text=full_text, page_num=page_num, model="gemini-3-flash")
+        vision_text = call_vision_fallback(llm_enhanced_bytes, ocr_text="", page_num=page_num, model="gemini-3-flash")
+    else:
+        # [Fix #1] Blank page guard — prevent prompt leakage on signature/spacer pages
+        if is_blank_page(img_bytes, surya_text=full_text, ocr_raw=ocr_raw):
+            logger.info(f"Page {page_num}: Detected near-blank page (signature/spacer). Skipping Vision LLM.")
+            return {"text": "", "bbox": bbox_list, "layout": layout_segments, "score": 0.0}
+
+        # [Fix #2] TOC page guard — exclude table of contents from content
+        if is_toc_page(full_text):
+            logger.info(f"Page {page_num}: Detected TOC (Mục lục) page. Skipping to prevent noise in content.")
+            return {"text": "", "bbox": bbox_list, "layout": layout_segments, "score": score}
+
+        if score < threshold or looks_like_annex_table:
+            logger.info(f"Page {page_num} score {score:.1f} < {threshold} (or seems like annex table). Triggering Primary Vision Fallback (gemini-3-flash).")
+            if VISION_FALLBACK_COUNT:
+                VISION_FALLBACK_COUNT.inc()
+            vision_text = call_vision_fallback(llm_enhanced_bytes, ocr_text=full_text, page_num=page_num, model="gemini-3-flash")
 
     if vision_text:
         final_text = vision_text
         layout_segments = []  # Clear bad layout so we don't ignore the vision text in chunking
 
         # 4. Cross-OCR Validation (optional — enable via CROSS_VALIDATE_OCR=1)
-        if _CROSS_VALIDATE_ENABLED and _cross_validate is not None:
+        if _CROSS_VALIDATE_ENABLED and _cross_validate is not None and ocr_raw is not None:
             try:
                 cv_result = _cross_validate(vision_text, full_text, page_num)
                 if not cv_result.get("skipped"):

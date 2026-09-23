@@ -1,8 +1,14 @@
+import contextlib
 import io
 import logging
 import os
 from typing import Any, Dict, List
 from PIL import Image
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 try:
     from surya.detection import DetectionPredictor
@@ -14,6 +20,13 @@ except ImportError:
     SURYA_AVAILABLE = False
 
 logger = logging.getLogger("ocr-worker.extractor")
+
+
+def _inference_mode():
+    """Context manager for torch.inference_mode with graceful fallback."""
+    if torch is not None and hasattr(torch, "inference_mode"):
+        return torch.inference_mode()
+    return contextlib.nullcontext()
 
 
 class SuryaWorkerExtractor:
@@ -61,7 +74,8 @@ class SuryaWorkerExtractor:
 
         # 1. Detection Pass
         try:
-            det_results = self.det_predictor([img_pil])
+            with _inference_mode():
+                det_results = self.det_predictor([img_pil])
         except Exception as e:
             logger.error(f"Surya detection failed: {e}")
             det_results = None
@@ -106,11 +120,12 @@ class SuryaWorkerExtractor:
         for i in range(0, len(valid_bboxes), chunk_size):
             chunk_bboxes = valid_bboxes[i:i + chunk_size]
             try:
-                predictions = self.rec_predictor(
-                    [img_pil],
-                    polygons=[chunk_bboxes],
-                    math_mode=True
-                )
+                with _inference_mode():
+                    predictions = self.rec_predictor(
+                        [img_pil],
+                        polygons=[chunk_bboxes],
+                        math_mode=True
+                    )
                 if predictions and getattr(predictions[0], "text_lines", None):
                     for line in predictions[0].text_lines:
                         p = getattr(line, "polygon", None)
@@ -124,14 +139,16 @@ class SuryaWorkerExtractor:
                 for idx, poly in enumerate(chunk_bboxes):
                     clean_poly = [list(pt) for pt in poly]
                     try:
-                        res = self.rec_predictor([img_pil], polygons=[[poly]], math_mode=True)
+                        with _inference_mode():
+                            res = self.rec_predictor([img_pil], polygons=[[poly]], math_mode=True)
                         if res and getattr(res[0], "text_lines", None) and res[0].text_lines:
                             line = res[0].text_lines[0]
                             p = getattr(line, "polygon", None) or poly
                             ocr_raw.append([[list(pt) for pt in p], _parse_line(line)])
                     except Exception:
                         try:
-                            res = self.rec_predictor([img_pil], polygons=[[poly]], math_mode=False)
+                            with _inference_mode():
+                                res = self.rec_predictor([img_pil], polygons=[[poly]], math_mode=False)
                             if res and getattr(res[0], "text_lines", None) and res[0].text_lines:
                                 line = res[0].text_lines[0]
                                 p = getattr(line, "polygon", None) or poly
@@ -143,7 +160,8 @@ class SuryaWorkerExtractor:
         # 3. Layout Extraction Pass
         layout_list: List[Dict[str, Any]] = []
         try:
-            layout_predictions = self.layout_predictor([img_pil])
+            with _inference_mode():
+                layout_predictions = self.layout_predictor([img_pil])
             if layout_predictions and getattr(layout_predictions[0], "bboxes", None):
                 for b in layout_predictions[0].bboxes:
                     poly = getattr(b, "polygon", None)

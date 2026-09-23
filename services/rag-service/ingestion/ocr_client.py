@@ -61,7 +61,12 @@ class RemoteSuryaClient:
     def device(self) -> str:
         return "cpu"
 
-    def process_page(self, img_input: Any, page_num: int = 0) -> Tuple[List[Any], List[Any]]:
+    @staticmethod
+    def is_service_failure(result: Tuple[Any, Any]) -> bool:
+        """Check if process_page result represents a service failure (None, None)."""
+        return result == (None, None) or (isinstance(result, (tuple, list)) and len(result) > 0 and result[0] is None)
+
+    def process_page(self, img_input: Any, page_num: int = 0) -> Tuple[Optional[List[Any]], Optional[List[Any]]]:
         """Process page image and return (ocr_raw, layout).
 
         Args:
@@ -71,6 +76,8 @@ class RemoteSuryaClient:
         Returns:
             Tuple of (ocr_raw, layout_segments) where layout_segments are
             SimpleNamespace objects matching vision.py segment schema.
+            Returns (None, None) on service error (HTTP error, timeout, circuit breaker open).
+            Returns ([], []) when the page is legitimately empty.
         """
         # Convert PIL or numpy array to bytes if needed
         if isinstance(img_input, Image.Image):
@@ -87,7 +94,7 @@ class RemoteSuryaClient:
                 img_bytes = buf.getvalue()
             except Exception as e:
                 logger.error(f"[RemoteSuryaClient] Failed to convert image array: {e}")
-                return [], []
+                return None, None
         else:
             logger.error(f"[RemoteSuryaClient] Unsupported image input type: {type(img_input)}")
             return [], []
@@ -98,7 +105,7 @@ class RemoteSuryaClient:
         # Check circuit breaker
         if not self.cb.allow_request():
             logger.warning(f"[RemoteSuryaClient] Circuit breaker OPEN for ocr-worker. Skipping page {page_num}.")
-            return [], []
+            return None, None
 
         # Check in-memory cache
         img_hash = hashlib.sha256(img_bytes).hexdigest()
@@ -115,13 +122,17 @@ class RemoteSuryaClient:
             if resp.status_code != 200:
                 logger.error(f"[RemoteSuryaClient] Worker returned HTTP {resp.status_code}: {resp.text}")
                 self.cb.record_failure()
-                return [], []
+                return None, None
 
             data = resp.json()
             self.cb.record_success()
 
-            ocr_raw = data.get("ocr_raw") or []
-            raw_layout = data.get("layout") or []
+            ocr_raw = data.get("ocr_raw")
+            if ocr_raw is None:
+                ocr_raw = []
+            raw_layout = data.get("layout")
+            if raw_layout is None:
+                raw_layout = []
 
             # Map layout to SimpleNamespace for full backward compatibility with vision.py:558-620
             layout_segments = []
@@ -164,25 +175,25 @@ class RemoteSuryaClient:
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             logger.error(f"[RemoteSuryaClient] Connection error contacting ocr-worker ({url}): {e}")
             self.cb.record_failure()
-            return [], []
+            return None, None
         except httpx.ReadTimeout as e:
             logger.error(f"[RemoteSuryaClient] Read timeout (150s) waiting for ocr-worker on page {page_num}: {e}")
             self.cb.record_failure()
-            return [], []
+            return None, None
         except Exception as e:
             logger.error(f"[RemoteSuryaClient] Unexpected error calling ocr-worker: {e}", exc_info=True)
             self.cb.record_failure()
-            return [], []
+            return None, None
 
     def ocr(self, img_pil: Image.Image, langs: Optional[List[str]] = None, page_num: int = 0) -> List[Any]:
         """Backward-compatible wrapper for SuryaExtractor.ocr()."""
         ocr_raw, _ = self.process_page(img_pil, page_num=page_num)
-        return ocr_raw
+        return ocr_raw if ocr_raw is not None else []
 
     def extract_layout(self, img_pil: Image.Image) -> List[Any]:
         """Backward-compatible wrapper for SuryaExtractor.extract_layout()."""
         _, layout = self.process_page(img_pil)
-        return layout
+        return layout if layout is not None else []
 
     def close(self):
         """Close HTTP client connection pool."""

@@ -250,8 +250,24 @@ _CATEGORY_MAP = {
 
 
 def classify_source_category(rel_path: str) -> str:
-    """Classify source category from the relative file path (folder structure)."""
+    """Classify source category from the relative file path or filename."""
+    path_lower = rel_path.lower()
+    if any(k in rel_path for k in ["QH_", "QH1", "QH2", "Quoc hoi", "Luat_", "Luat "]) or "qh1" in path_lower or "qh2" in path_lower:
+        return "QUOC_HOI"
+    if any(k in rel_path for k in ["CP_", "ND-CP", "Nghi dinh"]) or "chinh_phu" in path_lower:
+        return "CHINH_PHU"
+    if any(k in rel_path for k in ["QCVN", "Quy chuan"]):
+        return "QUY_CHUAN"
+    if any(k in rel_path for k in ["TCVN", "Tieu chuan", "ISO"]):
+        return "TIEU_CHUAN_QT"
+    if any(k in rel_path for k in ["BXD", "BKHCN", "BTC", "BCT", "BNN", "Linh vuc"]):
+        return "BO_NGANH"
+    if any(k in rel_path for k in ["BEP", "EIR", "PreBEP", "BIM", "So tay", "Huong dan", "TL ", "TL_"]):
+        return "TAI_LIEU_KT"
+    if any(k in rel_path for k in ["UBND"]):
+        return "DIA_PHUONG"
     for prefix, cat in _CATEGORY_MAP.items():
         if prefix in rel_path:
             return cat
     return "KHAC"
+

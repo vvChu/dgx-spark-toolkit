@@ -281,6 +281,16 @@ _AI_PATTERNS_EN = [
     r"(?i)(?:^|\n)\s*\*\*OCR Text:\*\*[^\n]*(?:\n|$)",
     r"(?i)(?:^|\n)\s*\*\*Reconstruct the[^\n]*\*\*[^\n]*(?:\n|$)",
     r"(?i)(?:^|\n)\s*Based on the visual (?:content|input)[^\n]*(?:\n|$)",
+    # OCR prompt and transcription notes leakage
+    r"(?mi)^\s*(?:\d+\.\s*)?Exclude\s+[\"'].*$",
+    r"(?mi)^\s*\*?\s*\*\*Header:\*\*\s*\(Exclude\s+\d+\).*$",
+    r"(?mi)^\s*\*?\s*(?:\*\*)?(?:Top|Bottom)\b.*?(?:Page number|\"\d+\"|\bcorner\b).*$",
+    r"(?mi)^\s*\*?\s*Page number\s+.*$",
+    r"(?mi)^\s*\*?\s*(?:Transcribe|Start from item|Maintain the numbering|Ensure line breaks)\b.*$",
+    r"(?mi)^\s*\*?\s*(?:Under Điều|(?:do\s+)?not use Markdown headers)\b.*$",
+    r"(?mi)^\s*I will combine these into the final output.*$",
+    r"(?mi)^\s*-\s*Ignore headers/footers like page numbers.*$",
+    r"(?mi)^\s*\*?\s*The image shows a page from a legal document.*$",
 ]
 
 _AI_COMPILED = [re.compile(p) for p in _AI_PATTERNS_VN + _AI_PATTERNS_EN]
@@ -299,7 +309,7 @@ def strip_ai_monologue(text: str) -> str:
 
     # Strip multiline reasoning traces (e.g. Thinking Process:... up to questions)
     text = re.sub(
-        r"(?is)(?:^|\n)\s*(?:Thinking Process|Tư duy suy luận):?.*?(?=\n\s*(?:[1-5]\.|\*|\-|\bCâu hỏi|\bQuestions?|\Z))",
+        r"(?is)(?:^|\n)\s*(?:Thinking Process|Tư duy suy luận):?.*?(?=\n\s*(?:\b(?:Câu hỏi|Questions?)\b|\Z))",
         "\n",
         text,
     )

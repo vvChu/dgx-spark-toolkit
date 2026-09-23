@@ -29,15 +29,30 @@ class MilvusRepository:
         search_params_sparse = {"metric_type": "IP", "params": {"drop_ratio_search": 0.2}}
         req_sparse = AnnSearchRequest([sparse_vector], "sparse_vector", search_params_sparse, limit=limit, expr=expr)
 
-        # Hybrid Search with RRFRanker
-        results = await self.client.hybrid_search(
-            collection_name=self.collection_name,
-            reqs=[req_dense, req_sparse],
-            ranker=RRFRanker(),
-            limit=limit,
-            output_fields=["text", "source", "page", "summary", "doc_date", "doc_type", "authority", "chunk_type", "parent_id", "is_table", "doc_number", "doc_id", "chunk_id", "bbox", "validity_status", "project_code", "discipline", "hierarchy_path", "doc_status", "revision", "synthetic_queries", "legal_level", "citation_count"]
-        )
-        return results
+        try:
+            # Hybrid Search with RRFRanker
+            results = await self.client.hybrid_search(
+                collection_name=self.collection_name,
+                reqs=[req_dense, req_sparse],
+                ranker=RRFRanker(),
+                limit=limit,
+                output_fields=["text", "source", "page", "summary", "doc_date", "doc_type", "authority", "chunk_type", "parent_id", "is_table", "doc_number", "doc_id", "chunk_id", "bbox", "validity_status", "project_code", "discipline", "hierarchy_path", "doc_status", "revision", "synthetic_queries", "legal_level", "citation_count"]
+            )
+            return results
+        except Exception as e:
+            if "sparse_vector" in str(e):
+                logger.warning(f"Hybrid search sparse_vector missing/failed ({e}), falling back to dense-only search")
+                dense_results = await self.client.search(
+                    collection_name=self.collection_name,
+                    data=[query_vector],
+                    anns_field="vector",
+                    search_params=search_params_dense,
+                    limit=limit,
+                    filter=expr,
+                    output_fields=["text", "source", "page", "summary", "doc_date", "doc_type", "authority", "chunk_type", "parent_id", "is_table", "doc_number", "doc_id", "chunk_id", "bbox", "validity_status", "project_code", "discipline", "hierarchy_path", "doc_status", "revision", "synthetic_queries", "legal_level", "citation_count"]
+                )
+                return dense_results
+            raise
 
     async def get_parent_chunks(self, parent_ids: list):
         """Retrieve parent texts given a list of parent_ids."""

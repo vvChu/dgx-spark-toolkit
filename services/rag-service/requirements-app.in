@@ -34,8 +34,6 @@ watchdog>=3.0.0,<5.0.0
 # ── Tier A: ML/NLP Helper Libraries ──
 FlagEmbedding>=1.2.0,<1.4.0
 sentence-transformers>=3.0.0,<6.0.0
-langchain>=0.3.0,<0.4.0
-langchain-community>=0.3.0,<0.4.0
 
 # ── Tier A: Web Framework & Utilities ──
 fastapi>=0.100.0,<1.0.0

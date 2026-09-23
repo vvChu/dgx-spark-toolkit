@@ -28,6 +28,7 @@ import json
 import time
 import logging
 import glob
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logging.basicConfig(
@@ -40,9 +41,31 @@ EXPORT_JSON_DIR = os.environ.get(
     "EXPORT_JSON_DIR",
     "/app/exports/json" if os.path.exists("/app/exports/json") else "/home/vvc/Public/exports/json"
 )
-BACKFILL_LIMIT = int(os.environ.get("BACKFILL_LIMIT", "0"))
+BACKFILL_LIMIT = int(os.environ.get("BACKFILL_LIMIT", "195"))
 DRY_RUN = os.environ.get("BACKFILL_DRY_RUN", "0") == "1"
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "6"))  # LLM concurrency
+
+_VN_DIACRITICS = re.compile(
+    r"[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđĐ]",
+    re.IGNORECASE,
+)
+
+
+def is_valid_synthetic_queries(text: str) -> bool:
+    """Validate that synthetic queries are genuine Vietnamese questions."""
+    if not text or not isinstance(text, str):
+        return False
+    text = text.strip()
+    if len(text) < 20:
+        return False
+    if "is no longer available" in text or "Please switch to Gemini" in text:
+        return False
+    if "Thinking Process" in text or "Analyze the Request" in text or "Tư duy suy luận" in text:
+        return False
+    if not _VN_DIACRITICS.search(text):
+        return False
+    return True
+
 
 # ── LLM setup ────────────────────────────────────────────────────────────────
 
@@ -50,15 +73,16 @@ try:
     import httpx
     from core.config import get_settings
     from ingestion.normalizers.boilerplate import strip_ai_monologue
-    s = get_settings()
-    _API_URL = s.VLLM_API_BASE.rstrip("/") + "/chat/completions"
+    from ingestion.legal_taxonomy import classify_source_category
+    _API_URL = os.environ.get("SYNTHETIC_API_URL", "").rstrip("/")
+    if not _API_URL:
+        _API_URL = os.environ.get("VLLM_API_BASE", "").rstrip("/")
+        if not _API_URL or "ai-gateway:4000" in _API_URL:
+            _API_URL = "http://100.83.192.30:8045/v1"
+    if not _API_URL.endswith("/chat/completions"):
+        _API_URL += "/chat/completions"
     _MODEL = os.environ.get("SYNTHETIC_QUERY_MODEL", "gemini-3.7-flash-low")
-    _raw_key = s.LITELLM_MASTER_KEY
-    _API_KEY = (
-        _raw_key.get_secret_value()
-        if hasattr(_raw_key, "get_secret_value")
-        else (str(_raw_key) if _raw_key else "unused")
-    )
+    _API_KEY = os.environ.get("GATEWAY_PROXY_KEY", "sk-ef1b299485084c76a1396fa6275cb30d")
     _CLIENT = httpx.Client(timeout=60)
     logger.info(f"LLM endpoint: {_API_URL}  model: {_MODEL}")
 except Exception as e:
@@ -84,7 +108,7 @@ def _generate(chunk_text: str) -> str:
                 "content": f"Tạo 3-5 câu hỏi tiếng Việt cho đoạn văn bản sau:\n\n{chunk_text[:2000]}\n\nCâu hỏi:",
             },
         ],
-        "max_tokens": 256,
+        "max_tokens": 512,
         "temperature": 0.3,
     }
     headers = {"Authorization": f"Bearer {_API_KEY}"}
@@ -98,7 +122,11 @@ def _generate(chunk_text: str) -> str:
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"].get("content", "").strip()
             content = strip_ai_monologue(content)
-            return content[:4000]
+            if is_valid_synthetic_queries(content):
+                return content[:4000]
+            else:
+                logger.warning(f"Generated queries failed validation: {content[:80]}")
+                return ""
         except Exception as exc:
             if attempt == 2:
                 logger.warning(f"Failed after 3 attempts: {exc}")
@@ -114,7 +142,7 @@ def main():
     json_files = [f for f in json_files if not f.endswith(".bak")]
     logger.info(f"Found {len(json_files)} JSON exports in {EXPORT_JSON_DIR}")
 
-    # Stage 1: Sanitize corrupted existing chunks (strip reasoning leaks)
+    # Stage 1: Sanitize corrupted existing chunks (strip reasoning leaks, deprecation, fix source_category)
     sanitized_count = 0
     for path in json_files:
         try:
@@ -124,20 +152,46 @@ def main():
             logger.warning(f"Skip sanitize (parse error): {path}: {e}")
             continue
         modified = False
+
+        orig_path = data.get("original_path") or Path(path).name
+        cat = classify_source_category(orig_path)
+        if data.get("metadata", {}).get("source_category") != cat:
+            if "metadata" not in data:
+                data["metadata"] = {}
+            data["metadata"]["source_category"] = cat
+            modified = True
+
         for chunk in data.get("chunks", []):
-            sq = chunk.get("synthetic_queries", "")
-            if "Thinking Process" in sq or "Analyze the Request" in sq:
-                # Clean or reset corrupt query so it gets cleanly regenerated
-                chunk["synthetic_queries"] = ""
+            if chunk.get("source_category") != cat:
+                chunk["source_category"] = cat
                 modified = True
-                sanitized_count += 1
+
+            # Sanitize chunk text from OCR monologue & prompt leakages
+            old_text = chunk.get("text", "")
+            cleaned_text = strip_ai_monologue(old_text)
+            if cleaned_text != old_text:
+                chunk["text"] = cleaned_text
+                modified = True
+
+            # Validate synthetic queries
+            sq = chunk.get("synthetic_queries", "")
+            if sq:
+                cleaned_sq = strip_ai_monologue(sq)
+                if not is_valid_synthetic_queries(cleaned_sq):
+                    chunk["synthetic_queries"] = ""
+                    modified = True
+                    sanitized_count += 1
+                elif cleaned_sq != sq:
+                    chunk["synthetic_queries"] = cleaned_sq
+                    modified = True
+
         if modified and not DRY_RUN:
             Path(path).write_text(
                 json.dumps(data, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
     if sanitized_count > 0:
-        logger.info(f"Sanitized {sanitized_count} chunks infected with Thinking Process.")
+        logger.info(f"Sanitized {sanitized_count} corrupt or deprecation-infected chunks.")
 
     # Stage 2: Collect all parent chunks missing synthetic_queries
     todo: list[tuple[str, dict, dict]] = []  # (file_path, doc_data, chunk)
@@ -151,12 +205,12 @@ def main():
             if (
                 chunk.get("chunk_type") == "parent"
                 and len(chunk.get("text", "")) > 100
-                and not chunk.get("synthetic_queries", "").strip()
+                and not is_valid_synthetic_queries(chunk.get("synthetic_queries", ""))
             ):
                 todo.append((path, data, chunk))
 
     total = len(todo)
-    logger.info(f"Found {total} parent chunks without synthetic_queries")
+    logger.info(f"Found {total} parent chunks without valid synthetic_queries")
 
     if BACKFILL_LIMIT > 0:
         todo = todo[:BACKFILL_LIMIT]
@@ -190,7 +244,7 @@ def main():
             if (
                 chunk.get("chunk_type") == "parent"
                 and len(chunk.get("text", "")) > 100
-                and not chunk.get("synthetic_queries", "").strip()
+                and not is_valid_synthetic_queries(chunk.get("synthetic_queries", ""))
                 and path in file_to_chunks
             ):
                 flat_tasks.append((path, chunk))

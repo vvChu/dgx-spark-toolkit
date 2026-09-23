@@ -26,6 +26,14 @@ def dummy_image_bytes() -> bytes:
 class TestRemoteSuryaClient:
     """Test suite for RemoteSuryaClient."""
 
+    @pytest.fixture(autouse=True)
+    def reset_circuit_breaker(self):
+        from core.circuit_breaker import get_circuit_breaker
+        cb = get_circuit_breaker("ocr-worker")
+        cb.record_success()
+        yield
+        cb.record_success()
+
     def test_alias_compatibility(self):
         """SuryaExtractor in vision.py must alias to RemoteSuryaClient."""
         assert SuryaExtractor is RemoteSuryaClient
@@ -107,7 +115,7 @@ class TestRemoteSuryaClient:
 
     @patch("ingestion.ocr_client.httpx.Client.post")
     def test_worker_http_error_fallback(self, mock_post):
-        """Worker 500 error should gracefully return empty lists."""
+        """Worker 500 error should return (None, None) and register as service failure."""
         mock_resp = MagicMock()
         mock_resp.status_code = 500
         mock_resp.text = "Internal Server Error"
@@ -115,18 +123,23 @@ class TestRemoteSuryaClient:
 
         client = RemoteSuryaClient(base_url="http://test-worker:8000")
         ocr_raw, layout = client.process_page(dummy_image_bytes())
-        assert ocr_raw == []
-        assert layout == []
+        assert ocr_raw is None
+        assert layout is None
+        assert RemoteSuryaClient.is_service_failure((ocr_raw, layout)) is True
+        # Backward-compatible wrappers should return empty lists
+        assert client.ocr(create_dummy_image()) == []
+        assert client.extract_layout(create_dummy_image()) == []
 
     @patch("ingestion.ocr_client.httpx.Client.post")
     def test_worker_timeout_fallback(self, mock_post):
-        """Read timeout should gracefully return empty lists without raising."""
+        """Read timeout should return (None, None) without raising."""
         mock_post.side_effect = httpx.ReadTimeout("Request timed out")
 
         client = RemoteSuryaClient(base_url="http://test-worker:8000")
         ocr_raw, layout = client.process_page(dummy_image_bytes())
-        assert ocr_raw == []
-        assert layout == []
+        assert ocr_raw is None
+        assert layout is None
+        assert RemoteSuryaClient.is_service_failure((ocr_raw, layout)) is True
 
     def test_empty_input(self):
         """Empty or invalid input returns empty lists immediately."""
@@ -231,10 +244,33 @@ class TestRemoteSuryaClient:
 
     @patch("ingestion.ocr_client.httpx.Client.post")
     def test_connect_error_fallback(self, mock_post):
-        """Connection errors should trigger circuit failure and return empty lists."""
+        """Connection errors should trigger circuit failure and return (None, None)."""
         mock_post.side_effect = httpx.ConnectError("Connection refused")
 
         client = RemoteSuryaClient(base_url="http://test-worker:8000")
         ocr_raw, layout = client.process_page(dummy_image_bytes())
-        assert ocr_raw == []
-        assert layout == []
+        assert ocr_raw is None
+        assert layout is None
+        assert RemoteSuryaClient.is_service_failure((ocr_raw, layout)) is True
+
+    def test_circuit_breaker_open_fallback(self):
+        """When circuit breaker is open, should return (None, None) immediately."""
+        import time
+        from core.circuit_breaker import CircuitState
+        client = RemoteSuryaClient(base_url="http://test-worker:8000")
+        client.cb._state = CircuitState.OPEN
+        client.cb._last_failure_time = time.monotonic()
+
+        ocr_raw, layout = client.process_page(dummy_image_bytes())
+        assert ocr_raw is None
+        assert layout is None
+        assert RemoteSuryaClient.is_service_failure((ocr_raw, layout)) is True
+
+    def test_service_failure_discrimination(self):
+        """Verify distinction between legitimate empty page ([], []) and service error (None, None)."""
+        empty_page_result = ([], [])
+        error_result = (None, None)
+
+        assert RemoteSuryaClient.is_service_failure(empty_page_result) is False
+        assert RemoteSuryaClient.is_service_failure(error_result) is True
+        assert RemoteSuryaClient.is_service_failure((None, [])) is True

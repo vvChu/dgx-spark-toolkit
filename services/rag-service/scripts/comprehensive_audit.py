@@ -22,6 +22,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Optional
 
+# Ensure rag-service root (/app or services/rag-service) is in sys.path
+_RAG_ROOT = str(Path(__file__).resolve().parent.parent)
+if _RAG_ROOT not in sys.path:
+    sys.path.insert(0, _RAG_ROOT)
+if os.path.exists("/app") and "/app" not in sys.path:
+    sys.path.insert(0, "/app")
+
 # ── Config ──────────────────────────────────────────────────────────────────
 EXPORT_JSON_DIR = os.environ.get("EXPORT_JSON_DIR", "/app/exports/json")
 EXPORT_MD_DIR = os.environ.get("EXPORT_MD_DIR", "/app/exports/markdown")
@@ -30,6 +37,27 @@ MILVUS_SAMPLE_LIMIT = int(os.environ.get("MILVUS_SAMPLE_LIMIT", "2000"))
 
 _audit_lock = threading.Lock()
 SEPARATOR = "=" * 70
+
+_VN_DIACRITICS = re.compile(
+    r"[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđĐ]",
+    re.IGNORECASE,
+)
+
+
+def is_valid_synthetic_queries(text: str) -> bool:
+    """Validate that synthetic queries are genuine Vietnamese questions."""
+    if not text or not isinstance(text, str):
+        return False
+    text = text.strip()
+    if len(text) < 20:
+        return False
+    if "is no longer available" in text or "Please switch to Gemini" in text:
+        return False
+    if "Thinking Process" in text or "Analyze the Request" in text or "Tư duy suy luận" in text:
+        return False
+    if not _VN_DIACRITICS.search(text):
+        return False
+    return True
 
 
 # ── Utility ─────────────────────────────────────────────────────────────────
@@ -373,7 +401,7 @@ def audit_chunking(json_files):
     print(f"  {flag_dup} Duplicate parent chunks : {dup_excess}  ({len(dup_fps)} unique fingerprints repeated)")
 
     # C6: Synthetic queries coverage
-    has_synth = sum(1 for c in all_parents if c.get("synthetic_queries", "").strip())
+    has_synth = sum(1 for c in all_parents if is_valid_synthetic_queries(c.get("synthetic_queries", "")))
     synth_rate = has_synth / max(total_p, 1)
     flag_synth = "✅" if synth_rate >= 0.4 else ("🟡" if synth_rate >= 0.15 else "🔴")
     print(f"  {flag_synth} Synthetic query coverage: {has_synth}/{total_p}  ({pct(has_synth, total_p)}, target: ≥40%)")
@@ -478,7 +506,7 @@ def audit_milvus(sample_limit: Optional[int] = None):
     # D4: Metadata
     missing_dn = sum(1 for r in res if not r.get("doc_number", "").strip())
     khac = sum(1 for r in res if r.get("source_category", "KHAC") == "KHAC")
-    has_synth = sum(1 for r in res if r.get("synthetic_queries", "").strip())
+    has_synth = sum(1 for r in res if is_valid_synthetic_queries(r.get("synthetic_queries", "")))
     flag_dn = "✅" if missing_dn / n < 0.05 else "🟡"
     flag_khac = "✅" if khac / n < 0.2 else "🟡"
     flag_synth = "✅" if has_synth / n > 0.4 else ("🟡" if has_synth / n > 0.15 else "🔴")
@@ -489,8 +517,11 @@ def audit_milvus(sample_limit: Optional[int] = None):
     print(f"     source_category dist   : {dict(Counter(r.get('source_category', '?') for r in res).most_common(8))}")
 
     # D5: AI Leakage
-    monologue = ["certainly,", "i'll", "i will", "as an ai", "here is",
-                 "here's", "i cannot", "i would", "xin lỗi", "dưới đây là"]
+    monologue = [
+        "certainly,", "i'll", "i will", "as an ai", "here is",
+        "here's", "i cannot", "i would", "xin lỗi", "dưới đây là",
+        "thinking process", "analyze the request", "tư duy suy luận",
+    ]
     leaked = sum(1 for r in res if any(p in r["text"].lower() for p in monologue))
     flag_leak = "✅" if leaked == 0 else ("🟡" if leaked < 3 else "🔴")
     print(f"  {flag_leak} AI monologue leakage   : {leaked}/{n}")

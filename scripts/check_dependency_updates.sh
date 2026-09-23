@@ -165,7 +165,6 @@ if [[ "$MODE" == "all" || "$MODE" == "audit" ]]; then
         echo -e "${BOLD}${GREEN} 🎉 Security Audit Passed: All production and lockfile checks clean!   ${NC}"
     elif [[ $AUDIT_ERRORS -eq 0 ]]; then
         echo -e "${BOLD}${YELLOW} ⚠️  CI Gates Passed, but App Lockfile has active security advisories. ${NC}"
-        echo -e "${YELLOW}    (Note: pillow locked by surya-ocr; review Tier A/B bump roadmap)  ${NC}"
     else
         echo -e "${BOLD}${RED} ❌ Security Audit Failed: ${AUDIT_ERRORS} critical check(s) reported issues.      ${NC}"
     fi

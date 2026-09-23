@@ -36,6 +36,14 @@ class TestMilvusRepository:
         assert len(results[0]) == 1
         client.hybrid_search.assert_called_once()
 
+    def test_hybrid_search_sparse_fallback(self):
+        repo, client = self._make_repo()
+        client.hybrid_search = AsyncMock(side_effect=Exception("fieldName(sparse_vector) not found"))
+        client.search = AsyncMock(return_value=[[MagicMock(score=0.85)]])
+        results = _run(repo.hybrid_search([0.1] * 1024, {}, limit=5))
+        assert len(results[0]) == 1
+        client.search.assert_called_once()
+
     def test_get_parent_chunks_empty(self):
         repo, client = self._make_repo()
         results = _run(repo.get_parent_chunks([]))
