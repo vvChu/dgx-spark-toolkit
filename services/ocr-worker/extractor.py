@@ -61,7 +61,7 @@ class SuryaWorkerExtractor:
         """
         if not self.available:
             logger.warning("SuryaWorkerExtractor called but extractor is not available.")
-            return {"ocr_raw": [], "layout": []}
+            raise RuntimeError("SuryaWorkerExtractor is not available")
 
         if not img_bytes:
             return {"ocr_raw": [], "layout": []}
@@ -70,7 +70,7 @@ class SuryaWorkerExtractor:
             img_pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         except Exception as e:
             logger.error(f"Failed to parse image bytes: {e}")
-            return {"ocr_raw": [], "layout": []}
+            raise ValueError(f"Failed to parse image bytes: {e}") from e
 
         # 1. Detection Pass
         try:
@@ -78,7 +78,7 @@ class SuryaWorkerExtractor:
                 det_results = self.det_predictor([img_pil])
         except Exception as e:
             logger.error(f"Surya detection failed: {e}")
-            det_results = None
+            raise RuntimeError(f"Surya detection failed: {e}") from e
 
         valid_bboxes = []
         if det_results and getattr(det_results[0], "bboxes", None):

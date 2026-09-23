@@ -498,7 +498,7 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
         "score": score,
         "is_table": has_table,
         "layout": layout_segments,
-        "source": "vision" if vision_text else "surya"
+        "source": "vision" if vision_text else ("surya" if ocr_raw is not None else "failed")
     }
 
 

@@ -31,9 +31,22 @@ def process_image(file: bytes = File(...)):
     """Synchronous endpoint executed in worker threadpool to prevent blocking the async event loop.
     Enforces concurrency limit of 1 via _ocr_semaphore to prevent PyTorch CPU OOM under parallel load.
     """
+    if not extractor.available:
+        raise HTTPException(status_code=503, detail="Surya OCR engine is unavailable")
+
     if not file:
         raise HTTPException(status_code=400, detail="Empty file payload")
 
-    with _ocr_semaphore:
-        result = extractor.process(file)
-    return result
+    try:
+        with _ocr_semaphore:
+            result = extractor.process(file)
+        if result is None:
+            raise HTTPException(status_code=500, detail="OCR extraction failed")
+        return result
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Worker process failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Inference error: {e}")

@@ -131,6 +131,34 @@ class TestRemoteSuryaClient:
         assert client.extract_layout(create_dummy_image()) == []
 
     @patch("ingestion.ocr_client.httpx.Client.post")
+    def test_worker_http_503_unavailable_fallback(self, mock_post):
+        """Worker 503 (service unavailable) should return (None, None) and register as failure."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 503
+        mock_resp.text = "Surya OCR engine is unavailable"
+        mock_post.return_value = mock_resp
+
+        client = RemoteSuryaClient(base_url="http://test-worker:8000")
+        ocr_raw, layout = client.process_page(dummy_image_bytes())
+        assert ocr_raw is None
+        assert layout is None
+        assert RemoteSuryaClient.is_service_failure((ocr_raw, layout)) is True
+
+    @patch("ingestion.ocr_client.httpx.Client.post")
+    def test_worker_http_400_bad_payload_fallback(self, mock_post):
+        """Worker 400 (bad image payload) should return (None, None) and register as failure."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 400
+        mock_resp.text = "Bad Request: Invalid image"
+        mock_post.return_value = mock_resp
+
+        client = RemoteSuryaClient(base_url="http://test-worker:8000")
+        ocr_raw, layout = client.process_page(dummy_image_bytes())
+        assert ocr_raw is None
+        assert layout is None
+        assert RemoteSuryaClient.is_service_failure((ocr_raw, layout)) is True
+
+    @patch("ingestion.ocr_client.httpx.Client.post")
     def test_worker_timeout_fallback(self, mock_post):
         """Read timeout should return (None, None) without raising."""
         mock_post.side_effect = httpx.ReadTimeout("Request timed out")
@@ -274,3 +302,59 @@ class TestRemoteSuryaClient:
         assert RemoteSuryaClient.is_service_failure(empty_page_result) is False
         assert RemoteSuryaClient.is_service_failure(error_result) is True
         assert RemoteSuryaClient.is_service_failure((None, [])) is True
+        assert RemoteSuryaClient.is_service_failure(([], None)) is True
+        assert RemoteSuryaClient.is_service_failure(None) is True
+        assert RemoteSuryaClient.is_service_failure(()) is True
+        assert RemoteSuryaClient.is_service_failure("invalid") is True
+
+    @patch("ingestion.vision.call_vision_fallback")
+    @patch("ingestion.vision.is_blank_page")
+    @patch("ingestion.vision._get_ocr_engine")
+    def test_hybrid_extract_page_bypasses_blank_on_worker_failure(
+        self, mock_get_engine, mock_is_blank, mock_vision_fallback
+    ):
+        """When OCR worker fails (returns None, None), hybrid_extract_page must:
+        1. NOT call is_blank_page() (preventing silent page drop)
+        2. Call call_vision_fallback() directly
+        3. Set source to 'vision'
+        """
+        from ingestion.vision import hybrid_extract_page
+
+        mock_engine = MagicMock()
+        mock_engine.available = True
+        mock_engine.process_page.return_value = (None, None)
+        mock_get_engine.return_value = mock_engine
+
+        mock_vision_fallback.return_value = "Điều 1. Phạm vi điều chỉnh đã được phục hồi qua Vision LLM."
+
+        img_bytes = dummy_image_bytes()
+        res = hybrid_extract_page(img_bytes, page_num=1, total_pages=1)
+
+        # is_blank_page MUST NOT be called when worker failed
+        mock_is_blank.assert_not_called()
+        # call_vision_fallback MUST be called directly
+        mock_vision_fallback.assert_called_once()
+        assert res["text"] == "Điều 1. Phạm vi điều chỉnh đã được phục hồi qua Vision LLM."
+        assert res["source"] == "vision"
+
+    @patch("ingestion.vision.call_vision_fallback")
+    @patch("ingestion.vision._get_ocr_engine")
+    def test_hybrid_extract_page_reports_failed_source_on_total_outage(
+        self, mock_get_engine, mock_vision_fallback
+    ):
+        """When worker fails AND vision fallback fails, source must be 'failed', not 'surya'."""
+        from ingestion.vision import hybrid_extract_page
+
+        mock_engine = MagicMock()
+        mock_engine.available = True
+        mock_engine.process_page.return_value = (None, None)
+        mock_get_engine.return_value = mock_engine
+
+        mock_vision_fallback.return_value = ""
+
+        img_bytes = dummy_image_bytes()
+        res = hybrid_extract_page(img_bytes, page_num=1, total_pages=1)
+
+        assert res["text"] == ""
+        assert res["source"] == "failed"
+

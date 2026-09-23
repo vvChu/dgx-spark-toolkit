@@ -62,9 +62,13 @@ class RemoteSuryaClient:
         return "cpu"
 
     @staticmethod
-    def is_service_failure(result: Tuple[Any, Any]) -> bool:
-        """Check if process_page result represents a service failure (None, None)."""
-        return result == (None, None) or (isinstance(result, (tuple, list)) and len(result) > 0 and result[0] is None)
+    def is_service_failure(result: Any) -> bool:
+        """Check if process_page result represents a service failure (None, None) or invalid/None result."""
+        if result is None or not isinstance(result, (tuple, list)):
+            return True
+        if len(result) == 0:
+            return True
+        return result[0] is None or (len(result) > 1 and result[1] is None)
 
     def process_page(self, img_input: Any, page_num: int = 0) -> Tuple[Optional[List[Any]], Optional[List[Any]]]:
         """Process page image and return (ocr_raw, layout).
