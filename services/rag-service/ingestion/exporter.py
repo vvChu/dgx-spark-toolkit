@@ -1,3 +1,4 @@
+from dataclasses import asdict, is_dataclass
 import glob
 import json
 import logging
@@ -139,12 +140,50 @@ class DataExporter:
             return None, None
 
     def export_document(self, doc: Any) -> tuple[Optional[Path], Optional[Path]]:
-        """Wrapper mapping ProcessedDocument to export method."""
-        rel_path = getattr(doc, "file_path", getattr(doc, "source_path", "unknown"))
-        doc_id = getattr(doc, "doc_id", "unknown")
-        meta = getattr(doc, "metadata", {})
-        summary = getattr(doc, "summary", "")
-        chunks = getattr(doc, "chunks", [])
+        """Wrapper mapping ProcessedDocument or dict-like doc to export method."""
+        rel_path = getattr(doc, "file_path", None) or getattr(doc, "source_path", None) or "unknown"
+
+        # Resolve doc_id from identity (dataclass or dict) or doc_id attribute
+        doc_id = "unknown"
+        identity = getattr(doc, "identity", None)
+        if identity is not None:
+            if hasattr(identity, "doc_id"):
+                doc_id = getattr(identity, "doc_id", "unknown") or "unknown"
+            elif isinstance(identity, dict):
+                doc_id = identity.get("doc_id", "unknown") or "unknown"
+        if doc_id == "unknown":
+            doc_id = getattr(doc, "doc_id", "unknown") or "unknown"
+
+        # Resolve metadata dictionary safely
+        raw_meta = getattr(doc, "metadata", None)
+        if raw_meta is not None and hasattr(raw_meta, "to_dict"):
+            meta = raw_meta.to_dict()
+        elif isinstance(raw_meta, dict):
+            meta = raw_meta
+        elif is_dataclass(raw_meta) and not isinstance(raw_meta, type):
+            meta = asdict(raw_meta)
+        else:
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+
+        summary = getattr(doc, "summary", "") or ""
+
+        # Resolve chunks list safely
+        raw_chunks = getattr(doc, "chunks", None) or []
+        chunks = []
+        for c in raw_chunks:
+            if hasattr(c, "to_dict"):
+                chunks.append(c.to_dict())
+            elif is_dataclass(c) and not isinstance(c, type):
+                chunks.append(asdict(c))
+            elif isinstance(c, dict):
+                chunks.append(c)
+            elif hasattr(c, "__dict__"):
+                chunks.append(vars(c))
+            else:
+                chunks.append(c)
+
         return self.export(rel_path=rel_path, doc_id=doc_id, meta=meta, summary=summary, chunks=chunks)
 
     # ------------------------------------------------------------------

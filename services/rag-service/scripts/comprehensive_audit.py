@@ -43,6 +43,44 @@ _VN_DIACRITICS = re.compile(
     re.IGNORECASE,
 )
 
+# AI LEAKAGE PATTERNS (Shared across MD, JSON, Milvus audits)
+_AI_LEAK_PATTERNS = [
+    r"(?im)^\s*Certainly[,!.]",
+    r"(?im)^\s*As an AI\b",
+    r"(?im)^\s*Here is (the|a|an|your|this)\b",
+    r"(?im)^\s*Here's (the|a|an|your|this)\b",
+    r"(?im)^\s*I cannot\b",
+    r"(?im)^\s*I would\b(?! (say|recommend)? rate)",
+    r"(?im)^\s*I'll\b",
+    r"(?im)^\s*I will\b",
+    r"(?i)Xin lỗi, tôi",
+    r"(?i)Dưới đây là.*theo yêu cầu",
+    r"(?i)Tôi xin lỗi",
+    r"(?mi)^\s*[-*]?\s*(?:Did I include|Is the structure|Let's assemble|Let's refine|This looks correct|KHÔNG dùng markdown)",
+    r"(?mi)^\s*[-*]?\s*(?:The\s+)?text starts (?:mid|with item)",
+    r"(?mi)^\s*[-*]?\s*Ignore\b",
+    r"(?mi)^\s*[-*]?\s*.*?\bignore\s+(?:the\s+)?page\s+number",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Draft \d+",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Character [Cc]ount",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Revised Draft|Final Polish|Refined Plan|Mental Outline|Attempt \d+|Review against constraints|Check Constraints|Refining for)",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Rule \d+",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Exclusion Rules?",
+    r"(?mi)^\s*[-*]?\s*(?:\*\*)?(?:(?:Then\s+)?Article \d+|Arti\s*cle \d+|Text Block \d*|Sub-points?|Looking at sub-points|Points? [0-9a-đA-Đ]+|There are|It contains|Line breaks for|No signatures|Ensure line breaks)\b",
+    r"(?mi)^\s*[-*]?\s*\**\s*(?:Looking at (?:point|Arti\s*cle)|Paragraph \d+ of Arti\s*cle|Heading:\s*\"|First Paragraph:)\**",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Goal:|Structure:|Constraint Check:|Drafting \(Mental\):?)",
+    r"(?mi)^\s*[-*]?\s*\d+\.\s*(?:Summarize|Identify the law)",
+    r"(?mi)^\s*[-*]?\s*\"CHỦ TỊCHQUỐCHỘI\"\s*->",
+    r"(?mi)^\s*[-*]?\s*Let\'s look\b",
+    r"(?mi)^\s*[-*]?\s*IfI?\s+remove the signature blocks",
+    r"(?mi)^\s*[-*]?\s*\*?Point [0-9a-đA-Đ]+:\*?",
+    r"(?mi)^\s*\d+\.\s*(?:Extract the main|Extract the \")",
+    r"(?mi)^\s*[-*]?\s*(?:Points a\), b\)|Point \d+ content|Sub-point [a-z] content)",
+    r"(?mi)\*\*\[\s*[↓↑]?\s*OCR gán nhầm",
+    r"(?i)Thinking Process",
+    r"(?i)Analyze the Request",
+    r"(?i)Tư duy suy luận",
+]
+
 
 def is_valid_synthetic_queries(text: str) -> bool:
     """Validate that synthetic queries are genuine Vietnamese questions."""
@@ -55,6 +93,31 @@ def is_valid_synthetic_queries(text: str) -> bool:
         return False
     if "Thinking Process" in text or "Analyze the Request" in text or "Tư duy suy luận" in text:
         return False
+
+    # Prompt echo and scratchpad leakage markers
+    leak_markers = [
+        "input text:",
+        "input text",
+        "source: [root",
+        "source: [",
+        "likely a regulation",
+        "general market",
+        "content segment",
+        "content:",
+    ]
+    text_lower = text.lower()
+    if any(marker in text_lower for marker in leak_markers):
+        return False
+
+    # Check for English question starters or framing
+    if re.search(r"^(?:What|Who|When|Where|Why|How|Which|Is|Are|Can|Could|Do|Does|Did|Will|Would|Should|Shall)\b", text, re.IGNORECASE):
+        outside = re.sub(r'"[^"]*"|\'[^\']*\'|`[^`]*`', '', text)
+        if not _VN_DIACRITICS.search(outside):
+            return False
+
+    if any(re.search(pat, text) for pat in _AI_LEAK_PATTERNS):
+        return False
+
     if not _VN_DIACRITICS.search(text):
         return False
     return True
@@ -107,45 +170,7 @@ def _has_broken_table(text: str) -> bool:
     return False
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# AI LEAKAGE PATTERNS (Shared across MD, JSON, Milvus audits)
-# ═════════════════════════════════════════════════════════════════════════════
-_AI_LEAK_PATTERNS = [
-    r"(?im)^\s*Certainly[,!.]",
-    r"(?im)^\s*As an AI\b",
-    r"(?im)^\s*Here is (the|a|an|your|this)\b",
-    r"(?im)^\s*Here's (the|a|an|your|this)\b",
-    r"(?im)^\s*I cannot\b",
-    r"(?im)^\s*I would\b(?! (say|recommend)? rate)",
-    r"(?im)^\s*I'll\b",
-    r"(?im)^\s*I will\b",
-    r"(?i)Xin lỗi, tôi",
-    r"(?i)Dưới đây là.*theo yêu cầu",
-    r"(?i)Tôi xin lỗi",
-    r"(?mi)^\s*[-*]?\s*(?:Did I include|Is the structure|Let's assemble|Let's refine|This looks correct|KHÔNG dùng markdown)",
-    r"(?mi)^\s*[-*]?\s*(?:The\s+)?text starts (?:mid|with item)",
-    r"(?mi)^\s*[-*]?\s*Ignore\b",
-    r"(?mi)^\s*[-*]?\s*.*?\bignore\s+(?:the\s+)?page\s+number",
-    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Draft \d+",
-    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Character [Cc]ount",
-    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Revised Draft|Final Polish|Refined Plan|Mental Outline|Attempt \d+|Review against constraints|Check Constraints|Refining for)",
-    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Rule \d+",
-    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Exclusion Rules?",
-    r"(?mi)^\s*[-*]?\s*(?:\*\*)?(?:(?:Then\s+)?Article \d+|Arti\s*cle \d+|Text Block \d*|Sub-points?|Looking at sub-points|Points? [0-9a-đA-Đ]+|There are|It contains|Line breaks for|No signatures|Ensure line breaks)\b",
-    r"(?mi)^\s*[-*]?\s*\**\s*(?:Looking at (?:point|Arti\s*cle)|Paragraph \d+ of Arti\s*cle|Heading:\s*\"|First Paragraph:)\**",
-    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Goal:|Structure:|Constraint Check:|Drafting \(Mental\):?)",
-    r"(?mi)^\s*[-*]?\s*\d+\.\s*(?:Summarize|Identify the law)",
-    r"(?mi)^\s*[-*]?\s*\"CHỦ TỊCHQUỐCHỘI\"\s*->",
-    r"(?mi)^\s*[-*]?\s*Let\'s look\b",
-    r"(?mi)^\s*[-*]?\s*IfI?\s+remove the signature blocks",
-    r"(?mi)^\s*[-*]?\s*\*?Point [0-9a-đA-Đ]+:\*?",
-    r"(?mi)^\s*\d+\.\s*(?:Extract the main|Extract the \")",
-    r"(?mi)^\s*[-*]?\s*(?:Points a\), b\)|Point \d+ content|Sub-point [a-z] content)",
-    r"(?mi)\*\*\[\s*[↓↑]?\s*OCR gán nhầm",
-    r"(?i)Thinking Process",
-    r"(?i)Analyze the Request",
-    r"(?i)Tư duy suy luận",
-]
+# (AI LEAKAGE PATTERNS defined above before is_valid_synthetic_queries)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -259,6 +284,7 @@ def audit_json(json_files):
         "invalid_doc_id": 0,
         "chunk_no_text": 0,
         "chunk_ai_leakage": 0,
+        "sq_ai_leakage": 0,
     }
     total_chunks = 0
     chunk_types = Counter()
@@ -311,6 +337,15 @@ def audit_json(json_files):
                 issues["chunk_no_text"] += 1
             elif any(re.search(pat, c.get("text", "")) for pat in _AI_LEAK_PATTERNS):
                 issues["chunk_ai_leakage"] += 1
+
+            sq = c.get("synthetic_queries", "")
+            if sq:
+                sq_lower = sq.lower()
+                if (
+                    any(m in sq_lower for m in ["input text:", "input text", "source: [root", "source: [", "likely a regulation", "content segment", "general market"])
+                    or any(re.search(pat, sq) for pat in _AI_LEAK_PATTERNS)
+                ):
+                    issues["sq_ai_leakage"] += 1
 
             # Strategy from hierarchy_path
             hp = c.get("hierarchy_path", "")
@@ -577,6 +612,23 @@ def audit_milvus(sample_limit: Optional[int] = None):
     flag_sm_leak = "✅" if summary_leaked == 0 else "🔴"
     print(f"  {flag_sm_leak} Summary monologue leak : {summary_leaked}/{n}")
 
+    sq_leak_markers = [
+        "input text:",
+        "input text",
+        "source: [root",
+        "source: [",
+        "likely a regulation",
+        "content segment",
+        "general market",
+    ]
+    sq_leaked = sum(
+        1 for r in res
+        if any(m in r.get("synthetic_queries", "").lower() for m in sq_leak_markers)
+        or any(p in r.get("synthetic_queries", "").lower() for p in monologue)
+    )
+    flag_sq_leak = "✅" if sq_leaked == 0 else "🔴"
+    print(f"  {flag_sq_leak} Synth query leakage    : {sq_leaked}/{n}")
+
     # D6: OCR Spacing artifacts
     def spacing_ratio(text):
         sp = text.count(" ")
@@ -604,7 +656,7 @@ def audit_milvus(sample_limit: Optional[int] = None):
         penalties += 10
     if fragmented / n > 0.05:
         penalties += 5
-    if leaked > 0 or summary_leaked > 0:
+    if leaked > 0 or summary_leaked > 0 or sq_leaked > 0:
         penalties += 10
     if bad_sp > 0:
         penalties += 5
