@@ -46,33 +46,16 @@ async def rewrite_query(
             rewritten = await asyncio.wait_for(
                 client.complete(
                     [{"role": "user", "content": prompt}],
-                    model="gemini-3.5-flash-lite",
-                    model_chain=["gemini-3.5-flash-lite"],
+                    model="claude-haiku-4",
+                    model_chain=["claude-haiku-4", "rag-core"],
                     temperature=0.0,
                     max_tokens=256,
-                    timeout=1.8,
+                    timeout=2.0,
                 ),
-                timeout=1.8,
+                timeout=2.0,
             )
-        except (asyncio.TimeoutError, Exception) as e1:
-            logger.debug(f"Query rewrite Tier 1 (gemini-3.5-flash-lite) skipped/timed out: {e1}")
-
-        # Tier 2: claude-haiku-4 (2.2s timeout) if Tier 1 failed or returned empty
-        if not rewritten or not rewritten.strip():
-            try:
-                rewritten = await asyncio.wait_for(
-                    client.complete(
-                        [{"role": "user", "content": prompt}],
-                        model="claude-haiku-4",
-                        model_chain=["claude-haiku-4"],
-                        temperature=0.0,
-                        max_tokens=256,
-                        timeout=2.2,
-                    ),
-                    timeout=2.2,
-                )
-            except (asyncio.TimeoutError, Exception) as e2:
-                logger.debug(f"Query rewrite Tier 2 (claude-haiku-4) skipped/timed out: {e2}")
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.debug(f"Query rewrite (claude-haiku-4 -> rag-core) skipped/timed out: {e}")
 
         if rewritten and rewritten.strip():
             # Strip reasoning/thought traces

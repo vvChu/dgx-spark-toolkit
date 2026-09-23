@@ -69,27 +69,81 @@ def clean_single_query(text: str) -> str:
         line = _VIETNAMESE_PREFIX.sub('', line).strip()
         line = re.sub(r'^(?:[-*•]|\d+[\.)])\s*', '', line).strip()
 
+        # 1. Strip topic prefix labels: e.g. Scope):* , Definition):* , Focus on height):* , Focus on 2.3.2.6):
+        line = re.sub(r'^.*?\):\*\s*', '', line).strip()
+        line = re.sub(
+            r'^(?:Focus on|Topic|Scope|Definition|Location|About|Difference|Components|Regulation|Regarding|Combined|Interconnection|Activation|Spacing|Operations|Storage|Placement)[^:."()\n]*\)?[:.)"]+\*?\s*',
+            '',
+            line,
+            flags=re.IGNORECASE,
+        ).strip()
+
         # Drop lines starting with metadata keywords or prompt reflection prefixes
         if _METADATA_PREFIXES.match(line):
             continue
 
-        # If line contains '->', the Vietnamese question is typically after '->'
+        # 2. Extract Vietnamese part from English / Vietnamese combinations
+        # Pattern 2a: English question? / Câu hỏi tiếng Việt? (use space-separated slash to preserve citations like 52/2019/TT-BCA)
+        if re.search(r'\s+/\s+', line):
+            parts = re.split(r'\s+/\s+', line)
+            cand = parts[-1].strip()
+            first_part = parts[0].strip()
+            if _VN_DIACRITICS.search(cand) and len(cand) > 10:
+                if (_ENG_QUESTION_START.match(first_part)
+                    or not _VN_DIACRITICS.search(first_part)
+                    or re.search(r'\b(?:what|who|where|how|which|when|why|can|is|are)\b', first_part, re.I)):
+                    line = cand
+
+        # Pattern 2b: English question? (Câu hỏi tiếng Việt?) or English question (Câu hỏi tiếng Việt?
+        if '(' in line:
+            m = re.search(r'\(([^)]+)\)?\s*$', line)
+            if m:
+                cand = m.group(1).strip()
+                first_part = line[:m.start()].strip()
+                if _VN_DIACRITICS.search(cand) and len(cand) > 10:
+                    if (_ENG_QUESTION_START.match(first_part)
+                        or not _VN_DIACRITICS.search(first_part)
+                        or re.search(r'\b(?:what|who|where|how|which|when|why|can|is|are)\b', first_part, re.I)):
+                        line = cand
+
+        # Pattern 2c: If line contains '->', the Vietnamese question is typically after '->'
         if '->' in line:
             candidate = line.split('->')[-1].strip()
             if _VN_DIACRITICS.search(candidate) and len(candidate) > 10:
                 line = candidate
 
         # Clean enclosing quotes, asterisks, backticks
-        line = line.strip('\"\'*`# \t')
+        line = line.strip('"\'*`# \t')
+
+        # 3. Remove lines containing AI reflection notes like (Text says ...)?
+        if re.search(r'\(?\s*text says\b', line, re.I):
+            continue
+        if any(marker in line.lower() for marker in [
+            'key elements:', 'key elements', "doesn't specify", "does not specify",
+            'for moving equipment and maintenance', 'foam generating containers'
+        ]):
+            continue
 
         # Drop questions starting with English interrogatives
         if _ENG_QUESTION_START.match(line):
             continue
 
-        # If framing text (outside quotes/backticks) has NO Vietnamese diacritics and length > 8,
-        # it is an English question quoting a Vietnamese term (e.g. What does "sự bùng cháy" mean?)
-        outside_quotes = re.sub(r'"[^"]*"|\'[^\']*\'|`[^`]*`', '', line)
-        if not _VN_DIACRITICS.search(outside_quotes) and len(outside_quotes.strip()) > 8:
+        # Strip trailing unclosed parenthesis fragment like ' (?' or ' (what...'
+        line = re.sub(r'\s*\([^)]*$', '', line).strip()
+
+        # Drop lines with unmatched parentheses
+        if line.count('(') != line.count(')'):
+            continue
+
+        # 4. Strip parentheses before checking _VN_DIACRITICS
+        text_without_parens = re.sub(r'\(.*?\)', '', line)
+        if not _VN_DIACRITICS.search(text_without_parens):
+            continue
+
+        # If framing text (outside quotes/backticks/parens) has NO Vietnamese diacritics and length > 8,
+        # it is an English question quoting a Vietnamese term
+        outside_parens_and_quotes = re.sub(r'\(.*?\)|\"[^\"]*\"|\'[^\']*\'|`[^`]*`', '', line)
+        if not _VN_DIACRITICS.search(outside_parens_and_quotes) and len(outside_parens_and_quotes.strip()) > 8:
             continue
 
         lower = line.lower()
@@ -106,16 +160,22 @@ def clean_single_query(text: str) -> str:
         if lower.startswith(('draft ', 'step ', 'note: ', 'wait, ')):
             continue
 
-        # Must have Vietnamese diacritics
-        if not _VN_DIACRITICS.search(line):
+        # Drop lines with English interrogatives anywhere in query
+        if re.search(r'\b(?:what|who|where|how|which)\b', line, re.I):
             continue
+
         if len(line) < 15:
+            continue
+
+        # Must start with an uppercase letter
+        clean_first = line.lstrip('"\'“‘#*` \t')
+        if not clean_first or not clean_first[0].isupper():
             continue
 
         # Must have question characteristics
         has_question_word = any(qw in lower for qw in [
-            'là gì', 'như thế nào', 'ở đâu', 'khi nào', 'ai', 'bao nhiêu', 'không',
-            'mục đích gì', 'tại sao', 'cần làm gì', 'phải làm gì', 'được không', 'nào',
+            'là gì', 'như thế nào', 'ở đâu', 'khi nào', 'ai', 'bao nhiêu', 'được không',
+            'mục đích gì', 'tại sao', 'cần làm gì', 'phải làm gì', 'phải không', 'hay không', 'nào',
             'yêu cầu gì', 'áp dụng để làm gì', 'hãy liệt kê', 'quy định gì', 'bao gồm những',
             'thế nào', 'điều gì', 'ra sao'
         ])
@@ -128,7 +188,7 @@ def clean_single_query(text: str) -> str:
         ):
             continue
 
-        line = line.rstrip(' :,;.')
+        line = line.rstrip(' :,;."”\'’')
         if not line.endswith('?'):
             line += '?'
 
@@ -174,13 +234,14 @@ def clean_target_json_files(json_dir: Path):
         cleaned_map = {}
         for chunk in data.get("chunks", []):
             cid = chunk.get("chunk_id")
+            if not cid:
+                continue
             old_sq = chunk.get("synthetic_queries", "")
-            if old_sq:
-                new_sq = clean_single_query(old_sq)
-                if new_sq != old_sq:
-                    chunk["synthetic_queries"] = new_sq
-                    modified_count += 1
-                cleaned_map[cid] = chunk["synthetic_queries"]
+            new_sq = clean_single_query(old_sq) if old_sq else ""
+            if new_sq != old_sq:
+                chunk["synthetic_queries"] = new_sq
+                modified_count += 1
+            cleaned_map[cid] = new_sq
 
         with open(fpath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)

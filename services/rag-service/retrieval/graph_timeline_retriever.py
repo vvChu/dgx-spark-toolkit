@@ -105,9 +105,9 @@ class AdvancedGraphRAG:
                     },
                     {"role": "user", "content": prompt}
                 ],
-                model="gemini-3.5-flash-lite",
-                model_chain=["gemini-3.5-flash-lite", "claude-haiku-4", "rag-core"],
-                timeout=20.0,
+                model="claude-haiku-4",
+                model_chain=["claude-haiku-4", "rag-core"],
+                timeout=5.0,
             )
             from ingestion.normalizers.boilerplate import strip_ai_monologue
             return strip_ai_monologue(raw_summary)

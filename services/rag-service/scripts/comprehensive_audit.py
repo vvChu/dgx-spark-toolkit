@@ -344,6 +344,8 @@ def audit_json(json_files):
                 if (
                     any(m in sq_lower for m in ["input text:", "input text", "source: [root", "source: [", "likely a regulation", "content segment", "general market"])
                     or any(re.search(pat, sq) for pat in _AI_LEAK_PATTERNS)
+                    or bool(re.search(r'\b(?:what|who|where|how|which)\b', sq, re.IGNORECASE))
+                    or "):*" in sq
                 ):
                     issues["sq_ai_leakage"] += 1
 
@@ -501,9 +503,20 @@ def audit_chunking(json_files):
 # ═════════════════════════════════════════════════════════════════════════════
 # DIM D — MILVUS / INGESTION QUALITY
 # ═════════════════════════════════════════════════════════════════════════════
-def audit_milvus(sample_limit: Optional[int] = None):
+def audit_milvus(sample_limit: Optional[int] = None, json_files: Optional[list] = None):
     limit = sample_limit or MILVUS_SAMPLE_LIMIT
     print_section("DIMENSION D: MILVUS INGESTION QUALITY")
+
+    json_doc_ids = set()
+    if json_files:
+        for jf in json_files:
+            try:
+                jdata = json.loads(Path(jf).read_text(errors="replace"))
+                jid = jdata.get("doc_id", "").strip()
+                if jid:
+                    json_doc_ids.add(jid)
+            except Exception:
+                pass
 
     try:
         from pymilvus import MilvusClient
@@ -534,6 +547,19 @@ def audit_milvus(sample_limit: Optional[int] = None):
             ],
             limit=limit,
         )
+
+        # Query all doc_ids in Milvus to check coverage
+        milvus_doc_ids = set()
+        try:
+            doc_id_entities = client.query(
+                collection_name=s.MILVUS_COLLECTION,
+                filter="id >= 0",
+                output_fields=["doc_id"],
+                limit=16384,
+            )
+            milvus_doc_ids = set(r.get("doc_id", "").strip() for r in doc_id_entities if r.get("doc_id"))
+        except Exception as e:
+            print(f"  ⚠ Failed to query doc_ids from Milvus: {e}")
     except Exception as e:
         print(f"  ⚠  Cannot connect to Milvus: {e}")
         return -1
@@ -625,6 +651,8 @@ def audit_milvus(sample_limit: Optional[int] = None):
         1 for r in res
         if any(m in r.get("synthetic_queries", "").lower() for m in sq_leak_markers)
         or any(p in r.get("synthetic_queries", "").lower() for p in monologue)
+        or bool(re.search(r'\b(?:what|who|where|how|which)\b', r.get("synthetic_queries", ""), re.IGNORECASE))
+        or "):*" in r.get("synthetic_queries", "")
     )
     flag_sq_leak = "✅" if sq_leaked == 0 else "🔴"
     print(f"  {flag_sq_leak} Synth query leakage    : {sq_leaked}/{n}")
@@ -650,15 +678,28 @@ def audit_milvus(sample_limit: Optional[int] = None):
     unique_docs = len(set(r.get("doc_id", "") for r in res))
     print(f"     Unique doc_ids sampled : {unique_docs}")
 
+    # D9: Document coverage against JSON exports
+    missing_docs = set()
+    if json_doc_ids:
+        missing_docs = set(json_doc_ids) - set(milvus_doc_ids)
+        if missing_docs:
+            print(f"  🔴 Missing documents in Milvus: {len(missing_docs)}/{len(json_doc_ids)} documents missing!")
+            for md in sorted(missing_docs):
+                print(f"     - {md}")
+        else:
+            print(f"  ✅ Complete document coverage: all {len(json_doc_ids)} exported documents present in Milvus")
+
     # Score
     penalties = 0
+    if len(missing_docs) > 0:
+        penalties += 25
     if noise / n > 0.05:
         penalties += 10
     if fragmented / n > 0.05:
         penalties += 5
     if leaked > 0 or summary_leaked > 0 or sq_leaked > 0:
         penalties += 10
-    if bad_sp > 0:
+    if bad_sp / n > 0.01:
         penalties += 5
     if dup_excess > 5:
         penalties += 10
@@ -816,7 +857,7 @@ def run_comprehensive_audit(
             scores["A_markdown"] = audit_markdown(md_files)
             scores["B_json"] = audit_json(json_files)
             scores["C_chunking"] = audit_chunking(json_files)
-            scores["D_milvus"] = audit_milvus(sample_limit=sample_limit)
+            scores["D_milvus"] = audit_milvus(sample_limit=sample_limit, json_files=json_files)
             scores["E_fidelity"] = audit_fidelity(json_files, target_pdf)
 
             # Final Report

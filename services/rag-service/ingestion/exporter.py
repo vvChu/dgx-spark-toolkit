@@ -113,7 +113,7 @@ class DataExporter:
         """Export processed document data to JSON and Markdown."""
         try:
             # Sanitize doc_id for filename (replace / and other chars)
-            safe_filename = doc_id.replace('/', '_').replace('\\', '_').replace(':', '_').replace(' ', '_')
+            safe_filename = doc_id.replace('/', '_').replace('\\', '_').replace(':', '_').replace(' ', '_').lstrip('.')
 
             # 1. Export JSON
             json_path = os.path.join(self.json_dir, f"{safe_filename}.json")

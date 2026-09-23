@@ -663,6 +663,34 @@ class TestExportDocument:
         if tmp_dir:
             tmp_dir.cleanup()
 
+    def test_export_document_dot_prefix_not_hidden(self, tmp_path=None):
+        """Verify export_document strips leading dots so it never produces hidden files."""
+        import tempfile
+        tmp_dir = None
+        if tmp_path is None:
+            tmp_dir = tempfile.TemporaryDirectory()
+            tmp_path = Path(tmp_dir.name)
+        base_dir = str(tmp_path / "exports_dot")
+        exporter = DataExporter(base_dir)
+
+        class DotDoc:
+            doc_id = "../52/2019/TT-BCA"
+            file_path = "test.pdf"
+            metadata = {}
+            summary = "Dot prefix"
+            chunks = []
+
+        doc = DotDoc()
+        json_path, md_path = exporter.export_document(doc)
+        assert json_path is not None and json_path.exists()
+        assert md_path is not None and md_path.exists()
+        assert not json_path.name.startswith(".")
+        assert not md_path.name.startswith(".")
+        assert json_path.name == "_52_2019_TT-BCA.json"
+
+        if tmp_dir:
+            tmp_dir.cleanup()
+
 
 def run_all():
     """Simple test runner."""

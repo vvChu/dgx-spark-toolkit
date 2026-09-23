@@ -180,9 +180,9 @@ async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10,
         messages = [{"role": "user", "content": prompt}]
         res_data = await client.complete_json(
             messages,
-            model="gemini-3.5-flash-lite",
-            model_chain=["gemini-3.5-flash-lite", "claude-haiku-4"],
-            timeout=10.0,
+            model="claude-haiku-4",
+            model_chain=["claude-haiku-4", "rag-core"],
+            timeout=4.0,
             retries=1,
         )
         if isinstance(res_data, list):
@@ -426,7 +426,9 @@ class SearchPipeline:
         try:
             plan = await ctx.ai_client.extract_json(
                 _AGENTIC_PLAN_PROMPT.format(query=ctx.raw_query),
-                model="gemini-3.5-flash-lite",
+                model="claude-haiku-4",
+                model_chain=["claude-haiku-4", "rag-core"],
+                timeout=3.0,
             )
             sub_queries = plan.get("sub_queries", [ctx.raw_query])
             if not isinstance(sub_queries, list) or not sub_queries:
@@ -477,7 +479,9 @@ class SearchPipeline:
             try:
                 eval_res = await ctx.ai_client.extract_json(
                     _AGENTIC_EVAL_PROMPT.format(query=ctx.raw_query, context=context_preview),
-                    model="gemini-3.5-flash-lite",
+                    model="claude-haiku-4",
+                    model_chain=["claude-haiku-4", "rag-core"],
+                    timeout=3.0,
                 )
                 ctx.is_sufficient = eval_res.get("is_sufficient", True)
                 ctx.confidence = float(eval_res.get("confidence", 1.0))
@@ -585,19 +589,30 @@ class SearchPipeline:
         timeline_count = 0
         if self.graph_timeline is not None:
             try:
+                doc_summaries: Dict[str, Optional[str]] = {}
                 for r in ctx.top_results:
-                    if timeline_count >= 2:
-                        break
                     doc_num = r.get("doc_number")
-                    if doc_num:
-                        timeline = await self.graph_timeline.get_legal_timeline(doc_num)
-                        if timeline and len(timeline) > 1:
-                            TIMELINE_GEN_COUNT.inc()
-                            GRAPH_TIMELINE_HOPS.observe(len(timeline))
-                            summary = await self.graph_timeline.generate_timeline_summary(timeline, ctx.raw_query)
-                            r["legal_timeline_summary"] = summary
-                            r["text"] = f"[LEGAL TIMELINE]: {summary}\n\n[CONTENT]: {r['text']}"
-                            timeline_count += 1
+                    if not doc_num:
+                        continue
+                    if doc_num in doc_summaries:
+                        cached_sum = doc_summaries[doc_num]
+                        if cached_sum:
+                            r["legal_timeline_summary"] = cached_sum
+                            r["text"] = f"[LEGAL TIMELINE]: {cached_sum}\n\n[CONTENT]: {r['text']}"
+                        continue
+                    if timeline_count >= 2:
+                        continue
+                    timeline = await self.graph_timeline.get_legal_timeline(doc_num)
+                    if timeline and len(timeline) > 1:
+                        TIMELINE_GEN_COUNT.inc()
+                        GRAPH_TIMELINE_HOPS.observe(len(timeline))
+                        summary = await self.graph_timeline.generate_timeline_summary(timeline, ctx.raw_query)
+                        doc_summaries[doc_num] = summary
+                        r["legal_timeline_summary"] = summary
+                        r["text"] = f"[LEGAL TIMELINE]: {summary}\n\n[CONTENT]: {r['text']}"
+                        timeline_count += 1
+                    else:
+                        doc_summaries[doc_num] = None
             except Exception as e:
                 logger.warning(f"Graph timeline enrichment failed gracefully: {e}")
         ctx.tracer.end_step(timelines_generated=timeline_count)
