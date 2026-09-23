@@ -338,6 +338,12 @@ services:
       timeout: 20s
       retries: 3
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 2G
     networks:
       - rag-network
 
@@ -351,6 +357,9 @@ services:
     environment:
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
       - NEO4J_PLUGINS=["apoc"]
+      - server.memory.heap.initial_size=1G
+      - server.memory.heap.max_size=2G
+      - server.memory.pagecache.size=1G
     volumes:
       - neo4j_data:/data
     healthcheck:
@@ -360,6 +369,12 @@ services:
       retries: 5
       start_period: 60s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
     networks:
       - rag-network
 
@@ -475,7 +490,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 96G
+          memory: 78G
         reservations:
           devices:
             - driver: nvidia
@@ -544,6 +559,12 @@ services:
     ports:
       - "3001:8080"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
     networks:
       - rag-network
 
