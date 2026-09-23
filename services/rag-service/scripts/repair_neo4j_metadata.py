@@ -1,3 +1,13 @@
+import os
+import sys
+from pathlib import Path
+
+_ROOT = str(Path(__file__).resolve().parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+if os.path.exists("/app") and "/app" not in sys.path:
+    sys.path.insert(0, "/app")
+
 from pymilvus import MilvusClient
 from neo4j import GraphDatabase
 from core.config import get_settings
@@ -24,35 +34,51 @@ def repair():
     res = m_client.query(
         collection_name=COLLECTION_NAME,
         filter='chunk_type == "parent"',
-        output_fields=["source", "doc_number"],
+        output_fields=["source", "doc_number", "doc_id"],
         limit=2000  # Should cover the 1404 missing docs
     )
 
-    source_to_doc = {}
+    doc_mappings = []
     for entry in res:
         source = entry.get("source")
         doc_num = entry.get("doc_number")
+        doc_id = entry.get("doc_id", "")
+        if "Luat_50-2014" in str(source) or "Luat_50-2014" in str(doc_id):
+            doc_num = "50/2014/QH13"
         if source and doc_num:
-            source_to_doc[source] = doc_num
+            doc_mappings.append((source, doc_id, doc_num))
 
-    print(f"Found {len(source_to_doc)} document mappings in Milvus.")
+    print(f"Found {len(doc_mappings)} document entries in Milvus.")
 
-    if not source_to_doc:
-        print("No documents found in Milvus with doc_numbers. Aborting.")
-        return
+    if not doc_mappings:
+        print("No documents found in Milvus with doc_numbers. Setting defaults.")
 
     updated_count = 0
     with n_driver.session() as session:
-        for source_id, doc_num in source_to_doc.items():
-            # Update Neo4j node if it exists and doc_number is missing or different
+        # Explicit normalization for Luật Xây dựng 2014
+        session.run(
+            """
+            MATCH (d:Document)
+            WHERE d.id CONTAINS 'Luat_50-2014' OR d.file_name CONTAINS 'Luat_50-2014' OR d.doc_number CONTAINS '50-2014'
+            SET d.doc_number = '50/2014/QH13'
+            RETURN d.id as id
+            """
+        )
+
+        for source_id, doc_id, doc_num in doc_mappings:
+            # Update Neo4j node matching file_name, id, or ROOT/ prefix
             result = session.run(
                 """
-                MATCH (d:Document {id: $id})
-                WHERE d.doc_number IS NULL OR d.doc_number = ''
+                MATCH (d:Document)
+                WHERE d.file_name = $source
+                   OR d.id = $source
+                   OR d.id = $doc_id
+                   OR d.id = 'ROOT/' + $doc_id
+                   OR d.id = replace($doc_id, 'ROOT/', '')
                 SET d.doc_number = $doc_num
                 RETURN d.id as id
                 """,
-                id=source_id, doc_num=doc_num
+                source=source_id, doc_id=doc_id, doc_num=doc_num
             )
             if result.single():
                 updated_count += 1

@@ -305,6 +305,14 @@ async def probe_hardware_and_containers() -> str:
         avail_gb = int(mem.get("MemAvailable", "0").split()[0]) / 1024 / 1024
         used_gb = total_gb - avail_gb
         lines.append(f"• *RAM/Unified:* `{used_gb:.1f}G/{total_gb:.1f}G` (Trống {avail_gb:.1f}G)")
+
+        swap_tot_kb = int(mem.get("SwapTotal", "0").split()[0])
+        swap_free_kb = int(mem.get("SwapFree", "0").split()[0])
+        if swap_tot_kb > 0:
+            swap_tot_gb = swap_tot_kb / 1024 / 1024
+            swap_used_gb = (swap_tot_kb - swap_free_kb) / 1024 / 1024
+            swap_pct = (swap_used_gb / swap_tot_gb) * 100
+            lines.append(f"• *Swap NVMe:* `{swap_used_gb:.1f}G/{swap_tot_gb:.0f}G` ({swap_pct:.0f}% dùng)")
     except Exception:
         pass
 
@@ -358,6 +366,210 @@ async def probe_hardware_and_containers() -> str:
                     lines.append(f" {st_icon} `{name}`: {status}")
     except Exception as e:
         lines.append(f"• Lỗi kiểm tra Docker: {e}")
+
+    lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
+    return "\n".join(lines)
+
+
+async def probe_memory_and_swap() -> str:
+    """Probes RAM, Swap utilization, swappiness, and top processes by RSS and VmSwap."""
+    lines = ["🧠 *CHI TIẾT BỘ NHỚ & SWAP (DGX SPARK)* 🧠\n"]
+
+    # 1. Meminfo
+    try:
+        with open("/proc/meminfo", "r") as f:
+            mem = {}
+            for line in f:
+                parts = line.split(":")
+                if len(parts) == 2:
+                    mem[parts[0].strip()] = parts[1].strip()
+        total_gb = int(mem.get("MemTotal", "0").split()[0]) / 1024 / 1024
+        avail_gb = int(mem.get("MemAvailable", "0").split()[0]) / 1024 / 1024
+        used_gb = total_gb - avail_gb
+        lines.append(f"• *RAM Vật Lý:* `{used_gb:.1f} GiB / {total_gb:.1f} GiB` (Khả dụng: `{avail_gb:.1f} GiB`)")
+
+        swap_tot_kb = int(mem.get("SwapTotal", "0").split()[0])
+        swap_free_kb = int(mem.get("SwapFree", "0").split()[0])
+        if swap_tot_kb > 0:
+            swap_tot_gb = swap_tot_kb / 1024 / 1024
+            swap_used_gb = (swap_tot_kb - swap_free_kb) / 1024 / 1024
+            swap_pct = (swap_used_gb / swap_tot_gb) * 100
+            lines.append(f"• *Bộ Nhớ Swap:* `{swap_used_gb:.2f} GiB / {swap_tot_gb:.1f} GiB` (`{swap_pct:.1f}%`)")
+    except Exception as e:
+        lines.append(f"• Lỗi đọc meminfo: {e}")
+
+    # 2. Swappiness
+    try:
+        with open("/proc/sys/vm/swappiness", "r") as f:
+            swappiness = f.read().strip()
+        lines.append(f"• *Kernel Swappiness:* `{swappiness}` (Chuẩn tối ưu AI Production: 10)")
+    except Exception:
+        pass
+
+    # Helper: Docker container mapping & process task resolver
+    cmap: Dict[str, str] = {}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "ps", "-a", "--no-trunc", "--format", "{{.ID}}|{{.Names}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await proc.communicate()
+        if out:
+            for line in out.decode().strip().split("\n"):
+                if "|" in line:
+                    cid, cname = line.split("|")
+                    cmap[cid.strip()] = cname.strip()
+    except Exception:
+        pass
+
+    def _resolve_pid(pid: str) -> tuple[str, str]:
+        cname, task = None, ""
+        try:
+            with open(f"/proc/{pid}/cgroup", "r") as f:
+                cg = f.read()
+                for line in cg.splitlines():
+                    if "docker-" in line or "/docker/" in line:
+                        for cid, name in cmap.items():
+                            if cid in line:
+                                cname = name
+                                break
+                        if cname:
+                            break
+                    elif ".service" in line and not cname:
+                        parts = [p for p in line.split("/") if p.endswith(".service")]
+                        if parts:
+                            cname = parts[-1].replace(".service", "")
+        except Exception:
+            pass
+
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                raw = f.read().replace(b"\x00", b" ").decode(errors="ignore").strip()
+                if "reindex_milvus" in raw:
+                    task = "reindex_milvus.py"
+                elif "VLLM::EngineCore" in raw:
+                    task = "VLLM::EngineCore"
+                elif "pipeline" in raw:
+                    task = "ingestion.pipeline"
+                elif "uvicorn" in raw:
+                    task = "FastAPI / Uvicorn"
+                elif "neo4j" in raw or "java" in raw:
+                    task = "Neo4j Graph (JVM)"
+                elif "litellm" in raw:
+                    task = "LiteLLM Gateway"
+                elif "ocr" in raw or "surya" in raw:
+                    task = "OCR Worker"
+                elif "milvus run" in raw:
+                    task = "Milvus Standalone"
+                elif raw:
+                    task = raw.split()[0].split("/")[-1]
+        except Exception:
+            pass
+        origin = f"🐳 `{cname}`" if cname else "💻 `Host`"
+        return origin, task
+
+    # 3. Top RAM Consumers
+    lines.append("\n🔥 *TOP 5 TIẾN TRÌNH DÙNG RAM (RSS):*")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ps", "-eo", "pid,rss", "--sort=-rss",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await proc.communicate()
+        if out:
+            rows = out.decode().strip().split("\n")[1:6]
+            for r in rows:
+                p_parts = r.split()
+                if len(p_parts) >= 2:
+                    pid, rss_kb = p_parts[0], int(p_parts[1])
+                    rss_mb = rss_kb / 1024
+                    sz_str = f"{rss_mb/1024:.2f} GiB" if rss_mb >= 1024 else f"{rss_mb:.1f} MiB"
+                    origin, task = _resolve_pid(pid)
+                    lines.append(f"• {origin} (PID {pid}): *{sz_str}*")
+                    if task:
+                        lines.append(f"  └ _{task}_")
+    except Exception as e:
+        lines.append(f"• Lỗi đọc tiến trình RAM: {e}")
+
+    # 4. Top Swap Consumers
+    lines.append("\n💾 *TOP 5 TIẾN TRÌNH NẰM TRONG SWAP:*")
+    try:
+        import glob
+        swap_list = []
+        for s_file in glob.glob("/proc/[0-9]*/status"):
+            try:
+                pid = os.path.basename(os.path.dirname(s_file))
+                vmswap = 0
+                with open(s_file, "r") as f:
+                    for s_line in f:
+                        if s_line.startswith("VmSwap:"):
+                            vmswap = int(s_line.split()[1])
+                if vmswap > 0:
+                    swap_list.append((vmswap, pid))
+            except Exception:
+                pass
+        swap_list.sort(reverse=True)
+        if swap_list:
+            for vmswap_kb, pid in swap_list[:5]:
+                vmswap_mb = vmswap_kb / 1024
+                sz_str = f"{vmswap_mb/1024:.2f} GiB" if vmswap_mb >= 1024 else f"{vmswap_mb:.1f} MiB"
+                origin, task = _resolve_pid(pid)
+                lines.append(f"• {origin} (PID {pid}): *{sz_str}*")
+                if task:
+                    lines.append(f"  └ _{task}_")
+        else:
+            lines.append(" 🟢 _Không có tiến trình nào bị trôi vào Swap._")
+    except Exception as e:
+        lines.append(f"• Lỗi đọc tiến trình Swap: {e}")
+
+    lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
+    return "\n".join(lines)
+
+
+async def probe_gateway_stats() -> str:
+    """Queries Antigravity Tools API for token and request statistics."""
+    lines = ["📈 *BÁO CÁO SẢN LƯỢNG AI GATEWAY* 📈\n"]
+    base_url = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045").rstrip("/").removesuffix("/v1")
+    key = os.environ.get("GATEWAY_PROXY_KEY", "")
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            res = await client.get(f"{base_url}/api/stats/token/summary", headers=headers)
+            if res.status_code == 200:
+                s = res.json()
+                tot_req = s.get("total_requests", 0)
+                tot_tok = s.get("total_tokens", 0)
+                in_tok = s.get("total_input_tokens", 0)
+                out_tok = s.get("total_output_tokens", 0)
+                lines.append(f"• *Tổng Requests:* `{tot_req:,}`")
+                lines.append(f"• *Tổng Tokens:* `{tot_tok:,}`")
+                lines.append(f"• *Input Tokens:* `{in_tok:,}` | *Output:* `{out_tok:,}`")
+            else:
+                lines.append(f"• Không thể tải số liệu tổng hợp (HTTP {res.status_code})")
+
+            res_m = await client.get(f"{base_url}/api/stats/token/by-model", headers=headers)
+            if res_m.status_code == 200:
+                models = res_m.json()
+                if isinstance(models, list) and models:
+                    lines.append("\n🏆 *TOP MÔ HÌNH TIÊU THỤ:*")
+                    sorted_models = sorted(models, key=lambda m: m.get("total_tokens", 0), reverse=True)
+                    for m in sorted_models[:4]:
+                        m_name = m.get("model", "unknown")
+                        m_tok = m.get("total_tokens", 0)
+                        m_req = m.get("request_count", 0)
+                        lines.append(f"• `{m_name}`: `{m_tok:,}` tokens (`{m_req}` reqs)")
+
+            res_acc = await client.get(f"{base_url}/api/accounts", headers=headers)
+            if res_acc.status_code == 200:
+                data = res_acc.json()
+                accounts = data.get("accounts", []) if isinstance(data, dict) else []
+                active = sum(1 for a in accounts if not a.get("disabled"))
+                lines.append(f"\n👥 *Quota Pool:* `{active}/{len(accounts)}` tài khoản khả dụng")
+    except Exception as e:
+        lines.append(f"• Lỗi kết nối Antigravity Tools API: {e}")
 
     lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
     return "\n".join(lines)
@@ -558,7 +770,11 @@ def get_main_dashboard_markup() -> Dict[str, Any]:
         "inline_keyboard": [
             [
                 {"text": "📊 Xem Toàn Bộ Status", "callback_data": "menu:status"},
+                {"text": "🧠 Bộ Nhớ & Swap", "callback_data": "menu:memory"},
+            ],
+            [
                 {"text": "🎮 GPU Blackwell", "callback_data": "menu:gpu"},
+                {"text": "📈 Sản Lượng Token", "callback_data": "menu:stats"},
             ],
             [
                 {"text": "🔄 Khởi Động Lại Service", "callback_data": "menu:restart_list"},
@@ -806,6 +1022,16 @@ async def dispatch_command(
                 if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
                     await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
                 append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed system status")
+            elif command_id == "system.memory":
+                text = await probe_memory_and_swap()
+                if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
+                    await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
+                append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed memory and swap")
+            elif command_id == "system.stats":
+                text = await probe_gateway_stats()
+                if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
+                    await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
+                append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed gateway stats")
             elif command_id == "host.gpu":
                 text = await probe_blackwell_gpu()
                 if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
@@ -883,6 +1109,12 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             return
         elif data == "menu:status":
             await dispatch_command("system.status", {}, chat_id, message_id, cq_id=cq_id)
+            return
+        elif data == "menu:memory":
+            await dispatch_command("system.memory", {}, chat_id, message_id, cq_id=cq_id)
+            return
+        elif data == "menu:stats":
+            await dispatch_command("system.stats", {}, chat_id, message_id, cq_id=cq_id)
             return
         elif data == "menu:gpu":
             await dispatch_command("host.gpu", {}, chat_id, message_id, cq_id=cq_id)
@@ -1053,6 +1285,20 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra trạng thái...")
             if sent_id:
                 await dispatch_command("system.status", {}, chat_id, sent_id)
+            return
+
+        # 2a. /memory
+        if text == "/memory":
+            sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra chi tiết bộ nhớ & Swap...")
+            if sent_id:
+                await dispatch_command("system.memory", {}, chat_id, sent_id)
+            return
+
+        # 2b. /stats
+        if text == "/stats":
+            sent_id = await send_telegram_msg(chat_id, "⏳ Đang truy vấn thống kê AI Gateway...")
+            if sent_id:
+                await dispatch_command("system.stats", {}, chat_id, sent_id)
             return
 
         # 3. /gpu

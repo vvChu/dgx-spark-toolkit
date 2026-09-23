@@ -109,7 +109,11 @@ class DocumentIngestionPipeline:
         from retrieval.search_pipeline import get_embedding_model
         self.model = get_embedding_model()
         self.chunker = DocumentChunker()
-        self.exporter = DataExporter(settings.EXPORT_DIR) if settings.EXPORT_PROCESSED_DATA else None
+        self.exporter = (
+            DataExporter(settings.EXPORT_DIR)
+            if (settings.EXPORT_PROCESSED_DATA and not isinstance(self.state_manager, InMemoryStateManager))
+            else None
+        )
         self._http_client = httpx.Client(timeout=300)
 
         # Legacy compatibility attributes
@@ -443,6 +447,11 @@ class DocumentIngestionPipeline:
             queue = IngestionQueue()
             logger.info("Connected to IngestionQueue ✓")
             while True:
+                if hasattr(queue, "is_paused") and queue.is_paused():
+                    logger.warning("[BACKPRESSURE] Ingestion temporarily paused due to memory pressure. Sleeping 10s...")
+                    time.sleep(10)
+                    continue
+
                 messages = queue.claim_next(count=1, block_ms=5000)
                 if messages:
                     for msg in messages:

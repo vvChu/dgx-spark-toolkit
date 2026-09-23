@@ -180,9 +180,9 @@ async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10,
         messages = [{"role": "user", "content": prompt}]
         res_data = await client.complete_json(
             messages,
-            model="rag-core",
-            model_chain=["rag-core", "gemini-3.5-flash-lite"],
-            timeout=8.0,
+            model="gemini-3.5-flash-lite",
+            model_chain=["gemini-3.5-flash-lite", "claude-haiku-4"],
+            timeout=10.0,
             retries=1,
         )
         if isinstance(res_data, list):
@@ -204,14 +204,13 @@ async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10,
                     break
                 if d not in filtered_docs:
                     filtered_docs.append(d)
-            return filtered_docs[:top_k]
     except Exception as e:
         logger.warning(
-            "Stage 1 Fast Batch Rerank skipped (%s). Using top-%d candidate fallback.", e, top_k
+            "Stage 1 Fast Batch Rerank skipped (%s). Using raw candidate set.", e
         )
-        return docs[:top_k]
+        return docs
 
-    return docs[:top_k]
+    return filtered_docs if filtered_docs else docs
 
 
 class SearchPipeline:
@@ -517,17 +516,17 @@ class SearchPipeline:
             ctx.tracer.start_step("rerank")
             docs = [_get_hit_entity(hit).get("text", "") for hit in ctx.raw_hits]
 
-            # Stage 1: Fast batch filtering using Flash Lite 250K TPM -> Gemma 4 fallback
-            if len(docs) > ctx.limit:
+            # Stage 1: Fast batch filtering using Flash Lite when candidate set is exceptionally large
+            if len(docs) > 60:
                 candidate_docs = await stage1_fast_batch_rerank(
-                    ctx.raw_query, docs, top_k=min(max(ctx.limit * 2, 5), len(docs), 10), ai_client=ctx.ai_client
+                    ctx.raw_query, docs, top_k=30, ai_client=ctx.ai_client
                 )
             else:
                 candidate_docs = docs
 
             # Stage 2: Deep Local Reranking (CrossEncoder)
             reranker = get_reranker()
-            reranked = await reranker.rerank(ctx.raw_query, candidate_docs, top_k=ctx.limit)
+            reranked = await reranker.rerank(ctx.raw_query, candidate_docs, top_k=max(ctx.limit * 2, 10))
 
             hit_map = {}
             for hit in ctx.raw_hits:
@@ -551,6 +550,7 @@ class SearchPipeline:
                 ctx.top_results.append(_build_result_item(ent, doc_text, hybrid_score))
 
             ctx.top_results.sort(key=lambda x: x["score"], reverse=True)
+            ctx.top_results = ctx.top_results[:ctx.limit]
             ctx.tracer.end_step(input_count=len(docs), output_count=len(ctx.top_results))
         else:
             for hit in ctx.raw_hits:
@@ -585,7 +585,9 @@ class SearchPipeline:
         timeline_count = 0
         if self.graph_timeline is not None:
             try:
-                for r in ctx.top_results[:2]:
+                for r in ctx.top_results:
+                    if timeline_count >= 2:
+                        break
                     doc_num = r.get("doc_number")
                     if doc_num:
                         timeline = await self.graph_timeline.get_legal_timeline(doc_num)

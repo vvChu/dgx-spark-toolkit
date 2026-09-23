@@ -15,6 +15,8 @@ if str(_rag_root) not in sys.path:
 os.environ.setdefault("NEO4J_PASSWORD", "ci_test_placeholder_safe")
 os.environ.setdefault("LITELLM_MASTER_KEY", "sk-ci-test-placeholder-safe")
 os.environ.setdefault("ADMIN_SECRET", "test-admin-key-for-ci")
+os.environ["EXPORT_DIR"] = "/tmp/rag_test_exports"
+os.environ["EXPORT_PROCESSED_DATA"] = "false"
 
 # Stub the heavy embedding module and sentence_transformers before importing main.py.
 # This keeps unit tests hermetic and allows CI runners to execute without heavy torch/models.

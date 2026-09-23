@@ -62,7 +62,7 @@ class TestDefaults:
             os.environ["NEO4J_PASSWORD"] = "strong_safe_password_1"
             os.environ["LITELLM_MASTER_KEY"] = "sk-strong-safe-key-2"
             s = _make_settings()
-            assert s.MILVUS_COLLECTION == "legal_docs_v10"
+            assert s.MILVUS_COLLECTION == "legal_docs_v11"
         assert s.MILVUS_PORT == 19530
         assert s.GPU_ENABLED is True
         assert s.ENABLE_HYDE is False

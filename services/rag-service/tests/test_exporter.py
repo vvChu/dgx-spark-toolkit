@@ -331,6 +331,7 @@ class TestReprocessExportsAndDocNumber:
         assert extract_doc_number_from_path("ND15-2021-CP.json") == "15/2021/NĐ-CP"
         assert extract_doc_number_from_path("TT01-2023-TTg.json") == "01/2023/TT-TTg"
         assert extract_doc_number_from_path("/app/exports/json/TT01-2023-BTP.json.bak") == "01/2023/TT-BTP"
+        assert extract_doc_number_from_path("Luat_50-2014-QH13_Luat Xay dung_18-6-2014.pdf") == "50/2014/QH13"
         assert extract_doc_number_from_path("random_notes.md") is None
         assert extract_doc_number_from_path("") is None
 
@@ -434,6 +435,24 @@ class TestReprocessExportsAndDocNumber:
         assert "Dưới đây là" not in cleaned_heavy
         assert "Điều 2. Quy định chung." in cleaned_heavy
         assert not cleaned_heavy.startswith("\n")
+
+        # OCR prompt echoes and labels
+        ocr_prompt_text = (
+            "* *Draft 1*\n"
+            "* *Character Count Check: 543 characters*\n"
+            "- Ignore logos, watermarks, electronic headers\n"
+            "Did I include all required points?\n"
+            "**[ OCR gán nhầm]** Điều 15. Hỗ trợ phát triển\n"
+            "**[↓ OCR gán nhầm]** Điều 16. Hợp tác quốc tế"
+        )
+        cleaned_ocr = strip_ai_monologue(ocr_prompt_text)
+        assert "Draft 1" not in cleaned_ocr
+        assert "Character Count Check" not in cleaned_ocr
+        assert "Ignore logos" not in cleaned_ocr
+        assert "Did I include" not in cleaned_ocr
+        assert "OCR gán nhầm" not in cleaned_ocr
+        assert "Điều 15. Hỗ trợ phát triển" in cleaned_ocr
+        assert "Điều 16. Hợp tác quốc tế" in cleaned_ocr
 
         # Emojis
         text_emoji = "Điều 1 🔥 nội dung ⚠️ cảnh báo 🚀"

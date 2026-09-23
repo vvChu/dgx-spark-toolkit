@@ -21,8 +21,8 @@ services:
       - MAX_WORKERS=${MAX_WORKERS:-2}
       - MAX_DIGITAL_WORKERS=${MAX_DIGITAL_WORKERS:-2}
       - DATABASE_URL=${DATABASE_URL}
-      - FORCE_CPU_RERANKER=1
-      - FORCE_CPU_EMBEDDING=1
+      - FORCE_CPU_RERANKER=0
+      - FORCE_CPU_EMBEDDING=0
       # Limit PyTorch to only take what it strictly needs + bounded cache to avoid stealing too much VRAM from vLLM
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.8
       - OMP_NUM_THREADS=4
@@ -593,8 +593,11 @@ services:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
       - CHATOPS_INTERNAL_SECRET=${CHATOPS_INTERNAL_SECRET}
       - CHATOPS_GATEWAY_URL=http://172.21.0.1:8095
+      - GATEWAY_PROXY_URL=${GATEWAY_PROXY_URL}
+      - GATEWAY_PROXY_KEY=${GATEWAY_PROXY_KEY}
+      - REDIS_URL=${REDIS_CACHE_URL}
     command: >
-      sh -c "pip install requests docker && python /app/smart_watchdog.py"
+      sh -c "pip install requests docker redis && python /app/smart_watchdog.py"
     restart: unless-stopped
     networks:
       - rag-network

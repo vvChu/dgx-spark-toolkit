@@ -293,7 +293,99 @@ _AI_PATTERNS_EN = [
     r"(?mi)^\s*\*?\s*The image shows a page from a legal document.*$",
 ]
 
-_AI_COMPILED = [re.compile(p) for p in _AI_PATTERNS_VN + _AI_PATTERNS_EN]
+OCR_PROMPT_PATTERNS = [
+    r"(?mi)^\s*[-*]?\s*(?:Did I include|Is the structure|Let's assemble|Let's refine|This looks correct|KHÔNG dùng markdown).*$",
+    r"(?mi)^\s*[-*]?\s*(?:The\s+)?text starts (?:mid|with item).*$",
+    r"(?mi)^\s*[-*]?\s*Point \d+:.*$",
+    r"(?mi)^\s*[-*]?\s*Sub-points\b.*$",
+    r"(?mi)^\s*[-*]?\s*Looking at sub-points.*$",
+    r"(?mi)^\s*[-*]?\s*\**\s*(?:Looking at (?:point|Arti\s*cle)|Paragraph \d+ of Arti\s*cle|Heading:\s*\"|First Paragraph:)\**.*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Then\s+)?Arti\s*cle \d+.*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Goal:.*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Structure:.*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Constraint Check:.*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Drafting \(Mental\):?\*?.*$",
+    r"(?mi)^\s*[-*]?\s*\d+\.\s*(?:Summarize|Identify the law).*$",
+    r"(?mi)^\s*[-*]?\s*\"CHỦ TỊCHQUỐCHỘI\"\s*->.*$",
+    r"(?mi)^\s*[-*]?\s*Let\'s look\b.*$",
+    r"(?mi)^\s*[-*]?\s*IfI?\s+remove the signature blocks.*$",
+    r"(?mi)^\s*[-*]?\s*(?:\*\*)?(?:Article \d+|Text Block \d*|Sub-points?|Points? [0-9a-đA-Đ]+|There are|It contains|Line breaks for|No signatures|Ensure line breaks)\b.*$",
+    r"(?mi)^\s*[-*]?\s*\*?Point [0-9a-đA-Đ]+:\*?.*$",
+    r"(?mi)^\s*\d+\.\s*(?:Extract the main|Extract the \").*$",
+    r"(?mi)^\s*[-*]?\s*(?:Points a\), b\)|Point \d+ content|Sub-point [a-z] content)\.?\s*$",
+    r"(?mi)^\s*[-*]?\s*Check\s+(?:for\s+typos|specific\s+phrases|\"[^\"]+\").*$",
+    r"(?mi)^\s*[-*]?\s*\*?The\s+sub-points\b.*$",
+    r"(?mi)^\s*[-*]?\s*\*?The\s+text\s+looks\s+clean.*$",
+    r"(?mi)^\s*[-*]?\s*\*?Checking\s+specific\s+phrases:?\*?.*$",
+    r"(?mi)^\s*[-*]\s*\"(?:Điều|\bCơ sở|\bCụm|\bKhu|\bmạng lưới|\bkhởi sự)[^\"]+\"\s*$",
+    r"(?mi)^\s*[-*]?\s*Top paragraph:.*$",
+    r"(?mi)^\s*[-*]?\s*Ignore\b.*$",
+    r"(?mi)^\s*[-*]?\s*.*?\bignore\s+(?:the\s+)?page\s+number.*$",
+    r"(?mi)^\s*[-*]?\s*\"?\d+\"?\s+(?:at the top,\s*ignore|is at the top,\s*ignore).*$",
+    r"(?mi)^\s*[-*]?\s*\d+\s*\((?:Page number - )?ignore\b.*?\)\s*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Draft \d+.*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Character [Cc]ount(?: [Cc]heck)?:?.*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Revised Draft|Final Polish|Refined Plan|Mental Outline|Attempt \d+|Review against constraints|Check Constraints|Refining for).*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Rule \d+.*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Exclusion Rules?.*$",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Main Text Block|Middle Section|Signature Block|Bottom Left|Bottom Right|Stamp)\b.*$",
+    r"(?mi)(?:^|(?<=:::\s))[-*]?\s*(?:Exclude|Extract the main|Extract the \").*$",
+    r"(?mi)^\s*[-*]?\s*If I remove the signature blocks.*$",
+    r"(?mi)^\s*[-*]?\s*(?:Language:\s*Vietnamese|No markdown:|Vietnamese only\?|Max \d+ characters\?|No \?\s*Yes).*$",
+    r"(?mi)^\s*[-*]?\s*The text \"Luật này được.*$",
+    r"(?mi)^\s*[-*]?\s*The text at the top is the end.*$",
+    r"(?mi)^\s*[-*]?\s*The rest is administrative metadata.*$",
+    r"(?mi)^\s*[-*]?\s*The exclusion list is quite specific:.*$",
+    r"(?mi)^\s*[-*]?\s*So, the output should primarily be.*$",
+    r"(?mi)^\s*[-*]?\s*\*?Let's check the text again\.\*?.*$",
+    r"(?mi)^\s*[-*]?\s*Let's look at the specific exclusion:.*$",
+    r"(?mi)^\s*[-*]?\s*BUT, the text.*$",
+    r"(?mi)^\s*[-*]?\s*Let's look at the bottom block.*$",
+    r"(?mi)^\s*[-*]?\s*Let's try to interpret.*$",
+    r"(?mi)^\s*[-*]?\s*Actually, usually, for these tasks.*$",
+    r"(?mi)^\s*[-*]?\s*The signature line itself.*$",
+    r"(?mi)^\s*[-*]?\s*Let's look at the instruction:.*$",
+    r"(?mi)^\s*[-*]?\s*So, \"CHỦ TỊCH.*$",
+    r"(?mi)^\s*[-*]?\s*\"VĂNPHÒNGCHỦ TỊCHNƯỚC\" is an organization.*$",
+    r"(?mi)^\s*[-*]?\s*\"SAOYBẢNCHÍNH\" is the document type.*$",
+    r"(?mi)^\s*[-*]?\s*\"Số: 01 /SY-VPCTN\" is the number.*$",
+    r"(?mi)^\s*[-*]?\s*\"Hà Nội, ngày.*$",
+    r"(?mi)^\s*[-*]?\s*\"KT\. CHỦ NHIỆM.*$",
+    r"(?mi)^\s*[-*]?\s*Wait, let's re-read the exclusion rule.*$",
+    r"(?mi)^\s*[-*]?\s*However, \"VĂNPHÒNGCHỦ.*$",
+    r"(?mi)^\s*[-*]?\s*The top signature block.*$",
+    r"(?mi)^\s*[-*]?\s*\"Logo, watermark, header điện tử.*$",
+    r"(?mi)^\s*[-*]?\s*\"Chữ viết tay, ghi chú tay.*$",
+    r"(?mi)^\s*[-*]?\s*\"Con dấu điện tử, con dấu đỏ.*$",
+    r"(?mi)^\s*\"Khối 'Nơi nhận:'.*$",
+    r"(?mi)^\s*\"Tên/chức danh người ký.*$",
+    r"(?mi)^\s*\"CHỦ TỊCHQUỐCHỘI\" -> This is a title.*$",
+    r"(?mi)^\s*\"VĂNPHÒNGCHỦ TỊCHNƯỚC\" -> This is the issuing body.*$",
+    r"(?mi)^\s*\"Số: 01 /SY-VPCTN\" -> Document number.*$",
+    r"(?mi)^\s*\"Hà Nội, ngày 06 tháng 02 năm 2024\" -> Date.*$",
+    r"(?mi)^\s*\*\*\[\s*[↓↑]?\s*OCR gán nhầm.*?\*\*.*$",
+    r"(?mi)^\s*[-*]?\s*(?:Start with item|Let's draft|Preserve indentation|No markdown headers|No bold/italic|No bolding|Pure text|Correct numbering|Looks complete|I need to|Ensure no|Actually, looking at|Ensure [\"']|Image check:|Check specific text:|The text looks complete|Structure preserved)\b.*$",
+    r"(?mi)^\s*[-*]?\s*\**(?:Item|Clause|Sub-clause)\s+[0-9a-đA-Đ]+:\**\s*[\"'].*?$",
+    r"(?mi)^\s*[-*]?\s*\**(?:Start|Content|Text check|Page Nu?\s*mber):\**\s+.*$",
+    r"(?mi)^\s*[-*]?\s*(?:preserve the numbering|I need to be careful|Ensure \"[^\"]+\"|Check specific text|Image check:).*$",
+    r"(?mi)^\s*[-*]?\s*\"(?:Điều|\d+\.)[^\"]+\"\s*$",
+    r"(?mi)^\s*[-*]?\s*\"[a-đ]\)[^\"]+\"\s*$",
+    r"(?mi)^\s*[-*]?\s*No \"Nơi nhận\".*$",
+    r"(?mi)^\s*[-*]?\s*No page number.*$",
+    r"(?mi)^\s*[-*]?\s*\"01 tháng 7 năm 2014\" is written out.*$",
+    r"(?mi)^\s*[-*]?\s*(?:So:|So\b).*$",
+    r"(?mi)^\s*[-*]?\s*.*?\b(?:Looks complete and accurate|No \"Nơi nhận\" or signatures|No page number \"\d+\").*$",
+    r"(?mi)^\s*[-*]?\s*The text looks complete and accurate.*$",
+    r"(?mi)^\s*[-*]?\s*(?:a|b|c|d|đ|e|g|h|i|k)\)\s*$",
+    r"(?mi)^\s*[-*]?\s*(?:5\.|6\.|7\.)\s+Text\.\.\..*$",
+    r"(?mi)^\s*[-*]?\s*[a-b]\)\s+Text\.\.\..*$",
+    r"(?mi)^\s*[-*]\s*(?:5\.|6\.|7\.|[a-đ]\)|Điều 217|\d+\.).*$",
+    r"(?mi)^\s*[-*]?\s*\*Header:\*\s*\(Skip\s+\"\d+\"\).*$",
+    r"(?mi)^\s*[-*]?\s*\*Text:\*\s*$",
+    r"(?mi)^\s*[-*]\s*\**Điều \d+.*$",
+]
+
+_AI_COMPILED = [re.compile(p) for p in _AI_PATTERNS_VN + _AI_PATTERNS_EN + OCR_PROMPT_PATTERNS]
 
 
 def strip_ai_monologue(text: str) -> str:
@@ -313,6 +405,19 @@ def strip_ai_monologue(text: str) -> str:
         "\n",
         text,
     )
+
+    # Strip multiline attempt/mental outline blocks (bounded to not consume substantive content)
+    text = re.sub(r'(?is)(?:^|\n)\s*\*?\s*\*?Attempt \d+.*?(?=\n## Content|\Z)', '', text)
+    text = re.sub(r'(?is)(?:^|\n)\s*\*?\s*\*?Mental Outline.*?(?=\n## Content|\Z)', '', text)
+    text = re.sub(r'(?is)(?:^|\n)\s*\*?\s*\*?Check Constraints.*?(?=\n## Content|\Z)', '', text)
+    text = re.sub(r'(?is)(?:^|\n)\s*\*?\s*\*?Review against constraints.*?(?=\n## Content|\Z)', '', text)
+    text = re.sub(r'(?is)(?:^|\n)\s*\*?\s*\*?Refining for.*?(?=\n## Content|\Z)', '', text)
+    text = re.sub(r'(?is)(?:^|\n)\s*\*?\s*\*?Revised Draft.*?(?=\n## Content|\Z)', '', text)
+    text = re.sub(r'(?is)(?:^|\n)\s*\*?\s*\*?Final Polish.*?(?=\n## Content|\Z)', '', text)
+
+    # Strip OCR artifact labels inline
+    text = re.sub(r'\*\*\[\s*[↓↑]?\s*OCR gán nhầm\s*\]\s*\*\*', '', text)
+    text = re.sub(r'\[\s*[↓↑]?\s*OCR gán nhầm\s*\]', '', text)
 
     for pat in _AI_COMPILED:
         text = pat.sub("\n", text)

@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Re-index Milvus from JSON exports cleanly with streaming.")
+    parser.add_argument("--collection", type=str, default=None, help="Target Milvus collection name (default: from settings or legal_docs_v11)")
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing to Milvus")
     parser.add_argument("--batch-size", type=int, default=16, help="Embedding batch size (default: 16)")
     parser.add_argument("--max-length", type=int, default=512, help="Max sequence length (default: 512)")
@@ -63,7 +64,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_file_chunks(fpath: str) -> tuple[list[dict], dict]:
+def load_file_chunks(fpath: str, max_chars: int = 14500) -> tuple[list[dict], dict]:
     """Load and sanitize chunks from a single JSON export file."""
     stats = {
         "total_chunks": 0,
@@ -81,7 +82,7 @@ def load_file_chunks(fpath: str) -> tuple[list[dict], dict]:
     meta = data.get("metadata", {})
     doc_id = data.get("doc_id", "")
     orig_path = data.get("original_path", "") or Path(fpath).name
-    summary = data.get("summary", "")
+    summary = strip_ai_monologue(data.get("summary", "")).strip()
     doc_date = meta.get("date", "unknown")
     doc_type = meta.get("type", "unknown")
     authority = meta.get("authority", "unknown")
@@ -110,7 +111,7 @@ def load_file_chunks(fpath: str) -> tuple[list[dict], dict]:
             stats["valid_synthetic_queries"] += 1
 
         entity = {
-            "text": text[:14000],
+            "text": text[:max_chars],
             "source": str(chunk.get("source", orig_path)),
             "page": int(chunk.get("page", 1)),
             "summary": str(summary)[:2048],
@@ -193,7 +194,7 @@ def create_hybrid_collection(client, collection_name: str) -> None:
 def main():
     args = parse_args()
     settings = get_settings()
-    collection_name = settings.MILVUS_COLLECTION
+    collection_name = args.collection or settings.MILVUS_COLLECTION
 
     files = sorted(glob.glob(os.path.join(args.json_dir, "*.json")))
     files = [f for f in files if not f.endswith(".bak")]
@@ -277,7 +278,7 @@ def main():
                 logger.info(f"Reached --max-chunks limit ({args.max_chunks}). Stopping file processing.")
                 break
             fname = Path(fpath).name
-            file_entities, f_stats = load_file_chunks(fpath)
+            file_entities, f_stats = load_file_chunks(fpath, max_chars=getattr(settings, "CHUNK_MAX_CHARS", 14500))
             f_count = len(file_entities)
             source_name = file_entities[0]["source"] if file_entities else ""
             t_file0 = time.time()

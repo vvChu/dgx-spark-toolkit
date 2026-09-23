@@ -108,6 +108,47 @@ def _has_broken_table(text: str) -> bool:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# AI LEAKAGE PATTERNS (Shared across MD, JSON, Milvus audits)
+# ═════════════════════════════════════════════════════════════════════════════
+_AI_LEAK_PATTERNS = [
+    r"(?im)^\s*Certainly[,!.]",
+    r"(?im)^\s*As an AI\b",
+    r"(?im)^\s*Here is (the|a|an|your|this)\b",
+    r"(?im)^\s*Here's (the|a|an|your|this)\b",
+    r"(?im)^\s*I cannot\b",
+    r"(?im)^\s*I would\b(?! (say|recommend)? rate)",
+    r"(?im)^\s*I'll\b",
+    r"(?im)^\s*I will\b",
+    r"(?i)Xin lỗi, tôi",
+    r"(?i)Dưới đây là.*theo yêu cầu",
+    r"(?i)Tôi xin lỗi",
+    r"(?mi)^\s*[-*]?\s*(?:Did I include|Is the structure|Let's assemble|Let's refine|This looks correct|KHÔNG dùng markdown)",
+    r"(?mi)^\s*[-*]?\s*(?:The\s+)?text starts (?:mid|with item)",
+    r"(?mi)^\s*[-*]?\s*Ignore\b",
+    r"(?mi)^\s*[-*]?\s*.*?\bignore\s+(?:the\s+)?page\s+number",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Draft \d+",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Character [Cc]ount",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Revised Draft|Final Polish|Refined Plan|Mental Outline|Attempt \d+|Review against constraints|Check Constraints|Refining for)",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Rule \d+",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Exclusion Rules?",
+    r"(?mi)^\s*[-*]?\s*(?:\*\*)?(?:(?:Then\s+)?Article \d+|Arti\s*cle \d+|Text Block \d*|Sub-points?|Looking at sub-points|Points? [0-9a-đA-Đ]+|There are|It contains|Line breaks for|No signatures|Ensure line breaks)\b",
+    r"(?mi)^\s*[-*]?\s*\**\s*(?:Looking at (?:point|Arti\s*cle)|Paragraph \d+ of Arti\s*cle|Heading:\s*\"|First Paragraph:)\**",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Goal:|Structure:|Constraint Check:|Drafting \(Mental\):?)",
+    r"(?mi)^\s*[-*]?\s*\d+\.\s*(?:Summarize|Identify the law)",
+    r"(?mi)^\s*[-*]?\s*\"CHỦ TỊCHQUỐCHỘI\"\s*->",
+    r"(?mi)^\s*[-*]?\s*Let\'s look\b",
+    r"(?mi)^\s*[-*]?\s*IfI?\s+remove the signature blocks",
+    r"(?mi)^\s*[-*]?\s*\*?Point [0-9a-đA-Đ]+:\*?",
+    r"(?mi)^\s*\d+\.\s*(?:Extract the main|Extract the \")",
+    r"(?mi)^\s*[-*]?\s*(?:Points a\), b\)|Point \d+ content|Sub-point [a-z] content)",
+    r"(?mi)\*\*\[\s*[↓↑]?\s*OCR gán nhầm",
+    r"(?i)Thinking Process",
+    r"(?i)Analyze the Request",
+    r"(?i)Tư duy suy luận",
+]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # DIM A — MARKDOWN QUALITY
 # ═════════════════════════════════════════════════════════════════════════════
 def audit_markdown(md_files):
@@ -127,21 +168,7 @@ def audit_markdown(md_files):
         "encoding_issues": 0,
         "very_short": 0,
     }
-    # Require patterns at start of a sentence/line to avoid false positives
-    # from Vietnamese legal tables that coincidentally contain English phrases
-    ai_patterns = [
-        r"(?im)^\s*Certainly[,!.]",
-        r"(?im)^\s*As an AI\b",
-        r"(?im)^\s*Here is (the|a|an|your|this)\b",
-        r"(?im)^\s*Here's (the|a|an|your|this)\b",
-        r"(?im)^\s*I cannot\b",
-        r"(?im)^\s*I would\b(?! (say|recommend)? rate)",
-        r"(?im)^\s*I'll\b",
-        r"(?im)^\s*I will\b",
-        r"(?i)Xin lỗi, tôi",
-        r"(?i)Dưới đây là.*theo yêu cầu",
-        r"(?i)Tôi xin lỗi",
-    ]
+    ai_patterns = _AI_LEAK_PATTERNS
     boilerplate_re = re.compile(
         r"CỘNG\s+HÒA\s+XÃ\s+HỘI|"
         r"Độc lập\s*[-–—]\s*Tự do\s*[-–—]\s*Hạnh phúc|"
@@ -226,10 +253,12 @@ def audit_json(json_files):
         "missing_root_field": 0,
         "missing_meta_field": 0,
         "no_summary": 0,
+        "summary_ai_leakage": 0,
         "empty_chunks": 0,
         "missing_chunk_field": 0,
         "invalid_doc_id": 0,
         "chunk_no_text": 0,
+        "chunk_ai_leakage": 0,
     }
     total_chunks = 0
     chunk_types = Counter()
@@ -259,6 +288,8 @@ def audit_json(json_files):
         summary = data.get("summary", "")
         if not summary or len(summary) < 50:
             issues["no_summary"] += 1
+        elif any(re.search(pat, summary) for pat in _AI_LEAK_PATTERNS):
+            issues["summary_ai_leakage"] += 1
 
         # Chunks
         chunks = data.get("chunks", [])
@@ -278,6 +309,8 @@ def audit_json(json_files):
 
             if not c.get("text", "").strip():
                 issues["chunk_no_text"] += 1
+            elif any(re.search(pat, c.get("text", "")) for pat in _AI_LEAK_PATTERNS):
+                issues["chunk_ai_leakage"] += 1
 
             # Strategy from hierarchy_path
             hp = c.get("hierarchy_path", "")
@@ -400,6 +433,12 @@ def audit_chunking(json_files):
     flag_dup = "✅" if dup_excess < total_p * 0.02 else ("🟡" if dup_excess < total_p * 0.05 else "🔴")
     print(f"  {flag_dup} Duplicate parent chunks : {dup_excess}  ({len(dup_fps)} unique fingerprints repeated)")
 
+    child_fps = Counter(hashlib.md5(c.get("text", "").strip().encode()).hexdigest() for c in all_children)
+    child_dup_fps = {h: c for h, c in child_fps.items() if c > 1}
+    child_dup_excess = sum(c - 1 for c in child_dup_fps.values())
+    flag_cdup = "✅" if child_dup_excess < max(total_c * 0.02, 5) else ("🟡" if child_dup_excess < total_c * 0.05 else "🔴")
+    print(f"  {flag_cdup} Duplicate child chunks  : {child_dup_excess}  ({len(child_dup_fps)} unique fingerprints repeated)")
+
     # C6: Synthetic queries coverage
     has_synth = sum(1 for c in all_parents if is_valid_synthetic_queries(c.get("synthetic_queries", "")))
     synth_rate = has_synth / max(total_p, 1)
@@ -432,7 +471,7 @@ def audit_milvus(sample_limit: Optional[int] = None):
     print_section("DIMENSION D: MILVUS INGESTION QUALITY")
 
     try:
-        from pymilvus import connections, Collection, MilvusClient
+        from pymilvus import MilvusClient
         from core.config import get_settings
     except ImportError:
         print("  ⚠  pymilvus or core.config not available, checking via JSON exports only")
@@ -441,12 +480,13 @@ def audit_milvus(sample_limit: Optional[int] = None):
     client = None
     try:
         s = get_settings()
-        connections.connect(host=s.MILVUS_HOST, port=str(s.MILVUS_PORT))
-        col = Collection(s.MILVUS_COLLECTION)
-        col.load()
         client = MilvusClient(uri=f"http://{s.MILVUS_HOST}:{s.MILVUS_PORT}")
-
-        total = col.num_entities
+        count_res = client.query(
+            collection_name=s.MILVUS_COLLECTION,
+            filter="id >= 0",
+            output_fields=["count(*)"],
+        )
+        total = count_res[0].get("count(*)", 0) if count_res else 0
         print(f"  Total entities in collection: {total:,}")
 
         # Sample parents
@@ -455,7 +495,7 @@ def audit_milvus(sample_limit: Optional[int] = None):
             filter='chunk_type == "parent"',
             output_fields=[
                 "text", "source", "page", "doc_type", "source_category",
-                "is_table", "synthetic_queries", "doc_number", "doc_id",
+                "is_table", "synthetic_queries", "doc_number", "doc_id", "summary",
             ],
             limit=limit,
         )
@@ -521,10 +561,21 @@ def audit_milvus(sample_limit: Optional[int] = None):
         "certainly,", "i'll", "i will", "as an ai", "here is",
         "here's", "i cannot", "i would", "xin lỗi", "dưới đây là",
         "thinking process", "analyze the request", "tư duy suy luận",
+        "did i include", "is the structure", "let's assemble",
+        "let's refine", "this looks correct", "character count",
+        "ocr gán nhầm", "ignore ", "ignore handwritten", "ignore seals",
+        "draft ", "attempt ", "mental outline", "check constraints",
+        "review against constraints", "refining for", "revised draft",
+        "final polish", "rule 1", "main text block", "signature block",
+        "extract the main", "exclude \"",
     ]
     leaked = sum(1 for r in res if any(p in r["text"].lower() for p in monologue))
     flag_leak = "✅" if leaked == 0 else ("🟡" if leaked < 3 else "🔴")
     print(f"  {flag_leak} AI monologue leakage   : {leaked}/{n}")
+
+    summary_leaked = sum(1 for r in res if any(p in r.get("summary", "").lower() for p in monologue))
+    flag_sm_leak = "✅" if summary_leaked == 0 else "🔴"
+    print(f"  {flag_sm_leak} Summary monologue leak : {summary_leaked}/{n}")
 
     # D6: OCR Spacing artifacts
     def spacing_ratio(text):
@@ -553,7 +604,7 @@ def audit_milvus(sample_limit: Optional[int] = None):
         penalties += 10
     if fragmented / n > 0.05:
         penalties += 5
-    if leaked > 0:
+    if leaked > 0 or summary_leaked > 0:
         penalties += 10
     if bad_sp > 0:
         penalties += 5

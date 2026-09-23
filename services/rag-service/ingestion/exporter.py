@@ -31,6 +31,11 @@ _QCVN_FILENAME_RE = re.compile(
     r"QCVN[_\s-]?(\d+)[_\s-](\d{4})[_\s-]([A-Za-z]+)"
 )
 
+# Luat doc pattern: Luat_50-2014-QH13 → 50/2014/QH13
+_LUAT_FILENAME_RE = re.compile(
+    r"Luat_(\d+)[-_](\d{4})[-_]QH(\d+)", re.IGNORECASE
+)
+
 # Standard doc pattern: TT01-2023-BTP → 01/2023/TT-BTP, QD08-2023-TTg → 08/2023/QĐ-TTg
 _DOC_NUM_FILENAME_RE = re.compile(
     r"([A-Z]{2,4})(\d+)[-_/](\d{4})[-_/]([A-Za-z]+)"
@@ -62,6 +67,11 @@ def extract_doc_number_from_path(filepath: str) -> Optional[str]:
     if m:
         return f"QCVN {m.group(1)}:{m.group(2)}/{m.group(3)}"
 
+    # Luat pattern: Luat_50-2014-QH13... -> 50/2014/QH13
+    m = _LUAT_FILENAME_RE.search(basename)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}/QH{m.group(3)}"
+
     # Standard full pattern: TT01-2023-BTP → 01/2023/TT-BTP, QD08-2023-TTg → 08/2023/QĐ-TTg
     m = _DOC_NUM_FILENAME_RE.search(basename)
     if m:
@@ -91,7 +101,14 @@ class DataExporter:
         except Exception as e:
             logger.debug(f"Could not create export directories ({self.export_dir}): {e}")
 
-    def export(self, rel_path: str, doc_id: str, meta: Dict[str, Any], summary: str, chunks: List[Dict[str, Any]]):
+    def export(
+        self,
+        rel_path: str,
+        doc_id: str,
+        meta: Dict[str, Any],
+        summary: str,
+        chunks: List[Dict[str, Any]],
+    ) -> tuple[Optional[Path], Optional[Path]]:
         """Export processed document data to JSON and Markdown."""
         try:
             # Sanitize doc_id for filename (replace / and other chars)
@@ -116,8 +133,19 @@ class DataExporter:
                 f.write(md_content)
 
             logger.info(f"Successfully exported data for {doc_id} to {self.export_dir}")
+            return Path(json_path), Path(md_path)
         except Exception as e:
             logger.error(f"Failed to export data for {doc_id}: {e}")
+            return None, None
+
+    def export_document(self, doc: Any) -> tuple[Optional[Path], Optional[Path]]:
+        """Wrapper mapping ProcessedDocument to export method."""
+        rel_path = getattr(doc, "file_path", getattr(doc, "source_path", "unknown"))
+        doc_id = getattr(doc, "doc_id", "unknown")
+        meta = getattr(doc, "metadata", {})
+        summary = getattr(doc, "summary", "")
+        chunks = getattr(doc, "chunks", [])
+        return self.export(rel_path=rel_path, doc_id=doc_id, meta=meta, summary=summary, chunks=chunks)
 
     # ------------------------------------------------------------------
     # Internal helpers

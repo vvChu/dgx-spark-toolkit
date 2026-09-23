@@ -86,6 +86,17 @@ class IngestionQueue:
             "dead_letter_count": self.redis_queue.get_dead_letter_count(),
         }
 
+    def is_paused(self) -> bool:
+        """Check if ingestion is paused due to backpressure."""
+        try:
+            client = getattr(self.redis_queue, "redis", None) or getattr(self.redis_queue, "redis_client", None)
+            if client:
+                val = client.get("rag:ingestion:paused")
+                return val in (b"1", "1", 1)
+        except Exception as e:
+            logger.debug("Could not check backpressure status: %s", e)
+        return False
+
     def health_check(self) -> Dict[str, Any]:
         """Check health of underlying queue storage."""
         if hasattr(self.redis_queue, "health_check"):

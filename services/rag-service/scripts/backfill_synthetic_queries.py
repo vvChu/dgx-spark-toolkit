@@ -41,7 +41,7 @@ EXPORT_JSON_DIR = os.environ.get(
     "EXPORT_JSON_DIR",
     "/app/exports/json" if os.path.exists("/app/exports/json") else "/home/vvc/Public/exports/json"
 )
-BACKFILL_LIMIT = int(os.environ.get("BACKFILL_LIMIT", "195"))
+BACKFILL_LIMIT = int(os.environ.get("BACKFILL_LIMIT", "0"))
 DRY_RUN = os.environ.get("BACKFILL_DRY_RUN", "0") == "1"
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "6"))  # LLM concurrency
 
@@ -69,59 +69,50 @@ def is_valid_synthetic_queries(text: str) -> bool:
 
 # ── LLM setup ────────────────────────────────────────────────────────────────
 
-try:
-    import httpx
-    from core.config import get_settings
-    from ingestion.normalizers.boilerplate import strip_ai_monologue
-    from ingestion.legal_taxonomy import classify_source_category
-    _API_URL = os.environ.get("SYNTHETIC_API_URL", "").rstrip("/")
-    if not _API_URL:
-        _API_URL = os.environ.get("VLLM_API_BASE", "").rstrip("/")
-        if not _API_URL or "ai-gateway:4000" in _API_URL:
-            _API_URL = "http://100.83.192.30:8045/v1"
-    if not _API_URL.endswith("/chat/completions"):
-        _API_URL += "/chat/completions"
-    _MODEL = os.environ.get("SYNTHETIC_QUERY_MODEL", "gemini-3.7-flash-low")
-    _API_KEY = os.environ.get("GATEWAY_PROXY_KEY", "sk-ef1b299485084c76a1396fa6275cb30d")
-    _CLIENT = httpx.Client(timeout=60)
-    logger.info(f"LLM endpoint: {_API_URL}  model: {_MODEL}")
-except Exception as e:
-    logger.error(f"Cannot load settings: {e}")
-    sys.exit(1)
+from core.ai_gateway_client import get_ai_gateway_client
+from ingestion.normalizers.boilerplate import strip_ai_monologue
+from ingestion.legal_taxonomy import classify_source_category
+
+_MODEL = os.environ.get("SYNTHETIC_QUERY_MODEL", "gemini-3.5-flash-lite")
+logger.info(f"Synthetic queries default model: {_MODEL}")
 
 
-def _generate(chunk_text: str) -> str:
-    """Call LLM to generate 3-5 synthetic queries for a chunk in Vietnamese."""
-    payload = {
-        "model": _MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Bạn là trợ lý chuyên tạo câu hỏi giả định người dùng bằng tiếng Việt. "
-                    "CHỈ xuất ra 3-5 câu hỏi tiếng Việt, mỗi câu trên một dòng riêng biệt, mà văn bản đã cho có thể trả lời. "
-                    "TUYỆT ĐỐI KHÔNG xuất quá trình tư duy, phân tích, hay ngôn ngữ khác."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Tạo 3-5 câu hỏi tiếng Việt cho đoạn văn bản sau:\n\n{chunk_text[:2000]}\n\nCâu hỏi:",
-            },
-        ],
-        "max_tokens": 512,
-        "temperature": 0.3,
-    }
-    headers = {"Authorization": f"Bearer {_API_KEY}"}
+def _generate(chunk_text: str, model: str = _MODEL) -> str:
+    """Call LLM via AIGatewayClient to generate 3-5 synthetic queries in Vietnamese."""
+    client = get_ai_gateway_client()
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Bạn là trợ lý tạo câu hỏi tiếng Việt. BẮT ĐẦU NGAY BẰNG CÁC CÂU HỎI TIẾNG VIỆT "
+                "(mỗi dòng 1 câu bắt đầu bằng - ). TUYỆT ĐỐI KHÔNG viết tiếng Anh, không suy luận, không giải thích."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Tạo 3-5 câu hỏi tiếng Việt cho đoạn văn bản sau:\n\n{chunk_text[:2000]}\n\nCâu hỏi:",
+        },
+    ]
 
     for attempt in range(3):
         try:
-            resp = _CLIENT.post(_API_URL, json=payload, headers=headers)
-            if resp.status_code == 429:
-                time.sleep(3 * (2**attempt))
-                continue
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"].get("content", "").strip()
+            content = client.complete_sync(
+                messages=messages,
+                model=model,
+                model_chain=[model, "claude-haiku-4", "rag-core"],
+                max_tokens=512,
+                temperature=0.3,
+            )
             content = strip_ai_monologue(content)
+            if not is_valid_synthetic_queries(content):
+                lines = [l.strip() for l in content.splitlines() if l.strip()]
+                vn_lines = [
+                    l for l in lines
+                    if _VN_DIACRITICS.search(l)
+                    and not any(p in l.lower() for p in ["analyze the request", "thinking process", "tư duy suy luận", "role:"])
+                ]
+                if vn_lines:
+                    content = "\n".join(vn_lines)
             if is_valid_synthetic_queries(content):
                 return content[:4000]
             else:
@@ -131,16 +122,35 @@ def _generate(chunk_text: str) -> str:
             if attempt == 2:
                 logger.warning(f"Failed after 3 attempts: {exc}")
                 return ""
-            time.sleep(3 * (2**attempt))
+            time.sleep(2 * (attempt + 1))
     return ""
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Backfill synthetic queries")
+    parser.add_argument("--target", type=str, default=os.environ.get("BACKFILL_TARGET", ""), help="Substring filter for target file (e.g. ROOT_Luat_50 or ROOT_3621)")
+    parser.add_argument("--limit", type=int, default=BACKFILL_LIMIT, help="Max chunks to process (0 = all)")
+    parser.add_argument("--dry-run", action="store_true", default=DRY_RUN, help="Dry run without saving")
+    parser.add_argument("--workers", type=int, default=MAX_WORKERS, help="Concurrency")
+    parser.add_argument("--model", type=str, default=_MODEL, help="Model to use")
+    args = parser.parse_args()
+
+    limit = args.limit
+    dry_run = args.dry_run
+    workers = args.workers
+    model = args.model
+
     json_files = sorted(glob.glob(os.path.join(EXPORT_JSON_DIR, "*.json")))
     json_files = [f for f in json_files if not f.endswith(".bak")]
-    logger.info(f"Found {len(json_files)} JSON exports in {EXPORT_JSON_DIR}")
+
+    if args.target:
+        json_files = [f for f in json_files if args.target.lower() in os.path.basename(f).lower()]
+        logger.info(f"Target filter '{args.target}' matched {len(json_files)} files: {[os.path.basename(f) for f in json_files]}")
+    else:
+        logger.info(f"Found {len(json_files)} JSON exports in {EXPORT_JSON_DIR}")
 
     # Stage 1: Sanitize corrupted existing chunks (strip reasoning leaks, deprecation, fix source_category)
     sanitized_count = 0
@@ -249,17 +259,17 @@ def main():
             ):
                 flat_tasks.append((path, chunk))
 
-    if BACKFILL_LIMIT > 0:
-        flat_tasks = flat_tasks[:BACKFILL_LIMIT]
+    if limit > 0:
+        flat_tasks = flat_tasks[:limit]
 
-    logger.info(f"Backfilling {len(flat_tasks)} chunks with {MAX_WORKERS} workers...")
+    logger.info(f"Backfilling {len(flat_tasks)} chunks with {workers} workers using {model}...")
     done = 0
     errors = 0
     dirty_files: set[str] = set()
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         future_to = {
-            executor.submit(_generate, chunk["text"]): (path, chunk)
+            executor.submit(_generate, chunk["text"], model): (path, chunk)
             for path, chunk in flat_tasks
         }
         for future in as_completed(future_to):

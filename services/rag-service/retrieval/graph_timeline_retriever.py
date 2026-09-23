@@ -43,7 +43,10 @@ class AdvancedGraphRAG:
         query = """
         MATCH (start:Document)
         USING INDEX start:Document(doc_number)
-        WHERE start.doc_number = $doc_number OR start.id = $doc_number
+        WHERE start.doc_number = $doc_number
+           OR start.id = $doc_number
+           OR start.id = 'ROOT/' + $doc_number
+           OR start.doc_number = replace($doc_number, 'ROOT/', '')
         MATCH path = (start)-[:AMENDS|REPLACES|REFERENCES*0..10]->(current)
         WITH path, current
         ORDER BY length(path) DESC
@@ -90,13 +93,24 @@ class AdvancedGraphRAG:
         """
 
         try:
-            return await self.ai_client.complete(
+            raw_summary = await self.ai_client.complete(
                 [
-                    {"role": "system", "content": "Bạn là chuyên gia về pháp luật và đồ thị tri thức. Hãy tóm tắt timeline pháp lý một cách chính xác."},
+                    {
+                        "role": "system",
+                        "content": (
+                            "Bạn là chuyên gia về pháp luật và đồ thị tri thức. "
+                            "Hãy tóm tắt timeline pháp lý một cách chính xác. "
+                            "TUYỆT ĐỐI KHÔNG xuất quá trình suy luận hay thinking process, chỉ xuất câu trả lời trực tiếp."
+                        ),
+                    },
                     {"role": "user", "content": prompt}
                 ],
-                timeout=60.0,
+                model="gemini-3.5-flash-lite",
+                model_chain=["gemini-3.5-flash-lite", "claude-haiku-4", "rag-core"],
+                timeout=20.0,
             )
+            from ingestion.normalizers.boilerplate import strip_ai_monologue
+            return strip_ai_monologue(raw_summary)
         except Exception as e:
             logger.error(f"Error generating timeline summary: {e}")
 

@@ -45,6 +45,8 @@ def test_complex_timeline():
     else:
         print("⚠️ WARNING: No timelines were generated for top hits. Check if documents have relations in Neo4j.")
 
+    assert found_timeline, "No timelines generated for valid legal document"
+
 
 if __name__ == "__main__":
     test_complex_timeline()
