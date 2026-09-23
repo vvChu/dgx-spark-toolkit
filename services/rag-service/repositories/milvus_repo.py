@@ -1,4 +1,4 @@
-from pymilvus import AsyncMilvusClient, AnnSearchRequest, RRFRanker
+from pymilvus import AsyncMilvusClient, AnnSearchRequest, RRFRanker, DataType
 import json
 import re
 import logging
@@ -189,16 +189,21 @@ class MilvusRepository:
                 logger.info(f"Milvus collection '{self.collection_name}' loaded successfully.")
                 return True
 
+            schema = AsyncMilvusClient.create_schema(auto_id=True, enable_dynamic_field=True)
+            schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
+            schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=1024)
+            schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
+
+            index_params = AsyncMilvusClient.prepare_index_params()
+            index_params.add_index(field_name="vector", metric_type="COSINE", index_type="AUTOINDEX")
+            index_params.add_index(field_name="sparse_vector", metric_type="IP", index_type="SPARSE_INVERTED_INDEX")
+
             await self.client.create_collection(
                 collection_name=self.collection_name,
-                dimension=1024,
-                primary_field_name="id",
-                id_type="int",
-                vector_field_name="vector",
-                metric_type="COSINE",
-                auto_id=True,
+                schema=schema,
+                index_params=index_params,
             )
-            logger.info(f"Created and loaded Milvus collection '{self.collection_name}'.")
+            logger.info(f"Created and loaded Milvus collection '{self.collection_name}' with native hybrid schema.")
             return True
         except Exception as e:
             logger.warning(f"Could not setup Milvus collection: {e}")

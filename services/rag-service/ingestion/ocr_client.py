@@ -101,10 +101,10 @@ class RemoteSuryaClient:
                 return None, None
         else:
             logger.error(f"[RemoteSuryaClient] Unsupported image input type: {type(img_input)}")
-            return [], []
+            return None, None
 
         if not img_bytes:
-            return [], []
+            return None, None
 
         # Check circuit breaker
         if not self.cb.allow_request():

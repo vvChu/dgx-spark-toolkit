@@ -1,68 +1,61 @@
-# Walkthrough: Gói Tinh Chỉnh Hoàn Thiện (KISS Patch) & Triệt Tiêu Điểm Mù Kiến Trúc
+# Walkthrough: Hoàn Thiện Triệt Để Hệ Thống RAG & Khôi Phục Native Milvus Hybrid Search
 
 ## Tổng Quan
 
-Gói tinh chỉnh hoàn thiện (KISS Patch) được triển khai nhằm bịt kín 4 điểm mù kiến trúc được xác định trong Báo cáo Thẩm định Đối kháng (/boost):
+Gói triển khai hoàn thiện triệt để theo Báo cáo Đánh giá Đối kháng (/boost) trên máy chủ NVIDIA DGX Spark (Grace Blackwell GB10, aarch64, CUDA 13.0, 128GB Unified Memory):
 
-1. **Khắc phục triệt để lỗi mất dữ liệu ngầm (Silent Data Loss Domino)** giữa `RemoteSuryaClient`, `ocr-worker`, và `vision.py`.
-2. **Gia cố an toàn bộ nhớ & concurrency cho `ocr-worker`** (Semaphore concurrency = 1, `torch.inference_mode()`, nâng giới hạn RAM lên 8GB, cấm nuốt lỗi ngầm).
-3. **Triệt tiêu 100% 7 CVEs LangChain** (gỡ bỏ hoàn toàn `langchain`, `langchain-community` khỏi `requirements-app.in`, `requirements-ci.txt`, và `requirements.txt`, xóa shims cũ, tái biên dịch cả 2 lockfiles đạt 0 CVEs tuyệt đối).
-4. **Gia cố khả năng phục hồi Milvus Hybrid Search** (fallback sang dense search khi thiếu trường sparse_vector).
+1. **Khuyến nghị P1: Khôi phục Native Milvus Hybrid Search (`SPARSE_FLOAT_VECTOR`)**
+   - Đã nâng cấp schema khởi tạo collection trong `services/rag-service/scripts/reindex_milvus_clean.py` và `services/rag-service/repositories/milvus_repo.py`: khai báo tường minh trường `sparse_vector` kiểu `DataType.SPARSE_FLOAT_VECTOR`, thiết lập `index_params` gồm `vector` (`AUTOINDEX`, `COSINE`) và `sparse_vector` (`SPARSE_INVERTED_INDEX`, `IP`).
+   - Tái lập collection `legal_docs_v10` với cấu trúc native hybrid schema, nạp lại 528 chunks sạch với đầy đủ dense & sparse embeddings (BGE-M3 trên CPU).
+   - Xác nhận `hybrid_search()` hoạt động hoàn toàn native qua Milvus `RRFRanker`, loại trừ triệt để cảnh báo fallback sang dense-only search.
+
+2. **Khuyến nghị P2: Hoàn thiện Seam Phòng Vệ Mất Dữ Liệu trong `ocr_client.py`**
+   - Tại `services/rag-service/ingestion/ocr_client.py:104,107`: thay thế `return [], []` bằng `return None, None` khi gặp unsupported input type hoặc buffer ảnh rỗng.
+   - Bảo đảm `RemoteSuryaClient.is_service_failure()` luôn trả về `True`, kích hoạt ngay nhánh fallback Vision LLM (`call_vision_fallback`), ngăn chặn hoàn toàn nguy cơ nuốt trang scan ngầm.
+   - Cập nhật test case `test_empty_input` trong `services/rag-service/tests/test_ocr_client.py`.
+
+3. **Khuyến nghị P4: Phòng Vệ Client History Injection trong `chat_service.py`**
+   - Tại `services/rag-service/services/chat_service.py:136-137`: bổ sung bộ lọc kiểm tra vai trò `[m for m in history[-6:] if isinstance(m, dict) and m.get("role") in ("user", "assistant")]`.
+   - Ngăn chặn triệt để client gửi tin nhắn giả mạo có `role: "system"` hoặc `"developer"`, bảo đảm bất biến Single Leading System Message của vLLM Jinja template.
+   - Bổ sung unit test `test_build_messages_filters_client_history_roles` trong `services/rag-service/tests/test_chat_service.py`.
 
 ---
 
 ## Chi Tiết Các Thay Đổi
 
-### 1. Khắc Phục Silent Data Loss Domino
-- **`services/rag-service/ingestion/ocr_client.py`**:
-  - Khi worker gặp sự cố (HTTP error, connection timeout, read timeout, circuit breaker OPEN, exception), `process_page()` trả về `(None, None)` thay vì `([], [])`.
-  - Cập nhật phương thức `RemoteSuryaClient.is_service_failure(result)` toàn diện: xử lý đúng `None`, `()`, `(None, None)`, `(None, [])`, `([], None)`, và kiểu dữ liệu bất hợp lệ.
-  - Các wrapper backward-compatible `ocr()` và `extract_layout()` bảo vệ trả về `[]` khi nhận `None`.
-- **`services/rag-service/ingestion/vision.py`**:
-  - `is_blank_page()` nhận tham số `ocr_raw`, tự động trả về `False` nếu `ocr_raw is None`, đồng thời nâng ngưỡng an toàn `white_ratio` từ `0.85` lên `0.90`.
-  - Trong luồng xử lý `process_page()`: nếu `ocr_raw is None`, ghi nhận logger warning, **bỏ qua hoàn toàn việc gọi `is_blank_page()` và `is_toc_page()`**, trực tiếp kích hoạt nhánh fallback Vision LLM (`call_vision_fallback`).
-  - Gán nhãn `source: "failed"` chính xác khi cả OCR worker lẫn Vision fallback đều thất bại, không gán nhầm thành `"surya"`.
-
-### 2. Gia Cố Concurrency & Bộ Nhớ Cho `ocr-worker`
-- **`services/ocr-worker/main.py`**:
-  - Thêm `_ocr_semaphore = threading.Semaphore(1)` bọc quanh `extractor.process(file)` nhằm giới hạn tối đa 1 tác vụ tính toán PyTorch CPU tại một thời điểm, loại trừ nguy cơ OOM crash khi có tải song song.
-  - Kiểm tra `if not extractor.available:` trả về HTTP 503 ngay lập tức nếu engine chưa sẵn sàng hoặc khởi tạo thất bại.
-  - Xử lý ngoại lệ chuẩn: trả về HTTP 400 nếu ảnh lỗi (`ValueError`), HTTP 500 nếu inference crash thay vì che giấu lỗi.
-- **`services/ocr-worker/extractor.py`**:
-  - Bọc tất cả các lần gọi predictor (Detection, Recognition mini-batches, Layout) với `with _inference_mode():` (`torch.inference_mode()`) để giải phóng ngay lập tức tensor graph bộ nhớ.
-  - Cấm nuốt lỗi tại Detection pass: raise ngoại lệ khi `det_predictor` lỗi để worker trả về HTTP 500 cho client kích hoạt fallback.
-- **`docker-compose.yml`**:
-  - Nâng giới hạn RAM cho `ocr-worker` từ `memory: 6G` lên `memory: 8G` trên hệ thống DGX Spark (128GB Unified Memory).
-
-### 3. Triệt Tiêu 100% CVEs LangChain (Đạt 0 CVEs Tuyệt Đối)
-- **`services/rag-service/ingestion/vision.py`**:
-  - Xóa bỏ 18 dòng code shimming LangChain không còn sử dụng cho PaddleOCR.
-- **`services/rag-service/requirements-app.in`**, **`requirements-ci.txt`**, & **`requirements.txt`**:
-  - Gỡ bỏ hoàn toàn `langchain` và `langchain-community` khỏi toàn bộ các tệp cấu hình phụ thuộc.
-- **Tái biên dịch lockfiles**:
-  - `requirements-app.lock`: biên dịch qua `uv pip compile` kèm cờ `--no-emit-package`.
-  - `requirements-ci.lock`: biên dịch qua `uv pip compile`.
-- **Kiểm tra an ninh**:
-  - `uvx pip-audit -r services/rag-service/requirements-app.lock` -> **0 CVEs**.
-  - `uvx pip-audit -r services/rag-service/requirements-ci.lock` -> **0 CVEs**.
-- **`scripts/check_dependency_updates.sh`**:
-  - Xóa chuỗi thông báo lỗi thời `pillow locked by surya-ocr`.
-
-### 4. Khả Năng Tự Phục Hồi Milvus Hybrid Search
+### 1. Native Milvus Hybrid Search (`SPARSE_FLOAT_VECTOR`)
 - **`services/rag-service/repositories/milvus_repo.py`**:
-  - Bọc `hybrid_search()` trong khối `try/except`. Khi Milvus ném lỗi thiếu `sparse_vector` (ví dụ collection khởi tạo dạng dense-only), tự động fallback sang `client.search()` với dense vector thay vì ném lỗi HTTP 500.
+  - Nhập `DataType` từ `pymilvus`.
+  - Trong `ensure_collection_schema()`: xây dựng `CollectionSchema` với `id` (`INT64`), `vector` (`FLOAT_VECTOR`, dim 1024), và `sparse_vector` (`SPARSE_FLOAT_VECTOR`).
+  - Cấu hình chỉ mục `vector` (`metric_type: COSINE`) và `sparse_vector` (`metric_type: IP`, `index_type: SPARSE_INVERTED_INDEX`).
+- **`services/rag-service/scripts/reindex_milvus_clean.py`**:
+  - Bổ sung hàm `create_hybrid_collection()` tạo collection đồng nhất schema native hybrid.
+  - Bổ sung cờ CLI `--max-chunks` (hỗ trợ nạp 528 chunks có giới hạn hoặc toàn bộ).
+  - Chuẩn hóa sparse weights format `{int(k) if str(k).isdigit() else str(k): float(v)}`.
+
+### 2. Phòng Vệ Mất Dữ Liệu Trong `ocr_client.py`
+- **`services/rag-service/ingestion/ocr_client.py`**:
+  - Trả về `(None, None)` thay vì `([], [])` khi loại input không hỗ trợ hoặc khi buffer bytes rỗng.
+- **`services/rag-service/tests/test_ocr_client.py`**:
+  - Cập nhật `test_empty_input` để kiểm chứng cả `(None, None)` và `RemoteSuryaClient.is_service_failure(result) is True`.
+
+### 3. Phòng Vệ Client History Injection Trong `chat_service.py`
+- **`services/rag-service/services/chat_service.py`**:
+  - Lọc bỏ tất cả tin nhắn trong client history không phải `user` hoặc `assistant`, loại trừ phần tử không phải dict.
+- **`services/rag-service/tests/test_chat_service.py`**:
+  - Bổ sung test case `test_build_messages_filters_client_history_roles` xác thực phòng thủ thành công trước payload độc hại.
 
 ---
 
-## Kết Quả Xác Thực (Verification Record)
+## Kết Quả Xác Thực (Deterministic Verification Record)
 
 | Hạng mục kiểm tra | Lệnh thực hiện | Kết quả |
 | :--- | :--- | :--- |
-| **Pytest Backend** | `pytest services/rag-service/tests/` | **440 passed, 1 deselected, 0 errors** (1.51s) |
-| **Flake8 Linting** | `flake8 services/rag-service/ services/ocr-worker/ --config=.flake8` | **0 errors, 0 warnings** |
+| **Pytest Backend** | `uv run --with pytest --with pytest-asyncio --with pytest-mock pytest services/rag-service/tests/` | **441 passed, 1 deselected** (1.66s, 100% PASS) |
+| **Root Tests** | `uv run --with pytest --with pytest-asyncio --with pytest-mock pytest tests/` | **27 passed** (5.03s, 100% PASS) |
+| **Flake8 Linting** | `flake8 services/rag-service/ services/ocr-worker/ --config=services/rag-service/.flake8` | **0 errors, 0 warnings** |
 | **Cleanliness Check** | `python3 scripts/check_spoke_cleanliness.py` | **12/15 budget hợp lệ, 0 rò rỉ path** |
-| **App Security Audit** | `uvx pip-audit -r requirements-app.lock` | **0 known vulnerabilities found (0 CVEs)** |
-| **CI Security Audit** | `uvx pip-audit -r requirements-ci.lock` | **0 known vulnerabilities found (0 CVEs)** |
-| **Audit Script** | `./scripts/check_dependency_updates.sh --audit` | **Passed (Code 0, All checks clean)** |
-| **Docker Build** | `docker compose build ocr-worker rag-service` | **2/2 images built successfully** |
+| **Milvus Schema** | `python3 -c "from pymilvus import MilvusClient; ..."` | **id (5), vector (101), sparse_vector (104)** |
+| **Milvus Indexes** | `python3 -c "from pymilvus import MilvusClient; ..."` | **vector: AUTOINDEX (COSINE), sparse_vector: SPARSE_INVERTED_INDEX (IP)** |
 | **Live Smoke Test** | `./scripts/smoke_test_rag_live.sh` | **6/6 tests Green (100% PASS)** |
+| **Hybrid Search Logs** | `docker compose logs --tail=50 rag-service` | **0 sparse_vector warning, 0 fallback to dense** |

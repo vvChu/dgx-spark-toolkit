@@ -170,11 +170,14 @@ class TestRemoteSuryaClient:
         assert RemoteSuryaClient.is_service_failure((ocr_raw, layout)) is True
 
     def test_empty_input(self):
-        """Empty or invalid input returns empty lists immediately."""
+        """Empty or invalid input returns (None, None) and marks as service failure to trigger Vision fallback."""
         client = RemoteSuryaClient()
-        assert client.process_page(b"") == ([], [])
-        assert client.process_page(None) == ([], [])
-        assert client.process_page(12345) == ([], [])
+        assert client.process_page(b"") == (None, None)
+        assert client.process_page(None) == (None, None)
+        assert client.process_page(12345) == (None, None)
+        assert RemoteSuryaClient.is_service_failure(client.process_page(b"")) is True
+        assert RemoteSuryaClient.is_service_failure(client.process_page(None)) is True
+        assert RemoteSuryaClient.is_service_failure(client.process_page(12345)) is True
 
     def test_client_init_kwargs_compatibility(self):
         """Client must accept legacy kwargs (e.g. device='cpu') for drop-in compatibility."""

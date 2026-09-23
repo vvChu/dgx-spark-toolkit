@@ -52,6 +52,8 @@ def parse_args():
     parser.add_argument("--max-length", type=int, default=512, help="Max sequence length (default: 512)")
     parser.add_argument("--device", type=str, default="cpu", choices=["auto", "cuda:0", "cpu"], help="Device for embedding (default: cpu)")
     parser.add_argument("--no-drop", action="store_true", help="Do not drop collection before indexing")
+    parser.add_argument("--resume", action="store_true", help="Resume indexing, skipping already indexed files")
+    parser.add_argument("--max-chunks", type=int, default=0, help="Max total chunks to index (0 for unlimited, e.g. 528)")
     parser.add_argument(
         "--json-dir",
         type=str,
@@ -169,6 +171,25 @@ def scan_dataset_summary(files: list[str]) -> dict:
     return total_stats
 
 
+def create_hybrid_collection(client, collection_name: str) -> None:
+    """Create collection schema with dense (1024 dims) and sparse (SPARSE_FLOAT_VECTOR) fields."""
+    from pymilvus import MilvusClient, DataType
+    schema = MilvusClient.create_schema(auto_id=True, enable_dynamic_field=True)
+    schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
+    schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=1024)
+    schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
+
+    index_params = MilvusClient.prepare_index_params()
+    index_params.add_index(field_name="vector", metric_type="COSINE", index_type="AUTOINDEX")
+    index_params.add_index(field_name="sparse_vector", metric_type="IP", index_type="SPARSE_INVERTED_INDEX")
+
+    client.create_collection(
+        collection_name=collection_name,
+        schema=schema,
+        index_params=index_params,
+    )
+
+
 def main():
     args = parse_args()
     settings = get_settings()
@@ -199,34 +220,31 @@ def main():
     client = MilvusClient(uri=f"http://{settings.MILVUS_HOST}:{settings.MILVUS_PORT}")
 
     try:
-        # Step 1: Drop & recreate collection
+        # Step 1: Drop & recreate collection (unless --no-drop or --resume)
+        existing_counts = {}
+        if args.resume:
+            args.no_drop = True
+
         if not args.no_drop:
             if client.has_collection(collection_name):
                 logger.info(f"Dropping contaminated collection: {collection_name}")
                 client.drop_collection(collection_name)
 
-            logger.info(f"Creating pristine collection: {collection_name}")
-            client.create_collection(
-                collection_name=collection_name,
-                dimension=1024,
-                primary_field_name="id",
-                id_type="int",
-                vector_field_name="vector",
-                metric_type="COSINE",
-                auto_id=True,
-            )
+            logger.info(f"Creating pristine collection with native hybrid schema: {collection_name}")
+            create_hybrid_collection(client, collection_name)
         else:
             if not client.has_collection(collection_name):
-                logger.info(f"Collection {collection_name} does not exist. Creating...")
-                client.create_collection(
-                    collection_name=collection_name,
-                    dimension=1024,
-                    primary_field_name="id",
-                    id_type="int",
-                    vector_field_name="vector",
-                    metric_type="COSINE",
-                    auto_id=True,
-                )
+                logger.info(f"Collection {collection_name} does not exist. Creating with native hybrid schema...")
+                create_hybrid_collection(client, collection_name)
+            elif args.resume:
+                try:
+                    res = client.query(collection_name=collection_name, filter="", output_fields=["source"], limit=16384)
+                    for r in res:
+                        s = r.get("source", "")
+                        existing_counts[s] = existing_counts.get(s, 0) + 1
+                    logger.info(f"Resume mode: Found {len(res)} chunks across {len(existing_counts)} sources already in Milvus.")
+                except Exception as e:
+                    logger.warning(f"Could not query existing items in resume mode: {e}")
 
         # Step 2: Initialize embedding model
         import torch
@@ -255,13 +273,31 @@ def main():
         doc_prefix = "Represent this Vietnamese legal document for retrieval: "
 
         for f_idx, fpath in enumerate(files, 1):
+            if args.max_chunks > 0 and inserted_total >= args.max_chunks:
+                logger.info(f"Reached --max-chunks limit ({args.max_chunks}). Stopping file processing.")
+                break
             fname = Path(fpath).name
             file_entities, f_stats = load_file_chunks(fpath)
             f_count = len(file_entities)
+            source_name = file_entities[0]["source"] if file_entities else ""
             t_file0 = time.time()
 
+            if args.resume and source_name:
+                already_in = existing_counts.get(source_name, 0)
+                if already_in == f_count:
+                    logger.info(f"[{f_idx}/{len(files)}] {fname}: Already fully indexed ({already_in}/{f_count} chunks). Skipping.")
+                    inserted_total += f_count
+                    continue
+                elif already_in > 0:
+                    logger.info(f"[{f_idx}/{len(files)}] {fname}: Partial index detected ({already_in}/{f_count} chunks). Deleting partial rows...")
+                    client.delete(collection_name=collection_name, filter=f'source == "{source_name}"')
+
             for i in range(0, f_count, batch_size):
+                if args.max_chunks > 0 and inserted_total >= args.max_chunks:
+                    break
                 batch = file_entities[i:i + batch_size]
+                if args.max_chunks > 0 and inserted_total + len(batch) > args.max_chunks:
+                    batch = batch[:args.max_chunks - inserted_total]
                 texts = [b["text"] for b in batch]
                 prefixed = [doc_prefix + t for t in texts]
 
@@ -279,10 +315,24 @@ def main():
 
                 for j, entity in enumerate(batch):
                     entity["vector"] = dense_vectors[j]
-                    entity["sparse_vector"] = {str(k): float(v) for k, v in sparse_vectors[j].items()}
+                    entity["sparse_vector"] = {int(k) if str(k).isdigit() else str(k): float(v) for k, v in sparse_vectors[j].items()}
 
-                client.insert(collection_name=collection_name, data=batch)
+                for attempt in range(3):
+                    try:
+                        client.insert(collection_name=collection_name, data=batch)
+                        break
+                    except Exception as e:
+                        if attempt == 2:
+                            raise
+                        logger.warning(f"Insert failed: {e}. Retrying in 2s...")
+                        time.sleep(2)
                 inserted_total += len(batch)
+
+            # Persist newly inserted segments immediately
+            try:
+                client.flush(collection_name=collection_name)
+            except Exception as e:
+                logger.warning(f"Flush after {fname} failed: {e}")
 
             dt_file = time.time() - t_file0
             elapsed = time.time() - t0
