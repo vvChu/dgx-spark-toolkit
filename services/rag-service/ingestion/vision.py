@@ -32,20 +32,14 @@ try:
 except ImportError as e:
     logging.warning(f"Failed to apply LangChain shims: {e}")
 
-try:
-    from surya.detection import DetectionPredictor
-    from surya.recognition import RecognitionPredictor
-    from surya.foundation import FoundationPredictor
-    from surya.layout import LayoutPredictor
-    SURYA_AVAILABLE = True
-except ImportError:
-    SURYA_AVAILABLE = False
-
 from ingestion.rag_router import RAGRouter
+from ingestion.ocr_client import RemoteSuryaClient
 import httpx
 from PIL import Image
-import torch
 from ingestion.cleaning_utils import clean_llm_text
+
+# Backwards-compatibility alias
+SuryaExtractor = RemoteSuryaClient
 
 # Optional cross-validator (gemini-3-flash) — enabled via CROSS_VALIDATE_OCR=1
 try:
@@ -58,205 +52,12 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class SuryaExtractor:
-    """Surya OCR & Layout Engine - Optimized for ARM64 + Blackwell GPU (v0.17+ API)."""
-
-    def __init__(self):
-        if not SURYA_AVAILABLE:
-            self.available = False
-            return
-
-        # GPU auto-detect with CPU fallback for stability
-        # Override: SURYA_DEVICE=cpu to force CPU (old behavior)
-        requested_device = os.environ.get("SURYA_DEVICE", "auto")
-        self.device = self._resolve_device(requested_device)
-        logger.info(f"Initializing Surya Predictors on {self.device}...")
-
-        try:
-            self.foundation_predictor = FoundationPredictor(device=self.device)
-            self.det_predictor = DetectionPredictor(device=self.device)
-            self.rec_predictor = RecognitionPredictor(self.foundation_predictor)
-            self.layout_predictor = LayoutPredictor(self.foundation_predictor)
-            self.available = True
-            logger.info(f"Surya OCR & Layout Predictors ready on {self.device}.")
-        except Exception as e:
-            if self.device != "cpu":
-                logger.warning(f"Surya failed on {self.device}: {e} — retrying on CPU")
-                self.device = "cpu"
-                try:
-                    self.foundation_predictor = FoundationPredictor(device="cpu")
-                    self.det_predictor = DetectionPredictor(device="cpu")
-                    self.rec_predictor = RecognitionPredictor(self.foundation_predictor)
-                    self.layout_predictor = LayoutPredictor(self.foundation_predictor)
-                    self.available = True
-                    logger.info("Surya OCR & Layout Predictors ready on CPU (fallback).")
-                except Exception as e2:
-                    logger.error(f"Failed to load Surya models even on CPU: {e2}")
-                    self.available = False
-            else:
-                logger.error(f"Failed to load Surya models: {e}")
-                self.available = False
-
-    @staticmethod
-    def _resolve_device(requested: str) -> str:
-        """Resolve the device to use for Surya models.
-
-        'auto' → try CUDA if available, otherwise CPU.
-        'cuda' → use CUDA (may fail on incompatible GPUs).
-        'cpu'  → force CPU.
-        """
-        if requested == "cpu":
-            return "cpu"
-        try:
-            import torch
-            if torch.cuda.is_available():
-                gpu_name = torch.cuda.get_device_name(0)
-                logger.info(f"[SURYA] CUDA available: {gpu_name}")
-                return "cuda"
-        except Exception:
-            pass
-        logger.info("[SURYA] CUDA not available — using CPU")
-        return "cpu"
-
-    def ocr(self, img_pil, langs=['vi'], page_num=0):
-        if not self.available:
-            return []
-
-        # 1. Granular Detection & Filtering
-        try:
-            det_results = self.det_predictor([img_pil])
-        except Exception as e:
-            logger.error(f"Surya detection failed: {e}")
-            return []
-
-        if not det_results or not getattr(det_results[0], 'bboxes', None):
-            return []
-
-        valid_bboxes = []
-        for bbox_obj in det_results[0].bboxes:
-            polygon = getattr(bbox_obj, 'polygon', None)
-            if not polygon or len(polygon) != 4:
-                continue
-
-            # Validate area and shape to filter degenerate boxes
-            xs = [p[0] for p in polygon]
-            ys = [p[1] for p in polygon]
-            width = max(xs) - min(xs)
-            height = max(ys) - min(ys)
-
-            if width * height < 50 or width <= 0 or height <= 0:
-                continue
-
-            # Filter anomalous aspect ratios that cause transformer sequence glitches
-            if width / height > 100 or height / width > 100:
-                continue
-
-            valid_bboxes.append(polygon)
-
-        if not valid_bboxes:
-            return []
-
-        results = []
-
-        # 2. Try chunked mini-batched OCR to avoid PyTorch IndexError on large dimension 0 sizes
-        import time
-        from io import BytesIO
-
-        failed_boxes_count = 0
-        math_false_count = 0
-        chunk_size = 8  # Reduced from 16 to mitigate Tensor indexing errors on high system load
-
-        for i in range(0, len(valid_bboxes), chunk_size):
-            chunk_bboxes = valid_bboxes[i:i+chunk_size]
-            try:
-                # Attempt to process a chunk of 16 boxes
-                predictions = self.rec_predictor(
-                    [img_pil],
-                    polygons=[chunk_bboxes],
-                    math_mode=True
-                )
-                if predictions and getattr(predictions[0], 'text_lines', None):
-                    for line in predictions[0].text_lines:
-                        p = getattr(line, 'polygon', None)
-                        if p:
-                            results.append([p, (line.text, line.confidence)])
-            except Exception as e:
-                logger.warning(f"Surya OCR mini-batch ({i} to {i+len(chunk_bboxes)}) failed ({type(e).__name__}): {e}. Granular fallback for this chunk...")
-
-                # 3. Granular Tiered Fallback for only the failed chunk
-                for idx, poly in enumerate(chunk_bboxes):
-                    try:
-                        # Retry math_mode=True for the individual box
-                        res = self.rec_predictor([img_pil], polygons=[[poly]], math_mode=True)
-                        if res and getattr(res[0], 'text_lines', None) and res[0].text_lines:
-                            line = res[0].text_lines[0]
-                            results.append([line.polygon, (line.text, line.confidence)])
-                    except Exception as e1:
-                        # Re-try with math_mode=False
-                        try:
-                            res = self.rec_predictor([img_pil], polygons=[[poly]], math_mode=False)
-                            if res and getattr(res[0], 'text_lines', None) and res[0].text_lines:
-                                line = res[0].text_lines[0]
-                                results.append([line.polygon, (line.text, line.confidence)])
-                                math_false_count += 1
-                        except Exception as e2:
-                            failed_boxes_count += 1
-                            logger.warning(f"Granular box {i+idx} complete OCR failure: {e2}. Triggering Vision LLM fallback for this box...")
-                            try:
-                                xs = [p[0] for p in poly]
-                                ys = [p[1] for p in poly]
-                                bbox = (min(xs), min(ys), max(xs), max(ys))
-                                cropped = img_pil.crop(bbox)
-                                bio = BytesIO()
-                                cropped.save(bio, format="JPEG")
-                                img_bytes = bio.getvalue()
-
-                                text_llm = call_vision_fallback(img_bytes, ocr_text="", page_num=page_num)
-                                if text_llm:
-                                    results.append([poly, (text_llm, 0.85)])
-                            except Exception as e3:
-                                logger.error(f"Vision LLM fallback for granular box {i+idx} failed: {e3}")
-
-        if failed_boxes_count > 0 or math_false_count > 0:
-            logger.info(f"Mini-batch OCR complete: {len(valid_bboxes)} boxes processed. {math_false_count} math_mode=False retries. {failed_boxes_count} Vision LLM fallbacks.")
-
-        return results
-
-    def extract_layout(self, img_pil):
-        """Extract layout segments (Table, Header, Text, etc.)"""
-        if not self.available:
-            return []
-
-        try:
-            # Use a short timeout or check if layout_predictor is still healthy
-            layout_predictions = self.layout_predictor([img_pil])
-            if layout_predictions and getattr(layout_predictions[0], 'bboxes', None):
-                valid_layout = []
-                for b in layout_predictions[0].bboxes:
-                    # Validate polygon existence and shape defensively
-                    poly = getattr(b, 'polygon', None)
-                    if poly and len(poly) == 4:
-                        valid_layout.append(b)
-                return valid_layout
-            return []
-        except (AttributeError, IndexError, TypeError, RuntimeError) as e:
-            # Catch RuntimeError for specific tensor shape mismatches (common in Surya v0.17+ on varying hardware)
-            if "tensor" in str(e).lower() or "size" in str(e).lower():
-                logger.warning(f"Surya Layout tensor shape mismatch: {e}. Falling back to empty layout.")
-            else:
-                logger.warning(f"Surya Layout internal error: {e}. Skipping structural layout.")
-            return []
-        except Exception as e:
-            logger.error(f"Surya Layout unexpected failure: {e}")
-            return []
-
-
 # Global components — initialized lazily on first use to avoid loading heavy ML
 # models at import time (e.g. when vision.py is imported in test or API contexts).
 import threading as _threading
 
 _router: "RAGRouter | None" = None
-_ocr_engine: "SuryaExtractor | None" = None
+_ocr_engine: "RemoteSuryaClient | None" = None
 _components_lock = _threading.Lock()
 
 
@@ -269,12 +70,12 @@ def _get_router() -> "RAGRouter":
     return _router
 
 
-def _get_ocr_engine() -> "SuryaExtractor":
+def _get_ocr_engine() -> "RemoteSuryaClient":
     global _ocr_engine
     if _ocr_engine is None:
         with _components_lock:
             if _ocr_engine is None:
-                _ocr_engine = SuryaExtractor()
+                _ocr_engine = RemoteSuryaClient()
     return _ocr_engine
 
 
@@ -539,13 +340,12 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
     # Convert enhanced bytes to PIL for Surya
     img_pil = Image.open(io.BytesIO(enhanced_bytes))
 
-    # 1. Primary OCR Pass (Surya)
+    # 1. Primary OCR Pass (Remote Surya Worker Microservice)
     ocr_raw = []
     layout = []
     ocr_engine = _get_ocr_engine()
     if ocr_engine and ocr_engine.available:
-        ocr_raw = ocr_engine.ocr(img_pil, page_num=page_num)
-        layout = ocr_engine.extract_layout(img_pil)
+        ocr_raw, layout = ocr_engine.process_page(enhanced_bytes, page_num=page_num)
 
     bbox_list = [line[0] for line in ocr_raw] if ocr_raw else []
 

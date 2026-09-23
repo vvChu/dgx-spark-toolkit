@@ -34,6 +34,7 @@ services:
       - IMAGE_PREPROCESS=${IMAGE_PREPROCESS:-1}
       - OCR_RENDER_DPI=${OCR_RENDER_DPI:-300}
       - SURYA_DEVICE=${SURYA_DEVICE:-auto}
+      - OCR_WORKER_URL=http://ocr-worker:8000
       - CHUNK_MAX_CHARS=${CHUNK_MAX_CHARS:-14500}
       - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
       - REMOVE_WATERMARKS=${REMOVE_WATERMARKS:-0}
@@ -77,6 +78,35 @@ services:
     networks:
       - rag-network
 
+  ocr-worker:
+    build:
+      context: ./services/ocr-worker
+    container_name: dgx-spark-ocr-worker
+    restart: unless-stopped
+    environment:
+      - SURYA_DEVICE=cpu
+      - MODEL_CACHE_DIR=/models/datalab
+      - OMP_NUM_THREADS=4
+      - OPENBLAS_NUM_THREADS=4
+    volumes:
+      - ${SURYA_CACHE_DIR:-~/.cache/datalab}:/models/datalab
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 6G
+        reservations:
+          cpus: '2'
+          memory: 2G
+    networks:
+      - rag-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   rag-watcher:
     profiles: ["ingest"]
     build:
@@ -112,6 +142,7 @@ services:
       - IMAGE_PREPROCESS=${IMAGE_PREPROCESS:-1}
       - OCR_RENDER_DPI=${OCR_RENDER_DPI:-300}
       - SURYA_DEVICE=${SURYA_DEVICE:-auto}
+      - OCR_WORKER_URL=http://ocr-worker:8000
       - CHUNK_MAX_CHARS=${CHUNK_MAX_CHARS:-14500}
       - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
       - REMOVE_WATERMARKS=${REMOVE_WATERMARKS:-0}
