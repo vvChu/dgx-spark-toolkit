@@ -23,8 +23,15 @@ class RemoteSuryaClient:
     - extract_layout(img_pil) -> layout
     """
 
-    def __init__(self, base_url: Optional[str] = None):
-        self.base_url = (base_url or os.environ.get("OCR_WORKER_URL", "http://ocr-worker:8000")).rstrip("/")
+    def __init__(self, base_url: Optional[str] = None, *args, **kwargs):
+        default_url = os.environ.get("OCR_WORKER_URL")
+        if not default_url:
+            try:
+                from core.config import get_settings
+                default_url = get_settings().OCR_WORKER_URL
+            except Exception:
+                default_url = "http://ocr-worker:8000"
+        self.base_url = (base_url or default_url).rstrip("/")
         # Granular timeout — 150s read buffer for CPU inference
         self.timeout = httpx.Timeout(connect=10.0, read=150.0, write=30.0, pool=10.0)
         self._client: Optional[httpx.Client] = None
@@ -58,20 +65,29 @@ class RemoteSuryaClient:
         """Process page image and return (ocr_raw, layout).
 
         Args:
-            img_input: Image bytes or PIL Image.
+            img_input: Image bytes, bytearray, PIL Image, or numpy ndarray.
             page_num: Page number for logging.
 
         Returns:
             Tuple of (ocr_raw, layout_segments) where layout_segments are
             SimpleNamespace objects matching vision.py segment schema.
         """
-        # Convert PIL to bytes if needed
+        # Convert PIL or numpy array to bytes if needed
         if isinstance(img_input, Image.Image):
             buf = io.BytesIO()
             img_input.save(buf, format="PNG")
             img_bytes = buf.getvalue()
         elif isinstance(img_input, (bytes, bytearray)):
             img_bytes = bytes(img_input)
+        elif hasattr(img_input, "__array_interface__") or hasattr(img_input, "__cuda_array_interface__"):
+            try:
+                pil_img = Image.fromarray(img_input)
+                buf = io.BytesIO()
+                pil_img.save(buf, format="PNG")
+                img_bytes = buf.getvalue()
+            except Exception as e:
+                logger.error(f"[RemoteSuryaClient] Failed to convert image array: {e}")
+                return [], []
         else:
             logger.error(f"[RemoteSuryaClient] Unsupported image input type: {type(img_input)}")
             return [], []
@@ -88,7 +104,7 @@ class RemoteSuryaClient:
         img_hash = hashlib.sha256(img_bytes).hexdigest()
         with self._lock:
             if self._last_img_hash == img_hash:
-                return self._last_ocr_raw, self._last_layout
+                return list(self._last_ocr_raw), list(self._last_layout)
 
         client = self._get_http_client()
         url = f"{self.base_url}/process"
@@ -104,18 +120,35 @@ class RemoteSuryaClient:
             data = resp.json()
             self.cb.record_success()
 
-            ocr_raw = data.get("ocr_raw", [])
-            raw_layout = data.get("layout", [])
+            ocr_raw = data.get("ocr_raw") or []
+            raw_layout = data.get("layout") or []
 
             # Map layout to SimpleNamespace for full backward compatibility with vision.py:558-620
             layout_segments = []
             for item in raw_layout:
                 if isinstance(item, dict):
+                    bbox = item.get("bbox")
+                    polygon = item.get("polygon") or []
+                    # Defensively validate bbox: ensure a 4-element list of numbers
+                    if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+                        if polygon and len(polygon) >= 4:
+                            try:
+                                xs = [p[0] for p in polygon]
+                                ys = [p[1] for p in polygon]
+                                bbox = [float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys))]
+                            except Exception:
+                                bbox = [0.0, 0.0, 0.0, 0.0]
+                        else:
+                            bbox = [0.0, 0.0, 0.0, 0.0]
+                    else:
+                        bbox = [float(v) for v in bbox[:4]]
+
+                    label = item.get("label") or "text"
                     layout_segments.append(
                         SimpleNamespace(
-                            bbox=item.get("bbox"),
-                            label=item.get("label", "text"),
-                            polygon=item.get("polygon", []),
+                            bbox=bbox,
+                            label=str(label),
+                            polygon=polygon,
                         )
                     )
                 else:
@@ -126,7 +159,7 @@ class RemoteSuryaClient:
                 self._last_ocr_raw = ocr_raw
                 self._last_layout = layout_segments
 
-            return ocr_raw, layout_segments
+            return list(ocr_raw), list(layout_segments)
 
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             logger.error(f"[RemoteSuryaClient] Connection error contacting ocr-worker ({url}): {e}")

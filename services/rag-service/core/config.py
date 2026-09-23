@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     # Vision Models (ingestion pipeline) — Free-tier-first strategy
     PRIMARY_VISION_MODEL: str = "gemini-3-flash"
     FALLBACK_VISION_MODEL: str = "gemini-3.1-flash-lite"
+    OCR_WORKER_URL: str = "http://ocr-worker:8000"
 
     # Paths
     PDF_DIR: str = "/app/data/pdf"

@@ -87,6 +87,20 @@ class SuryaWorkerExtractor:
                 valid_bboxes.append(polygon)
 
         # 2. Recognition Pass (Chunked mini-batches)
+        # Helper to safely extract text and confidence without crashing on None
+        def _parse_line(line_obj) -> List[Any]:
+            txt = str(line_obj.text) if getattr(line_obj, "text", None) is not None else ""
+            c = getattr(line_obj, "confidence", None)
+            if c is not None:
+                try:
+                    c_float = float(c)
+                except (ValueError, TypeError):
+                    c_float = 0.85
+            else:
+                c_float = 0.85
+            return [txt, c_float]
+
+        # 2. Recognition Pass (Chunked mini-batches)
         ocr_raw: List[Any] = []
         chunk_size = 8
         for i in range(0, len(valid_bboxes), chunk_size):
@@ -101,27 +115,30 @@ class SuryaWorkerExtractor:
                     for line in predictions[0].text_lines:
                         p = getattr(line, "polygon", None)
                         if p:
-                            ocr_raw.append([p, [str(line.text), float(line.confidence)]])
+                            ocr_raw.append([[list(pt) for pt in p], _parse_line(line)])
             except Exception as e:
                 logger.warning(
                     f"Surya OCR mini-batch ({i} to {i + len(chunk_bboxes)}) failed ({type(e).__name__}): {e}. "
                     "Granular fallback for this chunk..."
                 )
                 for idx, poly in enumerate(chunk_bboxes):
+                    clean_poly = [list(pt) for pt in poly]
                     try:
                         res = self.rec_predictor([img_pil], polygons=[[poly]], math_mode=True)
                         if res and getattr(res[0], "text_lines", None) and res[0].text_lines:
                             line = res[0].text_lines[0]
-                            ocr_raw.append([line.polygon, [str(line.text), float(line.confidence)]])
+                            p = getattr(line, "polygon", None) or poly
+                            ocr_raw.append([[list(pt) for pt in p], _parse_line(line)])
                     except Exception:
                         try:
                             res = self.rec_predictor([img_pil], polygons=[[poly]], math_mode=False)
                             if res and getattr(res[0], "text_lines", None) and res[0].text_lines:
                                 line = res[0].text_lines[0]
-                                ocr_raw.append([line.polygon, [str(line.text), float(line.confidence)]])
+                                p = getattr(line, "polygon", None) or poly
+                                ocr_raw.append([[list(pt) for pt in p], _parse_line(line)])
                         except Exception as e2:
                             logger.warning(f"Granular box {i + idx} complete failure: {e2}. Returning empty text.")
-                            ocr_raw.append([poly, ["", 0.0]])
+                            ocr_raw.append([clean_poly, ["", 0.0]])
 
         # 3. Layout Extraction Pass
         layout_list: List[Dict[str, Any]] = []
@@ -132,16 +149,17 @@ class SuryaWorkerExtractor:
                     poly = getattr(b, "polygon", None)
                     if not poly or len(poly) != 4:
                         continue
+                    clean_poly = [list(pt) for pt in poly]
                     bbox = getattr(b, "bbox", None)
                     if not bbox:
-                        xs = [p[0] for p in poly]
-                        ys = [p[1] for p in poly]
+                        xs = [p[0] for p in clean_poly]
+                        ys = [p[1] for p in clean_poly]
                         bbox = [min(xs), min(ys), max(xs), max(ys)]
-                    label = getattr(b, "label", "text")
+                    label = getattr(b, "label", None) or "text"
                     layout_list.append({
-                        "bbox": list(bbox),
+                        "bbox": [float(v) for v in bbox],
                         "label": str(label),
-                        "polygon": [list(pt) for pt in poly]
+                        "polygon": clean_poly
                     })
         except Exception as e:
             logger.error(f"Surya layout extraction failed: {e}")

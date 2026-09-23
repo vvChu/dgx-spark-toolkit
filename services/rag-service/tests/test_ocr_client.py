@@ -134,3 +134,107 @@ class TestRemoteSuryaClient:
         assert client.process_page(b"") == ([], [])
         assert client.process_page(None) == ([], [])
         assert client.process_page(12345) == ([], [])
+
+    def test_client_init_kwargs_compatibility(self):
+        """Client must accept legacy kwargs (e.g. device='cpu') for drop-in compatibility."""
+        client = SuryaExtractor(device="cpu", auto_retry=True)
+        assert client.device == "cpu"
+        assert client.available is True
+
+    @patch("ingestion.ocr_client.httpx.Client.post")
+    def test_numpy_array_input(self, mock_post):
+        """Passing numpy array should convert to image bytes and call worker."""
+        import numpy as np
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "ocr_raw": [[[[0, 0], [10, 0], [10, 10], [0, 10]], ["Array Text", 0.9]]],
+            "layout": [],
+        }
+        mock_post.return_value = mock_resp
+
+        client = RemoteSuryaClient(base_url="http://test-worker:8000")
+        arr = np.zeros((50, 50, 3), dtype=np.uint8)
+        ocr_raw, layout = client.process_page(arr)
+        assert len(ocr_raw) == 1
+        assert ocr_raw[0][1][0] == "Array Text"
+
+    @patch("ingestion.ocr_client.httpx.Client.post")
+    def test_null_fields_in_response(self, mock_post):
+        """Worker returning null fields should not crash client or iterator."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "ocr_raw": None,
+            "layout": None,
+        }
+        mock_post.return_value = mock_resp
+
+        client = RemoteSuryaClient(base_url="http://test-worker:8000")
+        ocr_raw, layout = client.process_page(dummy_image_bytes())
+        assert ocr_raw == []
+        assert layout == []
+
+    @patch("ingestion.ocr_client.httpx.Client.post")
+    def test_malformed_and_missing_bbox_in_layout(self, mock_post):
+        """Layout segment with missing or None bbox should derive from polygon or default safely."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "ocr_raw": [],
+            "layout": [
+                {
+                    "bbox": None,
+                    "label": "table",
+                    "polygon": [[10, 20], [100, 20], [100, 80], [10, 80]],
+                },
+                {
+                    "bbox": [],
+                    "label": None,
+                    "polygon": [],
+                },
+            ],
+        }
+        mock_post.return_value = mock_resp
+
+        client = RemoteSuryaClient(base_url="http://test-worker:8000")
+        _, layout = client.process_page(dummy_image_bytes())
+        assert len(layout) == 2
+
+        # First segment derives bbox from polygon
+        assert layout[0].bbox == [10.0, 20.0, 100.0, 80.0]
+        assert layout[0].label == "table"
+
+        # Second segment defaults to [0, 0, 0, 0] and label 'text'
+        assert layout[1].bbox == [0.0, 0.0, 0.0, 0.0]
+        assert layout[1].label == "text"
+
+    @patch("ingestion.ocr_client.httpx.Client.post")
+    def test_cache_defensive_copy(self, mock_post):
+        """Mutating returned layout segments list should not mutate cached list."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "ocr_raw": [[[[0, 0], [10, 0], [10, 10], [0, 10]], ["Text", 0.9]]],
+            "layout": [{"bbox": [0, 0, 10, 10], "label": "text", "polygon": [[0, 0], [10, 0], [10, 10], [0, 10]]}],
+        }
+        mock_post.return_value = mock_resp
+
+        client = RemoteSuryaClient(base_url="http://test-worker:8000")
+        img_bytes = dummy_image_bytes()
+        ocr_raw1, layout1 = client.process_page(img_bytes)
+        layout1.append("mutated")
+
+        ocr_raw2, layout2 = client.process_page(img_bytes)
+        assert len(layout2) == 1
+        assert "mutated" not in layout2
+
+    @patch("ingestion.ocr_client.httpx.Client.post")
+    def test_connect_error_fallback(self, mock_post):
+        """Connection errors should trigger circuit failure and return empty lists."""
+        mock_post.side_effect = httpx.ConnectError("Connection refused")
+
+        client = RemoteSuryaClient(base_url="http://test-worker:8000")
+        ocr_raw, layout = client.process_page(dummy_image_bytes())
+        assert ocr_raw == []
+        assert layout == []

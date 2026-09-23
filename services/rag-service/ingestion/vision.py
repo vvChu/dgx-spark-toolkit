@@ -354,8 +354,17 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
     has_table = False
 
     if ocr_raw and layout:
-        # Sort layout elements top-to-bottom
-        sorted_layout = sorted(layout, key=lambda x: (getattr(x, 'bbox', [0, 0, 0, 0])[1]))
+        # Sort layout elements top-to-bottom defensively
+        def _get_seg_top(seg_obj):
+            b = getattr(seg_obj, 'bbox', None)
+            if isinstance(b, (list, tuple)) and len(b) > 1:
+                try:
+                    return float(b[1])
+                except (ValueError, TypeError):
+                    return 0.0
+            return 0.0
+
+        sorted_layout = sorted(layout, key=_get_seg_top)
 
         for seg in sorted_layout:
             seg_bbox = getattr(seg, 'bbox', None)
