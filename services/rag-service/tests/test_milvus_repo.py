@@ -123,6 +123,67 @@ class TestMilvusRepository:
         res = _run(repo.ensure_collection_schema())
         assert res is True
         client.create_collection.assert_called_once()
+        _, kwargs = client.create_collection.call_args
+        schema = kwargs["schema"]
+        field_names = [f.name for f in schema.fields]
+        assert "sparse_vector" in field_names
+        assert "vector" in field_names
+        index_params = kwargs["index_params"]
+        idx_fields = [getattr(idx, "_field_name", getattr(idx, "field_name", "")) for idx in index_params]
+        assert "sparse_vector" in idx_fields
+        assert "vector" in idx_fields
+
+    def test_ensure_collection_schema_existing_loads_collection(self):
+        repo, client = self._make_repo()
+        client.has_collection = AsyncMock(return_value=True)
+        client.describe_collection = AsyncMock(return_value={"fields": [{"name": "vector"}, {"name": "sparse_vector"}]})
+        client.list_indexes = AsyncMock(return_value=["vector", "sparse_vector"])
+        client.load_collection = AsyncMock()
+        res = _run(repo.ensure_collection_schema())
+        assert res is True
+        client.load_collection.assert_called_once()
+
+    def test_hybrid_search_sanitizes_sparse_vector(self):
+        repo, client = self._make_repo()
+        client.hybrid_search = AsyncMock(return_value=[[MagicMock(score=0.95)]])
+        # Pass malformed sparse dict with invalid string keys and negative keys
+        malformed_sparse = {"123": 0.5, "not_a_number": 0.9, -1: 0.2, 456: 0.8}
+        results = _run(repo.hybrid_search([0.1] * 1024, malformed_sparse, limit=5))
+        assert len(results[0]) == 1
+        client.hybrid_search.assert_called_once()
+        _, kwargs = client.hybrid_search.call_args
+        sparse_req = kwargs["reqs"][1]
+        cleaned_sparse = sparse_req._data[0]
+        assert 123 in cleaned_sparse
+        assert 456 in cleaned_sparse
+        assert "not_a_number" not in cleaned_sparse
+        assert -1 not in cleaned_sparse
+
+    def test_hybrid_search_none_sparse_vector(self):
+        repo, client = self._make_repo()
+        client.hybrid_search = AsyncMock(return_value=[[MagicMock(score=0.9)]])
+        results = _run(repo.hybrid_search([0.1] * 1024, None, limit=5))
+        assert len(results[0]) == 1
+        client.hybrid_search.assert_called_once()
+        _, kwargs = client.hybrid_search.call_args
+        sparse_req = kwargs["reqs"][1]
+        assert sparse_req._data[0] == {}
+
+    def test_insert_chunks_sanitizes_sparse_and_dense(self):
+        repo, client = self._make_repo()
+        client.insert = AsyncMock()
+        chunks = [
+            {"text": "chunk 1", "sparse_vector": None, "vector": None},
+            {"text": "chunk 2", "sparse_vector": {"10": 0.5, "invalid": 1.0}},
+        ]
+        count = _run(repo.insert_chunks(chunks))
+        assert count == 2
+        client.insert.assert_called_once()
+        _, kwargs = client.insert.call_args
+        entities = kwargs["data"]
+        assert entities[0]["sparse_vector"] == {}
+        assert len(entities[0]["vector"]) == 1024
+        assert entities[1]["sparse_vector"] == {10: 0.5}
 
     def test_close(self):
         repo, client = self._make_repo()

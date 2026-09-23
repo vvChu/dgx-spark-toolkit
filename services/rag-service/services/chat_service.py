@@ -132,9 +132,16 @@ class ChatService:
             system_sections.append(self._format_context(all_context))
 
         messages = [{"role": "system", "content": "\n\n---\n\n".join(system_sections)}]
-        # Add client-sent history only when no session context (defense against system role injection)
+        # Add client-sent history only when no session context (defense against system role injection & malformed payloads)
         if history and not session_context:
-            messages.extend([m for m in history[-6:] if isinstance(m, dict) and m.get("role") in ("user", "assistant")])
+            clean_history = []
+            for m in history[-6:]:
+                if isinstance(m, dict) and m.get("role") in ("user", "assistant"):
+                    clean_history.append({
+                        "role": str(m["role"]),
+                        "content": str(m.get("content") or ""),
+                    })
+            messages.extend(clean_history)
         messages.append({"role": "user", "content": query})
         return messages
 

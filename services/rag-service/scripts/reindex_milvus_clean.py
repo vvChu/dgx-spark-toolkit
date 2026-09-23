@@ -315,7 +315,16 @@ def main():
 
                 for j, entity in enumerate(batch):
                     entity["vector"] = dense_vectors[j]
-                    entity["sparse_vector"] = {int(k) if str(k).isdigit() else str(k): float(v) for k, v in sparse_vectors[j].items()}
+                    clean_sparse: dict[int, float] = {}
+                    if isinstance(sparse_vectors[j], dict):
+                        for k, v in sparse_vectors[j].items():
+                            try:
+                                ik = int(k)
+                                if ik >= 0:
+                                    clean_sparse[ik] = float(v)
+                            except (ValueError, TypeError):
+                                continue
+                    entity["sparse_vector"] = clean_sparse
 
                 for attempt in range(3):
                     try:

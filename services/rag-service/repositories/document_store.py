@@ -108,6 +108,14 @@ class DocumentStore:
         except Exception as e:
             logger.warning(f"Sync infrastructure initialization skipped: {e}")
 
+    async def init_collection(self) -> None:
+        """Alias for init_infrastructure to ensure vector schema compatibility."""
+        await self.init_infrastructure()
+
+    def init_collection_sync(self) -> None:
+        """Synchronous wrapper for init_collection."""
+        self.init_infrastructure_sync()
+
     async def close(self) -> None:
         """Safely close repository connections."""
         if self.milvus_repo and hasattr(self.milvus_repo, "close"):

@@ -21,13 +21,26 @@ class MilvusRepository:
 
     async def hybrid_search(self, query_vector: list, sparse_vector: dict, limit: int = 10, expr: str = None):
         """Perform hybrid search utilizing Milvus RRF."""
+        # Sanitize sparse_vector into uint32 -> float mapping to prevent nil/ParamError
+        clean_sparse: dict[int, float] = {}
+        if isinstance(sparse_vector, dict):
+            for k, v in sparse_vector.items():
+                try:
+                    ik = int(k)
+                    if ik >= 0:
+                        clean_sparse[ik] = float(v)
+                except (ValueError, TypeError):
+                    continue
+
+        dense_vec = query_vector if (query_vector and len(query_vector) == 1024) else [0.0] * 1024
+
         # Dense Search Request
         search_params_dense = {"metric_type": "COSINE", "params": {"nprobe": 10}}
-        req_dense = AnnSearchRequest([query_vector], "vector", search_params_dense, limit=limit, expr=expr)
+        req_dense = AnnSearchRequest([dense_vec], "vector", search_params_dense, limit=limit, expr=expr)
 
         # Sparse Search Request
         search_params_sparse = {"metric_type": "IP", "params": {"drop_ratio_search": 0.2}}
-        req_sparse = AnnSearchRequest([sparse_vector], "sparse_vector", search_params_sparse, limit=limit, expr=expr)
+        req_sparse = AnnSearchRequest([clean_sparse], "sparse_vector", search_params_sparse, limit=limit, expr=expr)
 
         try:
             # Hybrid Search with RRFRanker
@@ -40,11 +53,12 @@ class MilvusRepository:
             )
             return results
         except Exception as e:
-            if "sparse_vector" in str(e):
+            err_msg = str(e).lower()
+            if "sparse" in err_msg or "sparse_vector" in err_msg:
                 logger.warning(f"Hybrid search sparse_vector missing/failed ({e}), falling back to dense-only search")
                 dense_results = await self.client.search(
                     collection_name=self.collection_name,
-                    data=[query_vector],
+                    data=[dense_vec],
                     anns_field="vector",
                     search_params=search_params_dense,
                     limit=limit,
@@ -136,6 +150,17 @@ class MilvusRepository:
         entities = []
         for c in chunks:
             chunk_dict = c.to_dict() if hasattr(c, "to_dict") else dict(c)
+            sparse_raw = chunk_dict.get("sparse_vector")
+            clean_sparse: dict[int, float] = {}
+            if isinstance(sparse_raw, dict):
+                for k, v in sparse_raw.items():
+                    try:
+                        ik = int(k)
+                        if ik >= 0:
+                            clean_sparse[ik] = float(v)
+                    except (ValueError, TypeError):
+                        continue
+
             entities.append({
                 "text": str(chunk_dict.get("text", ""))[:14000],
                 "source": str(chunk_dict.get("source", "")),
@@ -162,8 +187,8 @@ class MilvusRepository:
                 "revision": int(chunk_dict.get("revision", 0)),
                 "synthetic_queries": str(chunk_dict.get("synthetic_queries", "")),
                 "source_category": str(chunk_dict.get("source_category", "KHAC")),
-                "vector": chunk_dict.get("vector", [0.0] * 1024),
-                "sparse_vector": chunk_dict.get("sparse_vector", {}),
+                "vector": chunk_dict.get("vector") or [0.0] * 1024,
+                "sparse_vector": clean_sparse,
             })
         if entities:
             await self.client.insert(collection_name=self.collection_name, data=entities)
@@ -185,6 +210,28 @@ class MilvusRepository:
         try:
             has_col = await self.client.has_collection(self.collection_name)
             if has_col:
+                try:
+                    desc = await self.client.describe_collection(self.collection_name)
+                    fields = [f.get("name") for f in desc.get("fields", []) if isinstance(f, dict)]
+                    if "sparse_vector" not in fields:
+                        logger.warning(
+                            f"Milvus collection '{self.collection_name}' exists but lacks 'sparse_vector' field; "
+                            "hybrid search will fallback to dense-only until reindexed."
+                        )
+                    else:
+                        indexes = await self.client.list_indexes(self.collection_name)
+                        if "sparse_vector" not in indexes:
+                            logger.info(f"Adding missing sparse_vector index to existing collection '{self.collection_name}'...")
+                            idx_params = AsyncMilvusClient.prepare_index_params()
+                            idx_params.add_index(
+                                field_name="sparse_vector",
+                                metric_type="IP",
+                                index_type="SPARSE_INVERTED_INDEX",
+                            )
+                            await self.client.create_index(self.collection_name, index_params=idx_params)
+                except Exception as e:
+                    logger.debug(f"Collection introspection skipped: {e}")
+
                 await self.client.load_collection(self.collection_name)
                 logger.info(f"Milvus collection '{self.collection_name}' loaded successfully.")
                 return True

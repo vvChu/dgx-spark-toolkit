@@ -171,13 +171,17 @@ class TestRemoteSuryaClient:
 
     def test_empty_input(self):
         """Empty or invalid input returns (None, None) and marks as service failure to trigger Vision fallback."""
+        from pathlib import Path
         client = RemoteSuryaClient()
         assert client.process_page(b"") == (None, None)
         assert client.process_page(None) == (None, None)
         assert client.process_page(12345) == (None, None)
+        assert client.process_page("/non/existent/image.png") == (None, None)
+        assert client.process_page(Path("/non/existent/image.png")) == (None, None)
         assert RemoteSuryaClient.is_service_failure(client.process_page(b"")) is True
         assert RemoteSuryaClient.is_service_failure(client.process_page(None)) is True
         assert RemoteSuryaClient.is_service_failure(client.process_page(12345)) is True
+        assert RemoteSuryaClient.is_service_failure(client.process_page("/non/existent/image.png")) is True
 
     def test_client_init_kwargs_compatibility(self):
         """Client must accept legacy kwargs (e.g. device='cpu') for drop-in compatibility."""

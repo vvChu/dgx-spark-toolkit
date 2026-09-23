@@ -3,6 +3,7 @@ import io
 import logging
 import os
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, List, Optional, Tuple
 
@@ -83,13 +84,28 @@ class RemoteSuryaClient:
             Returns (None, None) on service error (HTTP error, timeout, circuit breaker open).
             Returns ([], []) when the page is legitimately empty.
         """
-        # Convert PIL or numpy array to bytes if needed
+        # Convert PIL, Path, or numpy array to bytes if needed
         if isinstance(img_input, Image.Image):
-            buf = io.BytesIO()
-            img_input.save(buf, format="PNG")
-            img_bytes = buf.getvalue()
+            try:
+                buf = io.BytesIO()
+                img_input.save(buf, format="PNG")
+                img_bytes = buf.getvalue()
+            except Exception as e:
+                logger.error(f"[RemoteSuryaClient] Failed to encode PIL Image: {e}")
+                return None, None
         elif isinstance(img_input, (bytes, bytearray)):
             img_bytes = bytes(img_input)
+        elif isinstance(img_input, (str, Path)):
+            try:
+                p = Path(img_input)
+                if p.is_file():
+                    img_bytes = p.read_bytes()
+                else:
+                    logger.error(f"[RemoteSuryaClient] Image path not found: {img_input}")
+                    return None, None
+            except Exception as e:
+                logger.error(f"[RemoteSuryaClient] Failed to read image path {img_input}: {e}")
+                return None, None
         elif hasattr(img_input, "__array_interface__") or hasattr(img_input, "__cuda_array_interface__"):
             try:
                 pil_img = Image.fromarray(img_input)

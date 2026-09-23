@@ -263,3 +263,15 @@ class TestDocumentStoreSyncAndFailures:
         assert store.document_statuses["VBPL/OLD_2020"] == "SUPERSEDED"
         assert store.document_statuses["VBPL/AMENDED_2022"] == "OUTDATED"
 
+    def test_init_collection_invokes_milvus_schema(self):
+        import asyncio
+        mock_milvus = MagicMock()
+        mock_milvus.ensure_collection_schema = AsyncMock(return_value=True)
+        mock_neo4j = MagicMock()
+        mock_neo4j.init_schema = AsyncMock(return_value=True)
+
+        store = DocumentStore(milvus_repo=mock_milvus, neo4j_repo=mock_neo4j)
+        asyncio.run(store.init_collection())
+        mock_milvus.ensure_collection_schema.assert_called_once()
+        mock_neo4j.init_schema.assert_called_once()
+
