@@ -200,17 +200,16 @@ def fix_table_gfm_v2(text: str) -> str:
 
         # First pipe row without a following separator — check if it's a header
         cells = [c.strip() for c in stripped.split("|")[1:-1]]
-        first_cell = cells[0] if cells else ""
-        first_cell_is_number = bool(re.match(r"^\d+\.?$", first_cell.strip()))
         all_trivial = all(len(c) <= 2 for c in cells)
+        has_letters = any(re.search(r"[a-zA-Z\u00c0-\u1ef9]", c) for c in cells)
+        all_numeric = all(re.match(r"^[\d.,\s%]+$", c) for c in cells if c)
 
         is_header = (
             cells
-            and not first_cell_is_number
             and not all_trivial
-            and all(len(c) < 80 for c in cells)
-            and any(re.search(r"[a-zA-Z\u00c0-\u1ef9]", c) for c in cells)
-            and not all(re.match(r"^[\d.,\s%]+$", c) for c in cells if c)
+            and all(len(c) < 2000 for c in cells)
+            and has_letters
+            and not all_numeric
         )
         if is_header:
             sep = "| " + " | ".join("---" for _ in cells) + " |"

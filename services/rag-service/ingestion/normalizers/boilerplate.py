@@ -297,6 +297,13 @@ def strip_ai_monologue(text: str) -> str:
     text = re.sub(r'</think>', '', text)
     text = re.sub(r'</thought>', '', text)
 
+    # Strip multiline reasoning traces (e.g. Thinking Process:... up to questions)
+    text = re.sub(
+        r"(?is)(?:^|\n)\s*(?:Thinking Process|Tư duy suy luận):?.*?(?=\n\s*(?:[1-5]\.|\*|\-|\bCâu hỏi|\bQuestions?|\Z))",
+        "\n",
+        text,
+    )
+
     for pat in _AI_COMPILED:
         text = pat.sub("\n", text)
 

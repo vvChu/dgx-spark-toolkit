@@ -15,11 +15,19 @@ Options (env vars):
 """
 import os
 import sys
+from pathlib import Path
+
+# Ensure rag-service root (/app or repo root) is in sys.path
+_RAG_ROOT = str(Path(__file__).resolve().parent.parent)
+if _RAG_ROOT not in sys.path:
+    sys.path.insert(0, _RAG_ROOT)
+if os.path.exists("/app") and "/app" not in sys.path:
+    sys.path.insert(0, "/app")
+
 import json
 import time
 import logging
 import glob
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logging.basicConfig(
@@ -28,7 +36,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-EXPORT_JSON_DIR = os.environ.get("EXPORT_JSON_DIR", "/app/exports/json")
+EXPORT_JSON_DIR = os.environ.get(
+    "EXPORT_JSON_DIR",
+    "/app/exports/json" if os.path.exists("/app/exports/json") else "/home/vvc/Public/exports/json"
+)
 BACKFILL_LIMIT = int(os.environ.get("BACKFILL_LIMIT", "0"))
 DRY_RUN = os.environ.get("BACKFILL_DRY_RUN", "0") == "1"
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "6"))  # LLM concurrency
@@ -38,10 +49,16 @@ MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "6"))  # LLM concurrency
 try:
     import httpx
     from core.config import get_settings
+    from ingestion.normalizers.boilerplate import strip_ai_monologue
     s = get_settings()
     _API_URL = s.VLLM_API_BASE.rstrip("/") + "/chat/completions"
-    _MODEL = os.environ.get("JSON_MODEL", s.VLLM_MODEL)
-    _API_KEY = s.LITELLM_MASTER_KEY or "unused"
+    _MODEL = os.environ.get("SYNTHETIC_QUERY_MODEL", "gemini-3.7-flash-low")
+    _raw_key = s.LITELLM_MASTER_KEY
+    _API_KEY = (
+        _raw_key.get_secret_value()
+        if hasattr(_raw_key, "get_secret_value")
+        else (str(_raw_key) if _raw_key else "unused")
+    )
     _CLIENT = httpx.Client(timeout=60)
     logger.info(f"LLM endpoint: {_API_URL}  model: {_MODEL}")
 except Exception as e:
@@ -50,25 +67,25 @@ except Exception as e:
 
 
 def _generate(chunk_text: str) -> str:
-    """Call LLM to generate 3-5 synthetic queries for a chunk."""
+    """Call LLM to generate 3-5 synthetic queries for a chunk in Vietnamese."""
     payload = {
         "model": _MODEL,
         "messages": [
             {
                 "role": "system",
                 "content": (
-                    "You are an assistant that generates hypothetical user questions. "
-                    "Output ONLY 3-5 questions separated by newlines that the given text can answer."
+                    "Bạn là trợ lý chuyên tạo câu hỏi giả định người dùng bằng tiếng Việt. "
+                    "CHỈ xuất ra 3-5 câu hỏi tiếng Việt, mỗi câu trên một dòng riêng biệt, mà văn bản đã cho có thể trả lời. "
+                    "TUYỆT ĐỐI KHÔNG xuất quá trình tư duy, phân tích, hay ngôn ngữ khác."
                 ),
             },
             {
                 "role": "user",
-                "content": f"Generate 3-5 questions for this text:\n\n{chunk_text[:2000]}\n\nQuestions:",
+                "content": f"Tạo 3-5 câu hỏi tiếng Việt cho đoạn văn bản sau:\n\n{chunk_text[:2000]}\n\nCâu hỏi:",
             },
         ],
-        "max_tokens": 512,
-        "temperature": 0.5,
-        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        "max_tokens": 256,
+        "temperature": 0.3,
     }
     headers = {"Authorization": f"Bearer {_API_KEY}"}
 
@@ -76,16 +93,17 @@ def _generate(chunk_text: str) -> str:
         try:
             resp = _CLIENT.post(_API_URL, json=payload, headers=headers)
             if resp.status_code == 429:
-                time.sleep(5 * (2**attempt))
+                time.sleep(3 * (2**attempt))
                 continue
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"].get("content", "").strip()
+            content = strip_ai_monologue(content)
             return content[:4000]
         except Exception as exc:
             if attempt == 2:
                 logger.warning(f"Failed after 3 attempts: {exc}")
                 return ""
-            time.sleep(5 * (2**attempt))
+            time.sleep(3 * (2**attempt))
     return ""
 
 
@@ -93,9 +111,35 @@ def _generate(chunk_text: str) -> str:
 
 def main():
     json_files = sorted(glob.glob(os.path.join(EXPORT_JSON_DIR, "*.json")))
+    json_files = [f for f in json_files if not f.endswith(".bak")]
     logger.info(f"Found {len(json_files)} JSON exports in {EXPORT_JSON_DIR}")
 
-    # Collect all parent chunks missing synthetic_queries
+    # Stage 1: Sanitize corrupted existing chunks (strip reasoning leaks)
+    sanitized_count = 0
+    for path in json_files:
+        try:
+            raw_text = Path(path).read_text(errors="replace")
+            data = json.loads(raw_text)
+        except Exception as e:
+            logger.warning(f"Skip sanitize (parse error): {path}: {e}")
+            continue
+        modified = False
+        for chunk in data.get("chunks", []):
+            sq = chunk.get("synthetic_queries", "")
+            if "Thinking Process" in sq or "Analyze the Request" in sq:
+                # Clean or reset corrupt query so it gets cleanly regenerated
+                chunk["synthetic_queries"] = ""
+                modified = True
+                sanitized_count += 1
+        if modified and not DRY_RUN:
+            Path(path).write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+    if sanitized_count > 0:
+        logger.info(f"Sanitized {sanitized_count} chunks infected with Thinking Process.")
+
+    # Stage 2: Collect all parent chunks missing synthetic_queries
     todo: list[tuple[str, dict, dict]] = []  # (file_path, doc_data, chunk)
     for path in json_files:
         try:
@@ -178,8 +222,17 @@ def main():
                 logger.error(f"Unexpected error: {e}")
                 errors += 1
 
-            if (done + errors) % 50 == 0:
+            if (done + errors) % 10 == 0:
                 logger.info(f"  Progress: {done + errors}/{len(flat_tasks)} (done={done}, err={errors})")
+                # Checkpoint save modified files
+                for p in dirty_files:
+                    try:
+                        Path(p).write_text(
+                            json.dumps(file_data[p], ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                    except Exception as save_err:
+                        logger.warning(f"Checkpoint save error for {p}: {save_err}")
 
     # Save modified files
     logger.info(f"Saving {len(dirty_files)} modified JSON files...")

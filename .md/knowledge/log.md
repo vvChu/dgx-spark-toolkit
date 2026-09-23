@@ -4,6 +4,18 @@ Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật 
 
 ---
 
+## [2026-09-23] [opt/rag-quality] | RAG Quality Score Optimization (90/100 → 95/100)
+
+- **Nhiệm vụ**: Tối ưu hóa toàn diện chất lượng RAG theo kết quả kiểm toán đối kháng `/boost`, nâng điểm `comprehensive_audit.py` từ 90/100 lên 95/100 (trần toán học tối đa cho 10 file xuất khẩu).
+- **Thành phần**:
+  - `Dimension A (100/100)`: Nâng cấp `fix_table_gfm_v2` trong `normalizers/tables.py` cho phép ô đầu là số nếu hàng có ký tự chữ và mở rộng độ dài ô `< 2000`, giải quyết dứt điểm lỗi `broken_table` tại `BEP_Template` và `PreBEP_Template` mà vẫn bảo toàn 100% test case numeric. Reprocess 10 file Markdown xuất khẩu sạch bóng lỗi (0% broken).
+  - `Dimension C (100/100) & Khử độc`: Nâng cấp `strip_ai_monologue` bóc tách khối suy luận đa dòng `Thinking Process:...`. Sanitize 421 chunk bị nhiễm chuỗi suy luận tiếng Anh trong file JSON xuất khẩu. Bổ sung `_raw_key.get_secret_value()` vá lỗi Pydantic SecretStr trong `backfill_synthetic_queries.py`. Backfill 244 parent chunks thành công với `gemini-3.7-flash-low` qua AI Gateway (độ trễ 1-2s, 0 lỗi 429), nâng tỷ lệ phủ từ 10.0% lên 41.0% (vượt ngưỡng mục tiêu >= 40%).
+- **Xác thực**:
+  - Comprehensive Audit: A: 100/100, B: 100/100, C: 100/100, E: 80/100 $\rightarrow$ Overall: **95/100**.
+  - Unit tests: 425/425 passed in 2.47s (rag-service), 27/27 passed in 4.59s (root).
+  - Flake8: 0 errors, 0 warnings.
+  - Spoke cleanliness: Exit Code 0 (12/15 scripts, 0 machine-state leaks).
+
 ## [2026-09-22] [refactor/arch] | Architecture Refactoring & Quality Hardening (Phase 1 & Phase 2)
 
 - **Nhiệm vụ**: Tối ưu hóa kiến trúc theo chuẩn `/ccba-codebase-design`, hoàn thành trọn vẹn Phase 1 (3 Deepening Opportunities) và Phase 2 (3 Follow-up Hardening & Cleanliness recommendations) sau các vòng kiểm chứng đối kháng `/boost` (`DeepInvestigator`).
