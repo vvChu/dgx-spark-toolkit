@@ -151,3 +151,116 @@ class TestNeo4jRepository:
             session.run.assert_called_once()
         finally:
             os.environ.pop("ALLOW_DB_CLEAR", None)
+
+    def test_create_document_node_with_guides_and_relationships(self):
+        repo, session = _make_repo()
+        doc = MagicMock()
+        doc.identity.doc_id = "TT/2025/BXD"
+        doc.identity.doc_number = "01/2025/TT-BXD"
+        doc.identity.file_name = "01_2025_TT-BXD.pdf"
+        doc.identity.rel_path = "01_2025_TT-BXD.pdf"
+        doc.metadata.doc_type = "TT"
+        doc.metadata.authority = "BXD"
+        doc.metadata.date = "2025-01-01"
+        doc.metadata.validity_status = "ACTIVE"
+        doc.relationships = {
+            "replaces": ["TT/2020/BXD"],
+            "amends": ["TT/2022/BXD"],
+            "references": ["ND/2021/CP"],
+            "guides": ["ND/2024/CP"],
+        }
+
+        _run(repo.create_document_node(doc))
+        # 1 node MERGE + 4 relationship MERGE calls = 5 calls
+        assert session.run.call_count == 5
+
+        calls = session.run.call_args_list
+        assert calls[0].kwargs["doc_id"] == "TT/2025/BXD"
+        assert calls[0].kwargs["validity"] == "ACTIVE"
+
+        guides_calls = [c for c in calls if "[:GUIDES]" in c.args[0]]
+        assert len(guides_calls) == 1
+        assert guides_calls[0].kwargs["source_id"] == "TT/2025/BXD"
+        assert guides_calls[0].kwargs["target_id"] == "ND/2024/CP"
+
+    def test_create_document_node_with_dataclass_relationships(self):
+        from ingestion.models import DocumentRelationships
+        repo, session = _make_repo()
+        doc = MagicMock()
+        doc.identity.doc_id = "TT/2026/BXD"
+        doc.identity.doc_number = "02/2026/TT-BXD"
+        doc.identity.file_name = "02_2026_TT-BXD.pdf"
+        doc.identity.rel_path = "02_2026_TT-BXD.pdf"
+        doc.metadata.doc_type = "TT"
+        doc.metadata.authority = "BXD"
+        doc.metadata.date = "2026-01-01"
+        doc.metadata.validity_status = "ACTIVE"
+        doc.relationships = DocumentRelationships(
+            guides=["Luat/50/2014/QH13"],
+            references=["ND/15/2021/ND-CP"],
+        )
+
+        _run(repo.create_document_node(doc))
+        # 1 node MERGE + 1 REFERENCES + 1 GUIDES = 3 calls
+        assert session.run.call_count == 3
+        guides_calls = [c for c in session.run.call_args_list if "[:GUIDES]" in c.args[0]]
+        assert len(guides_calls) == 1
+        assert guides_calls[0].kwargs["source_id"] == "TT/2026/BXD"
+        assert guides_calls[0].kwargs["target_id"] == "Luat/50/2014/QH13"
+
+    def test_create_document_node_with_none_and_whitespace_relationships(self):
+        repo, session = _make_repo()
+        doc = MagicMock()
+        doc.identity.doc_id = "ND/2025/CP"
+        doc.identity.doc_number = "15/2025/ND-CP"
+        doc.identity.file_name = "15_2025_ND-CP.pdf"
+        doc.identity.rel_path = "15_2025_ND-CP.pdf"
+        doc.metadata.doc_type = "ND"
+        doc.metadata.authority = "CP"
+        doc.metadata.date = "2025-06-01"
+        doc.metadata.validity_status = "ACTIVE"
+        # None values and whitespace-padded IDs
+        doc.relationships = {
+            "replaces": None,
+            "amends": ["  ND/10/2020/ND-CP  "],
+            "references": ["", "  ", None],
+            "guides": None,
+        }
+
+        # Should execute safely without raising TypeError
+        _run(repo.create_document_node(doc))
+        # 1 node MERGE + 1 amends MERGE = 2 calls
+        assert session.run.call_count == 2
+        amends_calls = [c for c in session.run.call_args_list if "[:AMENDS]" in c.args[0]]
+        assert len(amends_calls) == 1
+        assert amends_calls[0].kwargs["source_id"] == "ND/2025/CP"
+        assert amends_calls[0].kwargs["target_id"] == "ND/10/2020/ND-CP"
+
+    def test_get_document_relations_includes_guides_in_cypher(self):
+        repo, session = _make_repo()
+        session.run.return_value = _MockResult([
+            _MockRecord({
+                "id": "TT/123",
+                "status": "ACTIVE",
+                "out_rels": ["GUIDES"],
+                "targets": ["ND/456"],
+                "in_rels": [],
+                "sources": [],
+            })
+        ])
+        results = _run(repo.get_document_relations("TT/123"))
+        assert len(results) == 1
+        query_executed = session.run.call_args[0][0]
+        assert "GUIDES" in query_executed
+
+    def test_get_guided_circulars_traversal(self):
+        repo, session = _make_repo()
+        session.run.return_value = _MockResult([
+            _MockRecord({"source": "ND/15/2021", "guided_id": "TT/01/2021/TT-BXD", "status": "ACTIVE"})
+        ])
+        results = _run(repo.get_guided_circulars("ND/15/2021"))
+        assert len(results) == 1
+        assert results[0]["guided_id"] == "TT/01/2021/TT-BXD"
+        query_executed = session.run.call_args[0][0]
+        assert "[:GUIDES|REFERENCES*1..2]" in query_executed
+
