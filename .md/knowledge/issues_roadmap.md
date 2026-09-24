@@ -10,7 +10,7 @@
 
 | Issue # | Tiêu đề | Phân loại | Nhánh Git dự kiến | Trạng thái |
 | :---: | :--- | :---: | :--- | :---: |
-| **[#56](https://github.com/vvChu/dgx-spark-toolkit/issues/56)** | `chore(git): Atomic packaging and commit of recent architectural sync and GUIDES fixes` | `chore`, `docs` | `chore/package-architectural-sync` | Open |
+| **[#56](https://github.com/vvChu/dgx-spark-toolkit/issues/56)** | `chore(git): Atomic packaging and commit of recent architectural sync and GUIDES fixes` | `chore`, `docs` | `chore/package-architectural-sync` | **Closed** |
 | **[#57](https://github.com/vvChu/dgx-spark-toolkit/issues/57)** | `perf(frontend): Optimize bundle size with dynamic code-splitting for GraphPanel` | `perf`, `frontend` | `feat/frontend-bundle-codesplit` | Open |
 | **[#58](https://github.com/vvChu/dgx-spark-toolkit/issues/58)** | `feat(ingestion): Backlog ingestion acceleration toward target 8,870 chunks` | `feat`, `ingestion` | `feat/ingestion-backlog-acceleration` | Open |
 | **[#59](https://github.com/vvChu/dgx-spark-toolkit/issues/59)** | `feat(autoresearch): Autonomous RAG optimization loop for Vietnamese legal corpus` | `feat`, `research` | `feat/autoresearch-tuning-loop` | Open |
