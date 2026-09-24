@@ -7,12 +7,12 @@ applyTo: "services/frontend/**/*.{ts,tsx}"
 ## Architecture
 - **Hooks-first**: Business logic in `src/hooks/` (`useChat`, `useCompliance`, `useDashboard`, `useBenchmark`, `useEvaluation`)
 - **Components** in `src/components/`, reusable atoms in `src/components/ui/`
-- **API layer** in `src/lib/`: `api.ts` (blocking via axios) + `streamApi.ts` (SSE streaming)
+- **API layer** in `src/lib/`: `api.ts` (REST via axios) + `streamClient.ts` (SSE streaming with auto fallback)
 
 ## Patterns
 
 ### Data fetching
-- SSE streaming for chat: use `sendStreamChat()` from `lib/streamApi.ts`
+- SSE streaming for chat: use `StreamClient.streamChat()` from `lib/streamClient.ts`
 - HTTP POST fallback for non-streaming: use functions from `lib/api.ts`
 - Base URL from `VITE_API_URL` env var — never hardcode backend URLs
 

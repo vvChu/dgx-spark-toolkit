@@ -18,7 +18,10 @@ Critical technical gotchas, anti-patterns, and environment constraints to keep i
 ## 3. Strict Redis Database Separation
 - **Redis DB 0**: Dedicated strictly to LiteLLM semantic cache storage.
 - **Redis DB 1**: Dedicated strictly to the ingestion streaming job queue (`ingest:queue`).
-- **Rule**: Never send cache keys to DB 1 or queue tasks to DB 0 to avoid cache evictions clearing job queues.
+- **Redis DB 2**: Dedicated strictly to the Context Lake (`SessionMemory`, `TraceStore`, `ContextAccumulator`).
+- **Redis DB 3**: Dedicated strictly to `SemanticCache` L2 persistent cache.
+- **Redis DB 4**: Dedicated strictly to `HITLService` low-confidence review queue.
+- **Rule**: Never cross-post keys between DB partitions (e.g. sending cache keys to DB 1 or queue tasks to DB 0) to avoid cache evictions clearing job queues or corrupting conversational state.
 
 ## 4. Model Cache Volume Persistence
 - When starting Docker containers, ensure `HF_HOME=/app/models` is mounted to persistent volume `model_cache`.
@@ -46,7 +49,7 @@ Critical technical gotchas, anti-patterns, and environment constraints to keep i
 - **Anti-pattern**: Never use `anthropic/` with `GATEWAY_PROXY_URL`. When LiteLLM detects `anthropic/`, it switches to Anthropic native protocol and appends `/v1/messages` to `api_base`, generating duplicate paths like `http://100.83.192.30:8045/v1/v1/messages` (Protocol: Claude) and causing immediate **HTTP 404 Not Found (0ms)** errors on the proxy.
 
 ## 9. The Semantic Cache Latency Illusion (Cold-Cache vs Cached SLAs)
-- **Trap**: Performance benchmarks and latency tests for LLM calls / fallback chains may falsely report fast response times (e.g., < 3.0s) because subsequent calls hit `SemanticCache` (Redis DB 0) from previous test runs.
+- **Trap**: Performance benchmarks and latency tests for LLM calls / fallback chains may falsely report fast response times (e.g., < 3.0s) because subsequent calls hit `SemanticCache` (Redis DB 3) or LiteLLM cache (Redis DB 0) from previous test runs.
 - **Consequence**: When a cold query arrives or the service restarts, a broken upstream model may trigger retries (e.g., 3 retries × 20s = 60s), causing silent `ReadTimeout` crashes.
 - **Rule**: Always benchmark latency on **Cold Cache** using unique dynamic UUID prompts (`f"UUID_{uuid.uuid4().hex[:6]} ..."`) or cache-bypass headers. Never trust warm cached calls as SLA proof.
 
