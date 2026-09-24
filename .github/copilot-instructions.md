@@ -56,7 +56,7 @@ Frontend(:5173) → RAG Service(:8005) → Milvus + Neo4j + AI Gateway(:8090) �
 - Components in `src/components/`, reusable atoms in `src/components/ui/`
 - **Tailwind CSS 4** (utility-first, no component library)
 - API client in `src/lib/` — `api.ts` (REST) + `streamClient.ts` (SSE). Base URL from `VITE_API_URL`
-- Graph visualization via `react-force-graph`, Markdown rendering via `react-markdown` + `remark-gfm`
+- Graph visualization via `react-force-graph-2d`, Markdown rendering via `react-markdown` + `remark-gfm`
 - **No test runner** — validated via lint + build in CI
 
 ## Build and Test

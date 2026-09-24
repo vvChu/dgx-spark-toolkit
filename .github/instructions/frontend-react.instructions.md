@@ -27,8 +27,8 @@ applyTo: "services/frontend/**/*.{ts,tsx}"
 - Animations via `framer-motion`, icons via `lucide-react`
 
 ### Visualization
-- Knowledge graph: `react-force-graph` / `react-force-graph-2d`
+- Knowledge graph: `react-force-graph-2d`
 - Markdown rendering in chat: `react-markdown` + `remark-gfm`
 
 ## Stack
-React 19, Vite 7, TypeScript 5.9. No test runner — validate via `npm run lint && npm run build`.
+React 19, Vite 7, TypeScript 5.9. No test runner — validate via `npm run lint && npm run typecheck && npm run build`.

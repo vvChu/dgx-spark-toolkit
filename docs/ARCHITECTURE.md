@@ -46,7 +46,7 @@ LiteLLM proxy instance configured via `litellm_config.yaml`:
 ### 4. Frontend (`services/frontend/`)
 Single-page application built with React 19, Vite 7, and Tailwind CSS 4:
 - API integration: `src/lib/api.ts` (REST) and `src/lib/streamClient.ts` (SSE).
-- Graph visualization: `react-force-graph`.
+- Graph visualization: `react-force-graph-2d`.
 - Markdown rendering: `react-markdown` + `remark-gfm`.
 
 ## Databases & Persistence
