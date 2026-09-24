@@ -8,7 +8,7 @@
 ## Miền 1: Architecture & Governance
 
 - `RULE-1.1 (Base Branch Invariant)`: Nhánh chính tại Spoke `dgx-spark-toolkit` là `master` (không phải `main`). Mọi lệnh PR (`gh pr create`), merge hoặc sync phải dùng base `master`.
-- `RULE-1.2 (Gateway drop_params)`: Bắt buộc cấu hình `litellm_settings.drop_params: true` toàn cục trong `services/ai-gateway/litellm_config.yaml`. Ngăn chặn hoàn toàn lỗi HTTP 400 `UnsupportedParamsError` khi OpenAI SDK client gửi tham số embedding không tương thích (như `encoding_format: "base64"`) đến backend Gemini Embeddings.
+- `RULE-1.2 (Gateway drop_params)`: Bắt buộc bật `litellm_settings.drop_params: true` trong `services/ai-gateway/litellm_config.yaml`. Chặn lỗi HTTP 400 `UnsupportedParamsError` khi OpenAI SDK gửi tham số embedding không tương thích (`encoding_format: "base64"`) đến Gemini Embeddings.
 - `RULE-1.3 (Reasoning Models Timeout)`: Timeout cho nhóm mô hình suy luận sâu (`claude-opus-4-6-thinking`, `gemini-3.7-flash-high`, `gemini-3.8-flash-high`, v.v.) phải cấu hình tối thiểu $\ge 90.0s$ - $300.0s$ tại cả router và deployment để tránh timeout khi xử lý chuỗi suy luận dài.
 - `RULE-1.4 (Proxy Provider Prefix Invariant)`: Mọi model định tuyến qua Centralized Proxy (`100.83.192.30:8045/v1`) bắt buộc dùng prefix `model: openai/<model-id>` (kể cả Claude). Tuyệt đối không dùng `anthropic/` với proxy endpoint vì LiteLLM sẽ tự thêm `/v1/messages` gây HTTP 404.
 - `RULE-1.5 (Canonical Aliases Sync)`: Cung cấp 3 alias chuẩn hóa (`gemini-flash-latest`, `gemini-reasoning-latest`, `embedding-default`), bắt buộc khai báo đồng thời tại `router_settings.model_group_alias` và `litellm_settings.model_aliases`.
@@ -25,12 +25,13 @@
 
 ## Miền 2: Code Quality & Testing
 
-- `RULE-2.1 (Null Content in Thinking Models)`: Các mô hình suy luận (Gemini 3.8 Flash, Claude Thinking) có thể trả về `choices[0].message.content = None` khi reasoning tokens chiếm toàn bộ quota `max_tokens`. Client parser bắt buộc dùng `(msg.get("content") or "").strip()` và cấu hình `max_tokens` đủ lớn ($\ge 256$) để tránh ngoại lệ `AttributeError: 'NoneType' object has no attribute 'strip'`.
+- `RULE-2.1 (Null Content in Thinking Models)`: Thinking models có thể trả về `choices[0].message.content = None` khi reasoning tokens chiếm hết quota `max_tokens`. Parser bắt buộc dùng `(msg.get("content") or "").strip()` và cấu hình `max_tokens >= 256` để tránh crash `NoneType`.
 - `RULE-2.2 (Spoke Cleanliness Guard)`: Thư mục `scripts/` khống chế nghiêm ngặt $\le 15$ tệp tin hợp lệ. Các script legacy/tạm thời phải dọn dẹp và lưu trữ vào `.md/archive/legacy_scripts/`.
 - `RULE-2.3 (Shift-Left Determinism)`: Trước khi commit hoặc release, bắt buộc thực thi bộ kiểm chuẩn `.venv/bin/python -m ccba_harness verify-patch` với 4 chốt chặn cục bộ (Cleanliness, Import Depth, Flake8, Gateway Live Endpoints).
-- `RULE-2.4 (Poison Budget Elimination in Gemini 3.x)`: Gửi tham số `thinking_budget < 2048` (đặc biệt là hardcode `1000`) khiến Gemini 3.x đánh giá không gian tư duy không đủ và tự động tắt hoàn toàn luồng suy luận (reasoning tokens = 0). Cần thiết lập `control_source = "gateway"` để gateway tự động chuẩn hóa budget an toàn ($\ge 10001$ cho Pro, $\ge 16384$ cho Flash High).
+- `RULE-2.4 (Poison Budget Elimination in Gemini 3.x)`: Gửi `thinking_budget < 2048` (như hardcode `1000`) khiến Gemini 3.x tắt hẳn luồng suy luận (`reasoning tokens = 0`). Đặt `control_source = "gateway"` để gateway tự chuẩn hóa budget an toàn ($\ge 10001$ cho Pro, $\ge 16384$ cho Flash High).
 - `RULE-2.5 (Vector DB Parity Lock)`: Kiểm toán RAG bắt buộc chốt chặn Parity: `set(exported_doc_ids) - set(indexed_doc_ids) == empty`. Lấy mẫu ngẫu nhiên (sampling) chỉ đo chất lượng chunk, không bảo đảm tính toàn vẹn của danh mục tài liệu.
 - `RULE-2.6 (Pre-Lock Validation Invariant)`: Mọi tham số timeout/config phải parse và kiểm tra trước khi acquire lock mutex trong async worker. Bọc dispatch worker trong try-except để giải phóng lock ngay nếu lỗi, triệt tiêu 100% rủi ro deadlock.
+- `RULE-2.7 (Vite ManualChunks & AnimatePresence Key)`: Lazy import đơn lẻ không đủ hạ bundle < 300 kB nếu tab mặc định nạp vendor lớn; bắt buộc tách vendor bằng `manualChunks` (`vite.config.js`). Direct child trong `<AnimatePresence mode="wait">` bắt buộc gán `key` riêng (tránh `getChildKey=""` nuốt exit animation); fallback của `<Suspense>` dùng `<div>` thuần (cấm `<motion.div>`) kèm `role="status"`.
 
 ---
 
@@ -44,7 +45,8 @@
 
 - `RULE-4.1 (GitHub Actions Billing Fallback)`: Khi runner GitHub Actions bị gián đoạn ở tầng dispatch do hạn mức tài khoản (`billing & plans spending limit`), đối chiếu annotation để xác nhận và sử dụng Shift-Left Local Quality Gate làm căn cứ nghiệm thu tin cậy, không suy đoán sai lệch sang lỗi mã nguồn.
 - `RULE-4.2 (Copilot Review Verification)`: Mọi review từ bot/Copilot (`PRR_...`) phải được đối soát và giải trình minh bạch tại `.md/knowledge/reports/walkthrough.md`.
-- `RULE-4.3 (GitHub PR Merge In-Progress Recovery)`: Khi `gh pr merge` gặp lỗi `GraphQL: Merge already in progress` (HTTP 405) sau sự cố kết nối gián đoạn (502 Bad Gateway), GitHub đang giữ transaction lock tạm thời trên PR. Tuyệt đối không force-push hay hủy branch; chờ 10-20 giây cooldown rồi hoàn tất merge trực tiếp qua REST API: `gh api -X PUT repos/{owner}/{repo}/pulls/{number}/merge -f merge_method=squash`.
+- `RULE-4.3 (GitHub PR Merge In-Progress Recovery)`: Khi `gh pr merge` lỗi `GraphQL: Merge already in progress` (HTTP 405 do 502 Bad Gateway), GitHub giữ transaction lock. Không force-push/hủy branch; chờ 10-20s rồi merge qua REST API: `gh api -X PUT repos/{owner}/{repo}/pulls/{number}/merge -f merge_method=squash`.
+- `RULE-4.4 (Idempotent Label Provisioning)`: Khâu claim issue gán nhãn `in-progress` (`gh issue edit --add-label`) phải idempotent: chạy `gh label create in-progress --force --color fbca04 2>/dev/null || true` trước khi gán để tránh lỗi thiếu nhãn.
 
 ---
 
@@ -52,8 +54,8 @@
 
 - `RULE-5.1 (Python Executable Ambiguity)`: Trên môi trường Ubuntu/Linux, lệnh `python` không tồn tại mặc định. Mọi pre-commit hooks, scripts và lệnh tự động hóa phải gọi tường minh `python3` hoặc `.venv/bin/python`.
 - `RULE-5.3 (Headless Tauri GUI Daemon)`: App Tauri systemd user service trên Linux không gán cứng `DISPLAY=:11.0`. Khởi chạy qua `/usr/bin/xvfb-run -a <binary> --minimized` cấp virtual display RAM độc lập, bật `loginctl enable-linger <user>` để daemon chạy 24/7 sau reboot.
-- `RULE-5.4 (PR Release Synchronization Cycle)`: Sau khi PR được squash & merge trên GitHub và remote branch bị xóa, local `master` cần thực hiện chu trình đồng bộ hoàn tất: checkout `master` $\rightarrow$ `git pull origin master` (fast-forward) $\rightarrow$ `git branch -D <branch>` $\rightarrow$ `git fetch --prune` để dọn sạch tracking branches mồ côi.
-- `RULE-5.5 (Headless Watchdog Metric Aggregation)`: Trong môi trường containerized watchdog (`smart-watchdog`), các chỉ số phần cứng máy chủ (SoC Temp, RAM, NVMe) có thể đọc trực tiếp từ `/proc/meminfo`, `shutil.disk_usage('/')`, `/sys/class/thermal` mà không cần quyền root hay cài đặt thêm driver nặng. Kết hợp truy vấn qua mạng nội bộ IP Tailscale để thu thập metrics và token stats của các desktop daemon chạy trên host.
+- `RULE-5.4 (PR Release Sync & Fast-Forward Reconciliation)`: Chu trình sau squash-merge: checkout `master` $\rightarrow$ `git pull origin master` (nếu lỗi phân kỳ: đối soát `git diff master origin/master` rồi `git reset --hard origin/master`) $\rightarrow$ `git branch -D <branch>` $\rightarrow$ `git fetch --prune` dọn sạch tracking branches.
+- `RULE-5.5 (Headless Watchdog Metric Aggregation)`: Containerized watchdog (`smart-watchdog`) đọc metrics SoC Temp, RAM, NVMe trực tiếp từ `/proc/meminfo`, `shutil.disk_usage('/')`, `/sys/class/thermal` không cần root/driver. Thu thập metrics daemon host qua IP Tailscale.
 - `RULE-5.6 (Blackwell GB10 Unified Memory SMI Query)`: Trên GPU Grace Blackwell (GB10 128GB Unified Memory), `nvidia-smi --query-gpu=memory.total,memory.used` trả về `[N/A]`. Script giám sát bắt buộc truy vấn qua `nvidia-smi --query-compute-apps=process_name,used_memory`, cộng dồn tiến trình tính toán và gán nhãn `128 GB Unified Memory`.
 - `RULE-5.7 (WAL-Safe SQLite Container Disaster Recovery)`: Nâng cấp container dùng SQLite WAL (Open WebUI) bắt buộc dùng API `sqlite3.backup()` trực tiếp trong container để kết xuất snapshot trước khi tarball. Rollback khẩn cấp dùng `alpine:latest` mount volume xóa sạch `-wal`/`-shm` cũ và khôi phục snapshot trước khi up lại bản cũ.
 
