@@ -424,7 +424,7 @@ class DocumentIngestionPipeline:
             payload = {
                 "model": RELATIONSHIP_MODEL,
                 "messages": [
-                    {"role": "system", "content": "Extract relationships between documents as JSON: replaces, amends, references."},
+                    {"role": "system", "content": "Extract relationships between documents as JSON: replaces, amends, references, guides."},
                     {"role": "user", "content": f"Extract relationship JSON:\n\n{text[:4000]}"}
                 ],
                 "max_tokens": 2048,
@@ -432,10 +432,18 @@ class DocumentIngestionPipeline:
             }
             resp = self._http_client.post(self.vision.api_url, json=payload, headers={"Authorization": f"Bearer {self.vision.api_key}"})
             resp.raise_for_status()
-            return extract_json_from_response(resp.json()) or {"replaces": [], "amends": [], "references": []}
+            parsed = extract_json_from_response(resp.json())
+            if isinstance(parsed, dict):
+                return {
+                    "replaces": [str(x).strip() for x in (parsed.get("replaces") or []) if x and str(x).strip()],
+                    "amends": [str(x).strip() for x in (parsed.get("amends") or []) if x and str(x).strip()],
+                    "references": [str(x).strip() for x in (parsed.get("references") or []) if x and str(x).strip()],
+                    "guides": [str(x).strip() for x in (parsed.get("guides") or []) if x and str(x).strip()],
+                }
+            return {"replaces": [], "amends": [], "references": [], "guides": []}
         except Exception as e:
             logger.warning(f"Relationship extraction fallback: {e}")
-            return {"replaces": [], "amends": [], "references": []}
+            return {"replaces": [], "amends": [], "references": [], "guides": []}
 
     # ── Runner Loop ───────────────────────────────────────────────────
 
