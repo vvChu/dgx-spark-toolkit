@@ -27,10 +27,6 @@ triggers:
 - self-correction
 - map reduce
 - multi turn memory
-- cold-cache
-- multi-key validation
-- vector-db parity
-- bilingual query cleaning
 ---
 
 # LLM Pipeline Patterns
@@ -460,53 +456,45 @@ def extract_last_exchange(file_content: str, max_chars: int = 4_000) -> dict[str
 
 ---
 
-## Pattern 15: Cold-Cache Benchmark & Multi-Key Cross-Validation
+## Pattern 15: Two-Tier Multimodal Noise Defense (Deterministic Pre-Filter & Cognitive Gate)
 
 ### Vấn đề
-1. **Cold-Cache Illusion**: Đo lường latency trên pipeline có Semantic Cache bị đánh lừa bởi kết quả lưu tạm của lần chạy trước. Khi chạy thực tế trên truy vấn mới (Cold Cache), mô hình upstream lỗi khiến gateway retry 3 × 20s = 60s, gây timeout crash toàn bộ dịch vụ.
-2. **Multi-Key Asymmetry**: Thử nghiệm model trên 1 API key cũ chạy tốt (200 OK), nhưng khi triển khai vào pool round-robin, các key mới hơn bị lỗi 404 Not Found (do Google khai tử model đối với tài khoản mới) hoặc lỗi 503 (bóp tải theo thời điểm).
+Khi tự động hóa quá trình nạp dữ liệu đa phương thức (Multimodal Ingestion: Video, Audio, Podcast, Tài liệu Scan/Hình ảnh) vào LLM pipeline:
+1. **Scaffolding & Infinite Stream Bloat**: Các nền tảng đa phương tiện (như YouTube) có thể trả về các luồng phụ đề rác (như `live_chat` chứa hàng nghìn dòng mã JSON/HTML giao diện web) hoặc livestream vô tận (`is_live: True`), gây tràn ngân sách tokens và làm sập bước Map-Reduce.
+2. **Asset Pollution by Decorative Media**: Nhiều tài liệu hoặc podcast sử dụng hình nền tĩnh lặp đi lặp lại (phong cảnh, tán cây, màn hình chờ, chân dung người nói). Nếu trích xuất mù quáng, kho lưu trữ assets sẽ bị ngập trong hàng trăm ảnh rác vô giá trị tri thức.
 
-### Giải pháp
+### Giải pháp: Phân Tầng Phòng Vệ Kép (Deterministic Pre-Filter + Cognitive Gate)
+
 ```
-Validation Routine:
-  Step 1: Test Cold Cache -> Dùng Prompt ngẫu nhiên f"UUID_{uuid.uuid4().hex[:6]} ...".
-  Step 2: Cross-Key Audit  -> Gửi request trực tiếp đến ít nhất 3 API Keys khác nhau trong pool.
-  Step 3: Phân tầng SLA    -> 
-           - Real-time RAG (Rewrite, Timeline, Rerank): Yêu cầu SLA < 2s.
-             Ưu tiên: claude-haiku-4 (1.2s) -> rag-core on-premise GPU (0.25s).
-           - Batch Offline (OCR, Summarization dài): Dùng gemini-3.1-flash-lite / ocr-primary.
+Raw Media Stream ──► [TẦNG 1: BỘ LỌC TẤT ĐỊNH (Zero-Token)]
+                           │
+             ┌─────────────┴─────────────┐
+             ▼ (Rác/Trùng lặp)           ▼ (Hợp lệ & Khác biệt)
+      [Drop / Abort]            [TẦNG 2: CỔNG NHẬN THỨC (Vision/Audio SLM)]
+                                         │
+                           ┌─────────────┴─────────────┐
+                           ▼ (Ảnh trang trí/Podcast)    ▼ (Slide/Sơ đồ/Kiến trúc)
+                   [KEY_FRAMES: []]            [High-Res Seek & WebP Embed]
+                           │                                   │
+                           ▼                                   ▼
+                   (Chỉ nạp văn bản)                   (Nhúng vào Concept Note)
 ```
+
+### Triển khai Tham Khảo
+1. **Tầng 1 — Bộ lọc tất định (Zero-Token / Mathematical Pre-Filter)**:
+   - **Stream Validation**: Kiểm tra cờ `is_live` để ngắt sớm các luồng livestream vô tận; lọc bỏ các MIME-type phụ đề không phải thoại (`live_chat`, `live_chat_replay`).
+   - **DOM Sanitization**: Sử dụng Regex quét nhanh thẻ HTML/DOM rác (`<div`, `<span`, `yt-formatted-string`) để tự động hủy fetch trước khi đưa vào pipeline.
+   - **Perceptual Hashing (pHash)**: Tính fingerprint hình ảnh (Average Hash / pHash) và tính khoảng cách Hamming. Loại bỏ các khung hình có khoảng cách Hamming $< 2$ (loại bỏ $\ge 90\%$ ảnh nền tĩnh chỉ trong vài mili-giây).
+
+2. **Tầng 2 — Cổng nhận thức (Cognitive Gate / Context-Aware Visual Judge)**:
+   - Đưa các khung hình độc lập còn lại vào mô hình thị giác nhẹ (như `gemini-3.8-flash-high`) kèm chỉ dẫn phủ định (Negative Constraints).
+   - Nếu hình ảnh chỉ là ảnh phong cảnh, ảnh chân dung người nói $\rightarrow$ Model bắt buộc xuất `KEY_FRAMES: []` (từ chối lưu trữ).
+   - Nếu hình ảnh chứa sơ đồ hệ thống, bảng biểu, công thức hoặc slide bài giảng $\rightarrow$ Model phê duyệt danh sách indices, kích hoạt trích xuất độ phân giải cao (HD 1280x720) và sinh Alt-Text ngữ nghĩa.
 
 ### Key Invariants
-1. **Zero Trust in Warm Latency**: Mọi kết quả đo kiểm SLA LLM chỉ có giá trị khi chứng minh được cache bypass hoặc sinh prompt UUID độc bản.
-2. **Minimum 3-Key Quorum**: Tuyệt đối không phê duyệt model mới vào file cấu hình gateway nếu chưa vượt qua kiểm thử đồng thời trên $\ge 3$ tài khoản khác nhau trong pool.
-3. **Hard Real-Time Ceilings**: Các khâu nằm trên critical path của người dùng (Query Rewriter, Timeline Graph, Search Rerank) phải khống chế timeout $\le 2.0\text{s} - 4.0\text{s}$ và có fallback on-premise GPU ngay lập tức.
-4. **Lazy Lock Loop Binding**: Các biến đồng bộ asyncio (như `asyncio.Lock`) dùng cho bộ nhớ đệm trong module phải được khởi tạo lazy ở hàm gọi đầu tiên, tránh lỗi `RuntimeError: Task attached to a different loop`.
-
----
-
-## Pattern 16: End-to-End Vector DB Parity Gate & Ingestion Guards
-
-### Vấn đề
-Audit tool chỉ query mẫu ngẫu nhiên (`limit=2000`) các parent chunks từ vector database để chấm điểm nội dung. Khi một file tài liệu bị sót hoàn toàn (ví dụ 641 chunks của một thông tư chưa từng được nạp), audit tool vẫn chấm 95-100 điểm vì các chunks được lấy mẫu đều sạch, tạo ra điểm mù kiểm toán nghiêm trọng. Đồng thời, exporter sinh file ẩn trên Linux hoặc lỗi serialize dataclass làm mất dữ liệu âm thầm.
-
-### Giải pháp
-```python
-# Bắt buộc đối soát Parity giữa Kho Dữ Liệu Xuất Khẩu và Vector DB:
-json_doc_ids = set(doc["doc_id"] for doc in exported_json_files)
-indexed_doc_ids = set(row["doc_id"] for row in vector_db.query(output_fields=["doc_id"], limit=16384))
-
-missing_docs = json_doc_ids - indexed_doc_ids
-if missing_docs:
-    logger.error(f"Parity Violation: Missing {len(missing_docs)} documents in Vector DB: {missing_docs}")
-    penalties += 25  # Trừ điểm nặng hoặc Fail Gate ngay lập tức
-```
-
-### Key Invariants
-1. **Set Parity Precedes Quality Scoring**: Kiểm tra tập hợp tài liệu (`json_doc_ids - indexed_doc_ids == empty`) là điều kiện tiên quyết trước khi tính toán các chỉ số thống kê chất lượng chunk.
-2. **Heavy Penalty on Missing Documents**: Bất kỳ tài liệu nào bị sót trong Vector DB phải chịu mức phạt tối thiểu $\ge 25$ điểm trên thang 100, ngăn chặn việc đạt điểm Pass giả tạo.
-3. **Safe File Naming Protection**: Mọi trình xuất dữ liệu phải loại bỏ tiền tố dấu chấm (`.lstrip('.')`) để tránh tạo ra file ẩn trên Linux làm vô hiệu hóa bộ thu thập dữ liệu.
-4. **In-Flight Document Dedup**: Các luồng làm giàu ngữ cảnh đồ thị (timeline summary) trong truy vấn phải đệm theo `doc_number` để tránh gọi LLM lặp lại cho các chunk cùng nguồn tài liệu.
+1. **Fail-Fast Stream Abort**: Mọi luồng đa phương tiện không có ranh giới kết thúc xác định (`is_live`) phải bị từ chối ngay ở tầng transport.
+2. **Mathematical Dedup Before LLM Tokens**: Không bao giờ gửi hàng trăm khung hình thô lên Vision API; bắt buộc chạy pHash để cô đọng số lượng frames xuống mức tối thiểu ($\le 5-10$ frames).
+3. **Explicit Refusal Protocol**: Cổng nhận thức bắt buộc phải có cơ chế từ chối chủ động (`KEY_FRAMES: []`) để bảo toàn tính nguyên chất của kho tri thức và đồ thị Zettelkasten.
 
 ---
 
@@ -516,7 +504,6 @@ if missing_docs:
 |---|---|---|
 | Deep reasoning & synthesis | `claude-opus-4-6-thinking` | Port 8090 / Spark, deep academic reasoning, Map-Reduce Reduce phase |
 | Fast JIT Map / Interactive | `gemini-3.8-flash-high` | Port 8090, ~2s ultra-fast response, JIT URL Map phase, auto-downgrade fallback |
-| Real-time RAG (Rewrite / Timeline / Rerank) | `claude-haiku-4` $\rightarrow$ `rag-core` | Enterprise Proxy (1.2s) fallback DGX Spark GB10 GPU (0.25s), SLA < 2.0s |
 | OCR / Vision extract | `ocr-primary` (Gemini Flash) | Fast, cheap, multimodal |
 | Draft synthesis (Pass 1) | `qwen-local-primary` | Fast local GPU, Vietnamese |
 | Quality check (Pass 2) | `reasoning-gemma` / `claude-sonnet-thinking` | Precision verify |
@@ -540,10 +527,7 @@ if missing_docs:
 | Zero-Broken-Link Fallbacks | `D:\VvC_Notes\scripts\services\diagram_base.py` + workers |
 | Heading-Aware Map-Reduce | `D:\VvC_Notes\scripts\core\text_chunker.py` |
 | Conditional Multi-turn Memory | `D:\VvC_Notes\scripts\services\command\coordinator.py` |
-| Cold-Cache & SLA Fallback | (Spoke: dgx-spark-toolkit) `services/rag-service/retrieval/query_rewriter.py` + `search_pipeline.py` |
-| Vector DB Parity Gate | (Spoke: dgx-spark-toolkit) `services/rag-service/scripts/comprehensive_audit.py` |
-| Synthetic Query Sanitizer | (Spoke: dgx-spark-toolkit) `services/rag-service/scripts/clean_synthetic_queries.py` |
-| Safe Data Exporter | (Spoke: dgx-spark-toolkit) `services/rag-service/ingestion/exporter.py` |
+| Two-Tier Multimodal Noise Defense | `D:\VvC_Notes\scripts\services\youtube\transcript.py` + `visual_extractor.py` |
 
 ## Bất Biến Vận Hành & Khóa Cứng Hoàn Tất (ADR-0058)
 * **Tiêu chí hoàn thành tất định:** Mọi thay đổi mã nguồn, kỹ năng hoặc tài liệu bắt buộc phải vượt qua bộ kiểm thử tự động.
