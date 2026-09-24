@@ -9,7 +9,7 @@ This skill provides agents with the knowledge and tools to manage **vLLM model s
 
 | Model | Alias | Port | Container | VRAM | Status |
 |-------|-------|------|-----------|------|--------|
-| Qwen3.5 35B | `rag-core` | 8004 | `qwen35b` | ~35GB (50G limit) | ✅ MoE + FlashInfer + Tool Calling |
+| Qwen3.5 35B | `rag-core` | 8004 | `qwen36b` | ~35GB (50G limit) | ✅ MoE + FlashInfer + Tool Calling |
 | Qwen3.5 9B AWQ | `rag-light` | 8003 | `qwen3-9b` | ~10GB | ✅ Fast Fallback (AWQ 4-bit) |
 
 > **Tip**: ALWAYS use functional aliases (**rag-core**, **rag-light**) instead of hardcoded model names in your code and requests.
@@ -61,16 +61,16 @@ Key metrics:
 ### Container Crashed / Exited
 ```bash
 # Check crash logs
-docker logs qwen35b --tail 50
+docker logs qwen36b --tail 50
 
 # Restart the 35B container
-docker restart qwen35b
+docker restart qwen36b
 ```
 
 ### Out of Memory
 If VRAM is exhausted or fragmented:
 ```bash
-docker restart qwen35b   # Restart 35B to clear cache
+docker restart qwen36b   # Restart 35B to clear cache
 nvidia-smi               # Verify free memory
 ```
 
@@ -93,12 +93,12 @@ python3 benchmark_qwen35b.py
 
 ```bash
 # Qwen 3.5 35B (Optimized for GB10 — via docker-compose)
-# Managed by docker-compose.yml service: vllm-35b
+# Managed by docker-compose.yml service: vllm-36b
 # Key params: gpu-memory-utilization=0.50, max-model-len=24576, kv-cache-dtype=fp8
-docker compose up -d vllm-35b
+docker compose up -d vllm-36b
 
 # Direct run (reference only):
-docker run -d --name qwen35b --gpus all -p 8004:8000 \
+docker run -d --name qwen36b --gpus all -p 8004:8000 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -e SERVED_MODEL_NAME=rag-core \
   -e PORT=8000 \
