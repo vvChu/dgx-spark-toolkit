@@ -29,6 +29,7 @@ Run from `services/frontend/`:
 cd services/frontend
 npm ci          # Clean install dependencies
 npm run lint    # ESLint verification
+npm run typecheck # TypeScript static type verification
 npm run build   # Production build with 4GB heap allocation
 npm run dev     # Start local development server
 ```
@@ -53,7 +54,7 @@ python3 services/rag-service/scripts/comprehensive_audit.py
 
 On every push or PR to `master`, CI executes 3 parallel jobs:
 1. **`backend-tests`**: Python 3.12, installs `requirements-ci.txt` (excluding heavy GPU packages like torch/surya), executes `pytest tests/ -v --timeout=60`.
-2. **`frontend-build`**: Node 20, runs `npm ci && npm run lint && npm run build`.
+2. **`frontend-build`**: Node 20, runs `npm ci && npm run lint && npm run typecheck && npm run build`.
 3. **`lint`**: Executes `flake8` on the RAG service with `--max-line-length=150`.
 
 ## Environment Variables

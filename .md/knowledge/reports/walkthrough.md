@@ -2,8 +2,8 @@
 
 ## 1. Tóm Tắt Tác Vụ (Executive Summary)
 
-- **Mục tiêu**: Loại bỏ phụ thuộc zombie `react-force-graph` (phiên bản 3D WebGL không được sử dụng) trong `services/frontend`, giải phóng dung lượng đĩa `node_modules`, xóa bỏ chuỗi lỗ hổng bảo mật `got < 11.8.5`, bổ sung script `typecheck`, và đồng bộ hóa tài liệu hệ thống.
-- **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN (100% SUCCESS)**.
+- **Mục tiêu**: Loại bỏ phụ thuộc zombie `react-force-graph` (phiên bản 3D WebGL không được sử dụng) trong `services/frontend`, giải phóng dung lượng đĩa `node_modules`, xóa bỏ chuỗi lỗ hổng bảo mật `got < 11.8.5` và dependency git+ssh (`three-bmfont-text`), bổ sung script `typecheck` vào cả package lẫn GitHub Actions CI, và đồng bộ hóa toàn diện tài liệu hệ thống.
+- **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN (100% SUCCESS — ĐÃ ĐƯỢC DEEPINVESTIGATOR THẨM ĐỊNH)**.
 - **Branch**: `chore/prune-unused-react-force-graph`.
 
 ---
@@ -12,10 +12,11 @@
 
 | Chỉ số | Trước khi dọn dẹp | Sau khi dọn dẹp | Mức độ cải thiện |
 |---|---|---|---|
-| **Số package `node_modules`** | 432 packages | 344 packages | **Giảm 88 packages** (-20.4%) |
+| **Số package `node_modules`** | 432 packages (481 lock entries) | 344 packages (393 lock entries) | **Giảm 88 packages** (-20.4%) |
 | **Dung lượng `node_modules`** | 381 MB | 191 MB | **Tiết kiệm 190 MB** (-49.9%) |
 | **Vulnerabilities (`npm audit`)** | 22 (2 low, 5 mod, 15 high) | 16 (2 low, 3 mod, 11 high) | **Loại bỏ 6 lỗ hổng** (chuỗi `got < 11.8.5` của `aframe`/`three`) |
-| **Scripts kiểm tra TypeScript** | Không có (`vite build` bỏ qua) | `"typecheck": "tsc --noEmit"` | **Bổ sung Typecheck độc lập** |
+| **Git-over-SSH Dependencies** | 1 (`three-bmfont-text` via SSH) | 0 (Không còn phụ thuộc SSH) | **Triệt tiêu nguy cơ fail `npm ci` trong Docker** |
+| **Kiểm tra TypeScript trong CI** | Không có (`vite build` bỏ qua) | `"typecheck": "tsc --noEmit"` | **Bổ sung Typecheck độc lập trên CI & Local** |
 | **Bundle Production Build** | Không đổi (`GraphPanel` 190 kB) | 190 kB chunk riêng biệt | **0 regression**, zero leakage |
 
 ---
@@ -23,23 +24,29 @@
 ## 3. Chi Tiết Các Thay Đổi (Changes Applied)
 
 ### A. Mã nguồn Frontend (`services/frontend/`)
-1. **`package.json`**:
+1. **[`services/frontend/package.json`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/package.json)**:
    - Gỡ bỏ `react-force-graph: "^1.48.2"` khỏi `dependencies`.
-   - Giữ nguyên `react-force-graph-2d: "^1.29.1"` cho [GraphPanel.tsx](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/src/components/GraphPanel.tsx).
+   - Giữ nguyên `react-force-graph-2d: "^1.29.1"` cho [`GraphPanel.tsx`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/src/components/GraphPanel.tsx) (consumer code không cần sửa đổi vì vốn đã dùng bản 2D Canvas).
    - Thêm `"typecheck": "tsc --noEmit"` vào `scripts`.
-2. **`package-lock.json`**:
-   - Đồng bộ tự động bởi npm, loại bỏ 88 packages nặng (`aframe`, `three`, `3d-force-graph*`, `three-render-objects`, v.v.).
+2. **[`services/frontend/package-lock.json`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/package-lock.json)**:
+   - Đồng bộ tự động bởi npm, loại bỏ 88 packages nặng (`aframe`, `three`, `3d-force-graph*`, `three-render-objects`, `three-bmfont-text`...).
 
-### B. Đồng bộ Tài liệu và Scripts Hệ Thống
-1. **[scripts/check_dependency_updates.sh](file:///home/vvc/Codebase/dgx-spark-toolkit/scripts/check_dependency_updates.sh)**:
+### B. Tích Hợp CI Workflow & Đồng Bộ Tài Liệu
+1. **[`.github/workflows/ci.yml`](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/workflows/ci.yml)**:
+   - Bổ sung bước `Type check` (`npm run typecheck`) vào job `frontend-build` để tự động chặn các lỗi kiểu TypeScript trên CI trước khi build.
+2. **[`AGENTS.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/AGENTS.md)**:
+   - Cập nhật dòng 7 thành `npm run lint && npm run typecheck && npm run build`.
+3. **[`docs/DEVELOPMENT.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/DEVELOPMENT.md)**:
+   - Bổ sung lệnh `npm run typecheck` vào phần Frontend Validation và quy trình CI 3 jobs song song.
+4. **[`scripts/check_dependency_updates.sh`](file:///home/vvc/Codebase/dgx-spark-toolkit/scripts/check_dependency_updates.sh)**:
    - Loại bỏ cảnh báo lỗi thời `Note: Do NOT run 'npm audit fix --force' as it forces downgrade of react-force-graph`.
-2. **[docs/ARCHITECTURE.md](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/ARCHITECTURE.md)**:
+5. **[`docs/ARCHITECTURE.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/ARCHITECTURE.md)**:
    - Cập nhật dòng 49 từ `react-force-graph` thành `react-force-graph-2d`.
-3. **[.github/copilot-instructions.md](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/copilot-instructions.md)**:
+6. **[`.github/copilot-instructions.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/copilot-instructions.md)**:
    - Cập nhật dòng 59 từ `react-force-graph` thành `react-force-graph-2d`.
-4. **[.github/instructions/frontend-react.instructions.md](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/instructions/frontend-react.instructions.md)**:
+7. **[`.github/instructions/frontend-react.instructions.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/instructions/frontend-react.instructions.md)**:
    - Cập nhật dòng 30 thành `react-force-graph-2d` và chuẩn hóa lệnh kiểm tra thành `npm run lint && npm run typecheck && npm run build`.
-5. **[.md/knowledge/codebase_architecture_and_mental_model.md](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/knowledge/codebase_architecture_and_mental_model.md)**:
+8. **[`.md/knowledge/codebase_architecture_and_mental_model.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/knowledge/codebase_architecture_and_mental_model.md)**:
    - Cập nhật ma trận phân hệ Frontend Web thành `react-force-graph-2d (HTML5 Canvas)`.
 
 ---

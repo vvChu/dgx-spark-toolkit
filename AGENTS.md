@@ -4,7 +4,7 @@ Vietnamese legal document RAG system running on NVIDIA DGX Spark (GB10 Blackwell
 
 ## Quick Commands
 - **Backend Tests**: `cd services/rag-service && pytest tests/` (see [DEVELOPMENT.md](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/DEVELOPMENT.md))
-- **Frontend**: `cd services/frontend && npm run lint && npm run build`
+- **Frontend**: `cd services/frontend && npm run lint && npm run typecheck && npm run build`
 - **Lint**: `flake8 services/rag-service/ --config=services/rag-service/.flake8`
 - **Ops Workflows**: Use agent slash commands (`/start-all`, `/health`, `/vllm-32k`, `/track-ingestion`)
 
