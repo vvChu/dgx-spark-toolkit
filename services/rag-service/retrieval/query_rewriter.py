@@ -1,6 +1,6 @@
-"""LLM-based query rewriting: standardize legal terms and expand acronyms."""
 import asyncio
 import logging
+import re
 
 import httpx
 
@@ -28,7 +28,7 @@ async def rewrite_query(
     http_client: httpx.AsyncClient | None = None,
     ai_client: AIGatewayClient | None = None,
 ) -> str:
-    """Standardize legal terms and expand acronyms using LLM."""
+    """Standardize legal terms and expand acronyms using LLM with multi-tier timeout."""
     lock = _get_rewrite_lock()
     async with lock:
         if original_query in _query_rewrite_cache:
@@ -40,17 +40,37 @@ async def rewrite_query(
         prompt = QUERY_REWRITE_PROMPT.format(original_query=original_query)
         client = ai_client or get_ai_gateway_client(http_client)
 
-        rewritten = await client.complete(
-            [{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=100,
-        )
-        rewritten = rewritten.strip('"')
-        async with lock:
-            if len(_query_rewrite_cache) >= 1000:
-                _query_rewrite_cache.pop(next(iter(_query_rewrite_cache)))
-            _query_rewrite_cache[original_query] = rewritten
-        return rewritten
+        rewritten = ""
+        # Tier 1: gemini-3.5-flash-lite (1.8s timeout)
+        try:
+            rewritten = await asyncio.wait_for(
+                client.complete(
+                    [{"role": "user", "content": prompt}],
+                    model="claude-haiku-4",
+                    model_chain=["claude-haiku-4", "rag-core"],
+                    temperature=0.0,
+                    max_tokens=256,
+                    timeout=2.0,
+                ),
+                timeout=2.0,
+            )
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.debug(f"Query rewrite (claude-haiku-4 -> rag-core) skipped/timed out: {e}")
+
+        if rewritten and rewritten.strip():
+            # Strip reasoning/thought traces
+            rewritten = re.sub(r'<think>.*?</think>', '', rewritten, flags=re.DOTALL)
+            rewritten = re.sub(r'<thought>.*?</thought>', '', rewritten, flags=re.DOTALL)
+            rewritten = re.sub(r'(?i)Thinking Process:.*?(?=\n\n|\Z)', '', rewritten, flags=re.DOTALL)
+            rewritten = rewritten.strip().strip('"').strip("'")
+
+            if len(rewritten) > 5:
+                async with lock:
+                    if len(_query_rewrite_cache) >= 1000:
+                        _query_rewrite_cache.pop(next(iter(_query_rewrite_cache)))
+                    _query_rewrite_cache[original_query] = rewritten
+                return rewritten
     except Exception as e:
         logger.warning(f"Query rewriting failed: {e}")
+
     return original_query

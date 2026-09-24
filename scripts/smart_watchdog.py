@@ -257,7 +257,7 @@ def check_quota_pool() -> None:
 def get_hardware_metrics() -> str:
     """Collects host RAM, NVMe disk, and SoC thermal metrics."""
     parts = []
-    # 1. RAM via /proc/meminfo
+    # 1. RAM & Swap via /proc/meminfo
     try:
         with open("/proc/meminfo") as f:
             mem_data = {}
@@ -269,6 +269,14 @@ def get_hardware_metrics() -> str:
             avail_gb = int(mem_data["MemAvailable"].split()[0]) / 1024 / 1024
             used_gb = total_gb - avail_gb
             parts.append(f"RAM: {used_gb:.0f}G/{total_gb:.0f}G ({avail_gb:.0f}G trống)")
+
+            swap_tot_kb = int(mem_data.get("SwapTotal", "0").split()[0])
+            swap_free_kb = int(mem_data.get("SwapFree", "0").split()[0])
+            if swap_tot_kb > 0:
+                swap_tot_gb = swap_tot_kb / 1024 / 1024
+                swap_used_gb = (swap_tot_kb - swap_free_kb) / 1024 / 1024
+                swap_pct = (swap_used_gb / swap_tot_gb) * 100
+                parts.append(f"Swap: {swap_used_gb:.1f}G/{swap_tot_gb:.0f}G ({swap_pct:.0f}%)")
     except Exception:
         pass
 
@@ -447,6 +455,64 @@ def check_openwebui_updates() -> None:
         print(f"Update check error: {e}", flush=True)
 
 
+def check_swap_pressure() -> None:
+    """Monitors Swap utilization and sends critical alerts when exceeding safe threshold (25% or 8GB)."""
+    try:
+        with open("/proc/meminfo") as f:
+            mem_data = {}
+            for line in f:
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    mem_data[k.strip()] = v.strip()
+        swap_tot_kb = int(mem_data.get("SwapTotal", "0").split()[0])
+        swap_free_kb = int(mem_data.get("SwapFree", "0").split()[0])
+        avail_kb = int(mem_data.get("MemAvailable", "0").split()[0])
+        avail_gb = avail_kb / 1024 / 1024
+
+        swap_used_gb = 0.0
+        swap_tot_gb = swap_tot_kb / 1024 / 1024 if swap_tot_kb > 0 else 0.0
+        swap_pct = 0.0
+        if swap_tot_kb > 0:
+            swap_used_kb = swap_tot_kb - swap_free_kb
+            swap_pct = (swap_used_kb / swap_tot_kb) * 100
+            swap_used_gb = swap_used_kb / 1024 / 1024
+
+        under_pressure = (swap_pct >= 25.0) or (avail_gb < 6.0 and avail_gb > 0)
+        if under_pressure:
+            redis_url = os.getenv("REDIS_URL", "redis://litellm-redis:6379/1")
+            try:
+                import redis
+                r = redis.Redis.from_url(redis_url, socket_timeout=2)
+                r.set("rag:ingestion:paused", "1", ex=300)
+                print(f"[BACKPRESSURE] Activated rag:ingestion:paused (TTL 300s). Avail RAM: {avail_gb:.1f}GB, Swap: {swap_used_gb:.1f}GB", flush=True)
+            except Exception as rx:
+                print(f"Could not set backpressure redis flag: {rx}", flush=True)
+
+            current_time = time.time()
+            last_alert = getattr(check_swap_pressure, "last_alert_time", 0)
+            if current_time - last_alert >= 900:  # 15 minutes cooldown
+                check_swap_pressure.last_alert_time = current_time
+                title = f"CẢNH BÁO ÁP LỰC BỘ NHỚ: RAM {avail_gb:.1f}G, SWAP {swap_used_gb:.1f}G/{swap_tot_gb:.0f}G ({swap_pct:.0f}%)"
+                body = (
+                    f"⚠️ *DGX Spark đang chịu áp lực bộ nhớ cao!*\n"
+                    f"• RAM khả dụng: `{avail_gb:.1f} GiB` (Ngưỡng an toàn >= 6.0 GiB)\n"
+                    f"• Swap tiêu thụ: `{swap_used_gb:.1f} GiB / {swap_tot_gb:.0f} GiB` (`{swap_pct:.0f}%`)\n"
+                    f"🛑 *Cơ chế Backpressure đã tự động tạm hoãn nhận tài liệu mới vào queue trong 5 phút.*\n"
+                    f"💡 *Gợi ý: Dùng lệnh `/memory` trên Telegram để kiểm tra tiến trình.*"
+                )
+                actions = [
+                    {
+                        "action_id": "inspect_memory",
+                        "label": "🧠 Xem Chi Tiết Bộ Nhớ",
+                        "command": "system.memory",
+                        "params": {},
+                    }
+                ]
+                notify_chatops(title, body, actions=actions, severity="WARNING")
+    except Exception as e:
+        print(f"Error checking swap pressure: {e}", flush=True)
+
+
 def run_watchdog_cycle() -> None:
     """Executes a single check cycle for all monitored components."""
     check_docker_containers()
@@ -454,6 +520,7 @@ def run_watchdog_cycle() -> None:
     check_ai_gateway()
     check_antigravity_tools()
     check_quota_pool()
+    check_swap_pressure()
     check_and_send_daily_digest()
     check_openwebui_updates()
 

@@ -15,15 +15,15 @@ Frontend(:5173) → RAG Service(:8005) → Milvus + Neo4j + AI Gateway(:8090) �
 - **AI Gateway** (`services/ai-gateway/`): LiteLLM proxy routing to local Qwen 3.5 models + cloud fallbacks. External `:8090` → container `:4000`; internal: `http://ai-gateway:4000/v1`
 - **Frontend** (`services/frontend/`): React 19 + Vite 7 + Tailwind CSS 4 (TypeScript)
 - **Retrieval layer** (`services/rag-service/retrieval/`): HyDE, query rewriting, agentic retrieval, graph-timeline retrieval, async reranker, semantic cache, session memory
-- **vLLM models**: `vllm-35b` (Qwen3.5-35B, always-on, 96GB, 32k ctx) + `vllm-4b` (Qwen3.5-9B AWQ, on-demand via `vllm-light` profile, 12GB, 8k ctx)
+- **vLLM models**: `vllm-36b` (Qwen3.5-35B-FP8, always-on, 78GB, 96k ctx) + `vllm-4b` (Qwen3.5-9B AWQ, on-demand via `vllm-light` profile, 12GB, 8k ctx)
 
 ### Key databases
 | DB | Purpose | Collection/Label |
 |---|---|---|
-| Milvus | Vector search (BGE-M3 dense+sparse) | `legal_docs_v9` |
-| Neo4j | Knowledge graph (REPLACES, AMENDS, REFERENCES) | Document nodes |
+| Milvus | Vector search (BGE-M3 dense+sparse) | `legal_docs_v11` |
+| Neo4j | Knowledge graph (REPLACES, AMENDS, REFERENCES, GUIDES) | Document nodes |
 | PostgreSQL | Ingestion state + LiteLLM state | `ingestion_state` table |
-| Redis | DB 0: LiteLLM cache, DB 1: ingestion queue | `ingest:queue` stream |
+| Redis | DB 0: LiteLLM cache, DB 1: Ingestion queue, DB 2: Context Lake, DB 3: SemanticCache L2, DB 4: HITL review queue | `ingest:queue` stream |
 
 ### API Routers (`api/routers/`)
 `search`, `chat`, `chat_stream` (SSE), `admin`, `analysis` (conflict/compliance), `evaluation`, `graph`, `preview`, `stats`, `traces`
@@ -55,7 +55,7 @@ Frontend(:5173) → RAG Service(:8005) → Milvus + Neo4j + AI Gateway(:8090) �
 - **Streaming first**: SSE for chat responses, HTTP POST fallback
 - Components in `src/components/`, reusable atoms in `src/components/ui/`
 - **Tailwind CSS 4** (utility-first, no component library)
-- API client via `axios` in `src/lib/` — `api.ts` (blocking) + `streamApi.ts` (SSE). Base URL from `VITE_API_URL`
+- API client in `src/lib/` — `api.ts` (REST) + `streamClient.ts` (SSE). Base URL from `VITE_API_URL`
 - Graph visualization via `react-force-graph`, Markdown rendering via `react-markdown` + `remark-gfm`
 - **No test runner** — validated via lint + build in CI
 
@@ -100,7 +100,7 @@ Three parallel jobs on push/PR to `master`:
 ## Project Conventions
 
 - **Identity model**: `doc_id` = `namespace/doc_number`, `chunk_id` = `doc_id::p{page}::type_idx` — all stores use these consistently
-- **Two `pipeline.py` files**: root-level `export_postprocessor.py`/`pipeline.py` = post-processing export fixer; `ingestion/pipeline.py` = actual ingestion pipeline (`ProductionIngestor` class)
+- **Two `pipeline.py` files**: root-level `export_postprocessor.py`/`pipeline.py` = post-processing export fixer; `ingestion/pipeline.py` = actual ingestion pipeline (`DocumentIngestionPipeline` class, aliased as `ProductionIngestor`)
 - **Structured LLM output**: Use `response_format={"type": "json_schema", ...}` with Pydantic schema for metadata extraction
 - **Operational scripts** live in `services/rag-service/scripts/` (23+ scripts: audits, migrations, evals, OCR benchmarks, data integrity repairs)
 - **Proper tests** live in `services/rag-service/tests/` — do NOT add one-off test scripts to rag-service root
@@ -125,7 +125,7 @@ Three parallel jobs on push/PR to `master`:
 ## Common Pitfalls
 
 - **GPU packages in CI**: `surya-ocr`, `torch` are excluded from `requirements-ci.txt`. Use `FORCE_CPU_EMBEDDING=1` and `FORCE_CPU_RERANKER=1` for CPU fallback
-- **Redis DB split**: DB 0 = LiteLLM semantic cache, DB 1 = ingestion queue — never mix
+- **Redis DB split**: 5 isolated partitions: DB 0 (LiteLLM cache), DB 1 (Ingestion queue), DB 2 (Context Lake), DB 3 (SemanticCache L2), DB 4 (HITL review queue) — never mix
 - **Model cache volume**: Mount `model_cache:/app/models` with `HF_HOME=/app/models` or Surya (1.3GB) re-downloads on every restart
 - **Frontend build OOM**: Requires `--max-old-space-size=4096` (already in `package.json` build script)
 - **Ingestion stale state**: Jobs stuck in `PROCESSING` if worker crashes (1-hour timeout threshold)

@@ -45,3 +45,46 @@ class TestDocumentIngestionPipeline:
         pipeline = DocumentIngestionPipeline(state_manager=state_mgr)
         # Check fast skip cache
         assert "already_done.pdf" in pipeline.processed_cache
+
+    def test_parse_relationships_llm_includes_guides(self):
+        pipeline = DocumentIngestionPipeline(state_manager=InMemoryStateManager())
+        # Test fallback on exception includes guides
+        with patch.object(pipeline._http_client, "post", side_effect=Exception("network error")):
+            result = pipeline._parse_relationships_llm("test text")
+            assert "guides" in result
+            assert result["guides"] == []
+            assert "replaces" in result
+            assert "amends" in result
+            assert "references" in result
+
+        # Test prompt structure includes guides
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": '{"replaces": [], "amends": [], "references": [], "guides": ["ND/15/2021/ND-CP"]}'
+                }
+            }]
+        }
+        with patch.object(pipeline._http_client, "post", return_value=mock_resp) as mock_post:
+            result = pipeline._parse_relationships_llm("Nghị định này hướng dẫn Luật Xây dựng")
+            assert result["guides"] == ["ND/15/2021/ND-CP"]
+            call_kwargs = mock_post.call_args.kwargs
+            system_msg = call_kwargs["json"]["messages"][0]["content"]
+            assert "guides" in system_msg
+
+        # Test partial and null responses are normalized
+        mock_resp_partial = MagicMock()
+        mock_resp_partial.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": '{"replaces": ["  ND/01/2021  "], "amends": null, "guides": ["  TT/05/2022  ", ""]}'
+                }
+            }]
+        }
+        with patch.object(pipeline._http_client, "post", return_value=mock_resp_partial):
+            res_partial = pipeline._parse_relationships_llm("partial text")
+            assert res_partial["replaces"] == ["ND/01/2021"]
+            assert res_partial["amends"] == []
+            assert res_partial["references"] == []
+            assert res_partial["guides"] == ["TT/05/2022"]

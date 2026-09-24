@@ -331,6 +331,7 @@ class TestReprocessExportsAndDocNumber:
         assert extract_doc_number_from_path("ND15-2021-CP.json") == "15/2021/NĐ-CP"
         assert extract_doc_number_from_path("TT01-2023-TTg.json") == "01/2023/TT-TTg"
         assert extract_doc_number_from_path("/app/exports/json/TT01-2023-BTP.json.bak") == "01/2023/TT-BTP"
+        assert extract_doc_number_from_path("Luat_50-2014-QH13_Luat Xay dung_18-6-2014.pdf") == "50/2014/QH13"
         assert extract_doc_number_from_path("random_notes.md") is None
         assert extract_doc_number_from_path("") is None
 
@@ -435,6 +436,24 @@ class TestReprocessExportsAndDocNumber:
         assert "Điều 2. Quy định chung." in cleaned_heavy
         assert not cleaned_heavy.startswith("\n")
 
+        # OCR prompt echoes and labels
+        ocr_prompt_text = (
+            "* *Draft 1*\n"
+            "* *Character Count Check: 543 characters*\n"
+            "- Ignore logos, watermarks, electronic headers\n"
+            "Did I include all required points?\n"
+            "**[ OCR gán nhầm]** Điều 15. Hỗ trợ phát triển\n"
+            "**[↓ OCR gán nhầm]** Điều 16. Hợp tác quốc tế"
+        )
+        cleaned_ocr = strip_ai_monologue(ocr_prompt_text)
+        assert "Draft 1" not in cleaned_ocr
+        assert "Character Count Check" not in cleaned_ocr
+        assert "Ignore logos" not in cleaned_ocr
+        assert "Did I include" not in cleaned_ocr
+        assert "OCR gán nhầm" not in cleaned_ocr
+        assert "Điều 15. Hỗ trợ phát triển" in cleaned_ocr
+        assert "Điều 16. Hợp tác quốc tế" in cleaned_ocr
+
         # Emojis
         text_emoji = "Điều 1 🔥 nội dung ⚠️ cảnh báo 🚀"
         cleaned_emoji = strip_random_emojis(text_emoji)
@@ -449,6 +468,228 @@ class TestReprocessExportsAndDocNumber:
         fixed = fix_table_gfm_v2(text)
         assert "| STT | Tên mục | Giá trị |" in fixed
         assert "| --- | --- | --- |" in fixed
+
+
+class TestExportDocument:
+    """Fix: export_document properly serializes ProcessedDocument dataclass and handles edge cases."""
+
+    def test_export_document_processed_document(self, tmp_path=None):
+        import tempfile
+        from ingestion.models import ProcessedDocument, DocumentIdentity, DocumentMetadata, Chunk
+        tmp_dir = None
+        if tmp_path is None:
+            tmp_dir = tempfile.TemporaryDirectory()
+            tmp_path = Path(tmp_dir.name)
+        base_dir = str(tmp_path / "exports_dataclass")
+        exporter = DataExporter(base_dir)
+
+        identity = DocumentIdentity(
+            doc_number="01/2026/TT-BXD",
+            namespace="ROOT",
+            content_hash="abc123hash",
+            file_name="doc_01.pdf",
+            rel_path="test/docs/doc_01.pdf",
+        )
+        meta = DocumentMetadata(
+            doc_number="01/2026/TT-BXD",
+            doc_type="THONG_TU",
+            authority="Bộ Xây dựng",
+        )
+        chunks = [
+            Chunk(
+                text="Điều 1. Phạm vi điều chỉnh\nQuy định này áp dụng cho...",
+                source="test/docs/doc_01.pdf",
+                page=1,
+                chunk_type="parent",
+                doc_id="TEST/01/2026",
+                chunk_id="TEST/01/2026:chunk_0",
+                hierarchy_path="[TEST/01/2026] -> [Điều 1.]",
+            )
+        ]
+        doc = ProcessedDocument(
+            identity=identity,
+            metadata=meta,
+            chunks=chunks,
+            summary="Tóm tắt tài liệu thử nghiệm",
+            file_path="test/docs/doc_01.pdf",
+        )
+
+        json_path, md_path = exporter.export_document(doc)
+        assert json_path is not None and json_path.exists()
+        assert md_path is not None and md_path.exists()
+
+        expected_doc_id = identity.doc_id
+        # Check JSON serialization
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["doc_id"] == expected_doc_id
+        assert data["metadata"]["doc_number"] == "01/2026/TT-BXD"
+        assert len(data["chunks"]) == 1
+        assert data["chunks"][0]["doc_id"] == "TEST/01/2026"
+        assert data["chunks"][0]["text"].startswith("Điều 1.")
+        assert data["summary"] == "Tóm tắt tài liệu thử nghiệm"
+
+        # Check MD content
+        md_text = md_path.read_text(encoding="utf-8")
+        assert f"# Document: {expected_doc_id}" in md_text
+        assert "01/2026/TT-BXD" in md_text
+        assert "Điều 1." in md_text
+
+        if tmp_dir:
+            tmp_dir.cleanup()
+
+    def test_export_document_dict_fallback(self, tmp_path=None):
+        import tempfile
+        tmp_dir = None
+        if tmp_path is None:
+            tmp_dir = tempfile.TemporaryDirectory()
+            tmp_path = Path(tmp_dir.name)
+        base_dir = str(tmp_path / "exports_dict")
+        exporter = DataExporter(base_dir)
+
+        class DictLikeDoc:
+            doc_id = "DICT/01/2026"
+            file_path = "dict_doc.pdf"
+            metadata = {"doc_number": "DICT-123"}
+            summary = "Summary dict"
+            chunks = [{"text": "Content", "chunk_type": "parent", "page": 1}]
+
+        doc = DictLikeDoc()
+        json_path, md_path = exporter.export_document(doc)
+        assert json_path is not None and json_path.exists()
+        assert md_path is not None and md_path.exists()
+
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["doc_id"] == "DICT/01/2026"
+        assert data["metadata"]["doc_number"] == "DICT-123"
+
+        if tmp_dir:
+            tmp_dir.cleanup()
+
+    def test_export_document_none_attributes(self, tmp_path=None):
+        """Verify export_document does not crash when metadata, chunks, or summary are None."""
+        import tempfile
+        tmp_dir = None
+        if tmp_path is None:
+            tmp_dir = tempfile.TemporaryDirectory()
+            tmp_path = Path(tmp_dir.name)
+        base_dir = str(tmp_path / "exports_none")
+        exporter = DataExporter(base_dir)
+
+        class NoneDoc:
+            doc_id = "NONE/01/2026"
+            file_path = None
+            source_path = "fallback.pdf"
+            metadata = None
+            summary = None
+            chunks = None
+
+        doc = NoneDoc()
+        json_path, md_path = exporter.export_document(doc)
+        assert json_path is not None and json_path.exists()
+        assert md_path is not None and md_path.exists()
+
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["doc_id"] == "NONE/01/2026"
+        assert data["original_path"] == "fallback.pdf"
+        assert data["metadata"] == {}
+        assert data["summary"] == ""
+        assert data["chunks"] == []
+
+        if tmp_dir:
+            tmp_dir.cleanup()
+
+    def test_export_document_dict_identity(self, tmp_path=None):
+        """Verify export_document handles dictionary identity."""
+        import tempfile
+        tmp_dir = None
+        if tmp_path is None:
+            tmp_dir = tempfile.TemporaryDirectory()
+            tmp_path = Path(tmp_dir.name)
+        base_dir = str(tmp_path / "exports_dict_id")
+        exporter = DataExporter(base_dir)
+
+        class DictIdDoc:
+            identity = {"doc_id": "CUSTOM/IDENTITY/123"}
+            file_path = "test.pdf"
+            metadata = {"doc_number": "123"}
+            summary = "Summary"
+            chunks = []
+
+        doc = DictIdDoc()
+        json_path, md_path = exporter.export_document(doc)
+        assert json_path is not None and json_path.exists()
+
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["doc_id"] == "CUSTOM/IDENTITY/123"
+
+        if tmp_dir:
+            tmp_dir.cleanup()
+
+    def test_export_document_mixed_chunks(self, tmp_path=None):
+        """Verify export_document serializes both Chunk dataclasses and dictionaries."""
+        import tempfile
+        from ingestion.models import Chunk
+        tmp_dir = None
+        if tmp_path is None:
+            tmp_dir = tempfile.TemporaryDirectory()
+            tmp_path = Path(tmp_dir.name)
+        base_dir = str(tmp_path / "exports_mixed")
+        exporter = DataExporter(base_dir)
+
+        class MixedDoc:
+            doc_id = "MIXED/01/2026"
+            file_path = "mixed.pdf"
+            metadata = {"type": "NGHI_DINH"}
+            summary = "Mixed chunks"
+            chunks = [
+                Chunk(text="Chunk 1", source="mixed.pdf", page=1, doc_id="MIXED/01/2026"),
+                {"text": "Chunk 2", "source": "mixed.pdf", "page": 2, "doc_id": "MIXED/01/2026"},
+            ]
+
+        doc = MixedDoc()
+        json_path, md_path = exporter.export_document(doc)
+        assert json_path is not None and json_path.exists()
+
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert len(data["chunks"]) == 2
+        assert data["chunks"][0]["text"] == "Chunk 1"
+        assert data["chunks"][1]["text"] == "Chunk 2"
+
+        if tmp_dir:
+            tmp_dir.cleanup()
+
+    def test_export_document_dot_prefix_not_hidden(self, tmp_path=None):
+        """Verify export_document strips leading dots so it never produces hidden files."""
+        import tempfile
+        tmp_dir = None
+        if tmp_path is None:
+            tmp_dir = tempfile.TemporaryDirectory()
+            tmp_path = Path(tmp_dir.name)
+        base_dir = str(tmp_path / "exports_dot")
+        exporter = DataExporter(base_dir)
+
+        class DotDoc:
+            doc_id = "../52/2019/TT-BCA"
+            file_path = "test.pdf"
+            metadata = {}
+            summary = "Dot prefix"
+            chunks = []
+
+        doc = DotDoc()
+        json_path, md_path = exporter.export_document(doc)
+        assert json_path is not None and json_path.exists()
+        assert md_path is not None and md_path.exists()
+        assert not json_path.name.startswith(".")
+        assert not md_path.name.startswith(".")
+        assert json_path.name == "_52_2019_TT-BCA.json"
+
+        if tmp_dir:
+            tmp_dir.cleanup()
 
 
 def run_all():
@@ -468,6 +709,7 @@ def run_all():
         ("TestChunkingQuality", TestChunkingQuality),
         ("TestGFMTableFix", TestGFMTableFix),
         ("TestBoilerplateStrip", TestBoilerplateStrip),
+        ("TestExportDocument", TestExportDocument),
     ]:
         instance = cls()
         for attr in sorted(dir(instance)):

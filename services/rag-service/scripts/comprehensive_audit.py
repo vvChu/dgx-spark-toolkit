@@ -43,6 +43,44 @@ _VN_DIACRITICS = re.compile(
     re.IGNORECASE,
 )
 
+# AI LEAKAGE PATTERNS (Shared across MD, JSON, Milvus audits)
+_AI_LEAK_PATTERNS = [
+    r"(?im)^\s*Certainly[,!.]",
+    r"(?im)^\s*As an AI\b",
+    r"(?im)^\s*Here is (the|a|an|your|this)\b",
+    r"(?im)^\s*Here's (the|a|an|your|this)\b",
+    r"(?im)^\s*I cannot\b",
+    r"(?im)^\s*I would\b(?! (say|recommend)? rate)",
+    r"(?im)^\s*I'll\b",
+    r"(?im)^\s*I will\b",
+    r"(?i)Xin lỗi, tôi",
+    r"(?i)Dưới đây là.*theo yêu cầu",
+    r"(?i)Tôi xin lỗi",
+    r"(?mi)^\s*[-*]?\s*(?:Did I include|Is the structure|Let's assemble|Let's refine|This looks correct|KHÔNG dùng markdown)",
+    r"(?mi)^\s*[-*]?\s*(?:The\s+)?text starts (?:mid|with item)",
+    r"(?mi)^\s*[-*]?\s*Ignore\b",
+    r"(?mi)^\s*[-*]?\s*.*?\bignore\s+(?:the\s+)?page\s+number",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Draft \d+",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Character [Cc]ount",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Revised Draft|Final Polish|Refined Plan|Mental Outline|Attempt \d+|Review against constraints|Check Constraints|Refining for)",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Rule \d+",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?Exclusion Rules?",
+    r"(?mi)^\s*[-*]?\s*(?:\*\*)?(?:(?:Then\s+)?Article \d+|Arti\s*cle \d+|Text Block \d*|Sub-points?|Looking at sub-points|Points? [0-9a-đA-Đ]+|There are|It contains|Line breaks for|No signatures|Ensure line breaks)\b",
+    r"(?mi)^\s*[-*]?\s*\**\s*(?:Looking at (?:point|Arti\s*cle)|Paragraph \d+ of Arti\s*cle|Heading:\s*\"|First Paragraph:)\**",
+    r"(?mi)^\s*[-*]?\s*\*?\s*\*?(?:Goal:|Structure:|Constraint Check:|Drafting \(Mental\):?)",
+    r"(?mi)^\s*[-*]?\s*\d+\.\s*(?:Summarize|Identify the law)",
+    r"(?mi)^\s*[-*]?\s*\"CHỦ TỊCHQUỐCHỘI\"\s*->",
+    r"(?mi)^\s*[-*]?\s*Let\'s look\b",
+    r"(?mi)^\s*[-*]?\s*IfI?\s+remove the signature blocks",
+    r"(?mi)^\s*[-*]?\s*\*?Point [0-9a-đA-Đ]+:\*?",
+    r"(?mi)^\s*\d+\.\s*(?:Extract the main|Extract the \")",
+    r"(?mi)^\s*[-*]?\s*(?:Points a\), b\)|Point \d+ content|Sub-point [a-z] content)",
+    r"(?mi)\*\*\[\s*[↓↑]?\s*OCR gán nhầm",
+    r"(?i)Thinking Process",
+    r"(?i)Analyze the Request",
+    r"(?i)Tư duy suy luận",
+]
+
 
 def is_valid_synthetic_queries(text: str) -> bool:
     """Validate that synthetic queries are genuine Vietnamese questions."""
@@ -55,6 +93,31 @@ def is_valid_synthetic_queries(text: str) -> bool:
         return False
     if "Thinking Process" in text or "Analyze the Request" in text or "Tư duy suy luận" in text:
         return False
+
+    # Prompt echo and scratchpad leakage markers
+    leak_markers = [
+        "input text:",
+        "input text",
+        "source: [root",
+        "source: [",
+        "likely a regulation",
+        "general market",
+        "content segment",
+        "content:",
+    ]
+    text_lower = text.lower()
+    if any(marker in text_lower for marker in leak_markers):
+        return False
+
+    # Check for English question starters or framing
+    if re.search(r"^(?:What|Who|When|Where|Why|How|Which|Is|Are|Can|Could|Do|Does|Did|Will|Would|Should|Shall)\b", text, re.IGNORECASE):
+        outside = re.sub(r'"[^"]*"|\'[^\']*\'|`[^`]*`', '', text)
+        if not _VN_DIACRITICS.search(outside):
+            return False
+
+    if any(re.search(pat, text) for pat in _AI_LEAK_PATTERNS):
+        return False
+
     if not _VN_DIACRITICS.search(text):
         return False
     return True
@@ -107,6 +170,9 @@ def _has_broken_table(text: str) -> bool:
     return False
 
 
+# (AI LEAKAGE PATTERNS defined above before is_valid_synthetic_queries)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # DIM A — MARKDOWN QUALITY
 # ═════════════════════════════════════════════════════════════════════════════
@@ -127,21 +193,7 @@ def audit_markdown(md_files):
         "encoding_issues": 0,
         "very_short": 0,
     }
-    # Require patterns at start of a sentence/line to avoid false positives
-    # from Vietnamese legal tables that coincidentally contain English phrases
-    ai_patterns = [
-        r"(?im)^\s*Certainly[,!.]",
-        r"(?im)^\s*As an AI\b",
-        r"(?im)^\s*Here is (the|a|an|your|this)\b",
-        r"(?im)^\s*Here's (the|a|an|your|this)\b",
-        r"(?im)^\s*I cannot\b",
-        r"(?im)^\s*I would\b(?! (say|recommend)? rate)",
-        r"(?im)^\s*I'll\b",
-        r"(?im)^\s*I will\b",
-        r"(?i)Xin lỗi, tôi",
-        r"(?i)Dưới đây là.*theo yêu cầu",
-        r"(?i)Tôi xin lỗi",
-    ]
+    ai_patterns = _AI_LEAK_PATTERNS
     boilerplate_re = re.compile(
         r"CỘNG\s+HÒA\s+XÃ\s+HỘI|"
         r"Độc lập\s*[-–—]\s*Tự do\s*[-–—]\s*Hạnh phúc|"
@@ -226,10 +278,13 @@ def audit_json(json_files):
         "missing_root_field": 0,
         "missing_meta_field": 0,
         "no_summary": 0,
+        "summary_ai_leakage": 0,
         "empty_chunks": 0,
         "missing_chunk_field": 0,
         "invalid_doc_id": 0,
         "chunk_no_text": 0,
+        "chunk_ai_leakage": 0,
+        "sq_ai_leakage": 0,
     }
     total_chunks = 0
     chunk_types = Counter()
@@ -259,6 +314,8 @@ def audit_json(json_files):
         summary = data.get("summary", "")
         if not summary or len(summary) < 50:
             issues["no_summary"] += 1
+        elif any(re.search(pat, summary) for pat in _AI_LEAK_PATTERNS):
+            issues["summary_ai_leakage"] += 1
 
         # Chunks
         chunks = data.get("chunks", [])
@@ -278,6 +335,19 @@ def audit_json(json_files):
 
             if not c.get("text", "").strip():
                 issues["chunk_no_text"] += 1
+            elif any(re.search(pat, c.get("text", "")) for pat in _AI_LEAK_PATTERNS):
+                issues["chunk_ai_leakage"] += 1
+
+            sq = c.get("synthetic_queries", "")
+            if sq:
+                sq_lower = sq.lower()
+                if (
+                    any(m in sq_lower for m in ["input text:", "input text", "source: [root", "source: [", "likely a regulation", "content segment", "general market"])
+                    or any(re.search(pat, sq) for pat in _AI_LEAK_PATTERNS)
+                    or bool(re.search(r'\b(?:what|who|where|how|which)\b', sq, re.IGNORECASE))
+                    or "):*" in sq
+                ):
+                    issues["sq_ai_leakage"] += 1
 
             # Strategy from hierarchy_path
             hp = c.get("hierarchy_path", "")
@@ -400,6 +470,12 @@ def audit_chunking(json_files):
     flag_dup = "✅" if dup_excess < total_p * 0.02 else ("🟡" if dup_excess < total_p * 0.05 else "🔴")
     print(f"  {flag_dup} Duplicate parent chunks : {dup_excess}  ({len(dup_fps)} unique fingerprints repeated)")
 
+    child_fps = Counter(hashlib.md5(c.get("text", "").strip().encode()).hexdigest() for c in all_children)
+    child_dup_fps = {h: c for h, c in child_fps.items() if c > 1}
+    child_dup_excess = sum(c - 1 for c in child_dup_fps.values())
+    flag_cdup = "✅" if child_dup_excess < max(total_c * 0.02, 5) else ("🟡" if child_dup_excess < total_c * 0.05 else "🔴")
+    print(f"  {flag_cdup} Duplicate child chunks  : {child_dup_excess}  ({len(child_dup_fps)} unique fingerprints repeated)")
+
     # C6: Synthetic queries coverage
     has_synth = sum(1 for c in all_parents if is_valid_synthetic_queries(c.get("synthetic_queries", "")))
     synth_rate = has_synth / max(total_p, 1)
@@ -427,12 +503,23 @@ def audit_chunking(json_files):
 # ═════════════════════════════════════════════════════════════════════════════
 # DIM D — MILVUS / INGESTION QUALITY
 # ═════════════════════════════════════════════════════════════════════════════
-def audit_milvus(sample_limit: Optional[int] = None):
+def audit_milvus(sample_limit: Optional[int] = None, json_files: Optional[list] = None):
     limit = sample_limit or MILVUS_SAMPLE_LIMIT
     print_section("DIMENSION D: MILVUS INGESTION QUALITY")
 
+    json_doc_ids = set()
+    if json_files:
+        for jf in json_files:
+            try:
+                jdata = json.loads(Path(jf).read_text(errors="replace"))
+                jid = jdata.get("doc_id", "").strip()
+                if jid:
+                    json_doc_ids.add(jid)
+            except Exception:
+                pass
+
     try:
-        from pymilvus import connections, Collection, MilvusClient
+        from pymilvus import MilvusClient
         from core.config import get_settings
     except ImportError:
         print("  ⚠  pymilvus or core.config not available, checking via JSON exports only")
@@ -441,12 +528,13 @@ def audit_milvus(sample_limit: Optional[int] = None):
     client = None
     try:
         s = get_settings()
-        connections.connect(host=s.MILVUS_HOST, port=str(s.MILVUS_PORT))
-        col = Collection(s.MILVUS_COLLECTION)
-        col.load()
         client = MilvusClient(uri=f"http://{s.MILVUS_HOST}:{s.MILVUS_PORT}")
-
-        total = col.num_entities
+        count_res = client.query(
+            collection_name=s.MILVUS_COLLECTION,
+            filter="id >= 0",
+            output_fields=["count(*)"],
+        )
+        total = count_res[0].get("count(*)", 0) if count_res else 0
         print(f"  Total entities in collection: {total:,}")
 
         # Sample parents
@@ -455,10 +543,23 @@ def audit_milvus(sample_limit: Optional[int] = None):
             filter='chunk_type == "parent"',
             output_fields=[
                 "text", "source", "page", "doc_type", "source_category",
-                "is_table", "synthetic_queries", "doc_number", "doc_id",
+                "is_table", "synthetic_queries", "doc_number", "doc_id", "summary",
             ],
             limit=limit,
         )
+
+        # Query all doc_ids in Milvus to check coverage
+        milvus_doc_ids = set()
+        try:
+            doc_id_entities = client.query(
+                collection_name=s.MILVUS_COLLECTION,
+                filter="id >= 0",
+                output_fields=["doc_id"],
+                limit=16384,
+            )
+            milvus_doc_ids = set(r.get("doc_id", "").strip() for r in doc_id_entities if r.get("doc_id"))
+        except Exception as e:
+            print(f"  ⚠ Failed to query doc_ids from Milvus: {e}")
     except Exception as e:
         print(f"  ⚠  Cannot connect to Milvus: {e}")
         return -1
@@ -521,10 +622,40 @@ def audit_milvus(sample_limit: Optional[int] = None):
         "certainly,", "i'll", "i will", "as an ai", "here is",
         "here's", "i cannot", "i would", "xin lỗi", "dưới đây là",
         "thinking process", "analyze the request", "tư duy suy luận",
+        "did i include", "is the structure", "let's assemble",
+        "let's refine", "this looks correct", "character count",
+        "ocr gán nhầm", "ignore ", "ignore handwritten", "ignore seals",
+        "draft ", "attempt ", "mental outline", "check constraints",
+        "review against constraints", "refining for", "revised draft",
+        "final polish", "rule 1", "main text block", "signature block",
+        "extract the main", "exclude \"",
     ]
     leaked = sum(1 for r in res if any(p in r["text"].lower() for p in monologue))
     flag_leak = "✅" if leaked == 0 else ("🟡" if leaked < 3 else "🔴")
     print(f"  {flag_leak} AI monologue leakage   : {leaked}/{n}")
+
+    summary_leaked = sum(1 for r in res if any(p in r.get("summary", "").lower() for p in monologue))
+    flag_sm_leak = "✅" if summary_leaked == 0 else "🔴"
+    print(f"  {flag_sm_leak} Summary monologue leak : {summary_leaked}/{n}")
+
+    sq_leak_markers = [
+        "input text:",
+        "input text",
+        "source: [root",
+        "source: [",
+        "likely a regulation",
+        "content segment",
+        "general market",
+    ]
+    sq_leaked = sum(
+        1 for r in res
+        if any(m in r.get("synthetic_queries", "").lower() for m in sq_leak_markers)
+        or any(p in r.get("synthetic_queries", "").lower() for p in monologue)
+        or bool(re.search(r'\b(?:what|who|where|how|which)\b', r.get("synthetic_queries", ""), re.IGNORECASE))
+        or "):*" in r.get("synthetic_queries", "")
+    )
+    flag_sq_leak = "✅" if sq_leaked == 0 else "🔴"
+    print(f"  {flag_sq_leak} Synth query leakage    : {sq_leaked}/{n}")
 
     # D6: OCR Spacing artifacts
     def spacing_ratio(text):
@@ -547,15 +678,28 @@ def audit_milvus(sample_limit: Optional[int] = None):
     unique_docs = len(set(r.get("doc_id", "") for r in res))
     print(f"     Unique doc_ids sampled : {unique_docs}")
 
+    # D9: Document coverage against JSON exports
+    missing_docs = set()
+    if json_doc_ids:
+        missing_docs = set(json_doc_ids) - set(milvus_doc_ids)
+        if missing_docs:
+            print(f"  🔴 Missing documents in Milvus: {len(missing_docs)}/{len(json_doc_ids)} documents missing!")
+            for md in sorted(missing_docs):
+                print(f"     - {md}")
+        else:
+            print(f"  ✅ Complete document coverage: all {len(json_doc_ids)} exported documents present in Milvus")
+
     # Score
     penalties = 0
+    if len(missing_docs) > 0:
+        penalties += 25
     if noise / n > 0.05:
         penalties += 10
     if fragmented / n > 0.05:
         penalties += 5
-    if leaked > 0:
+    if leaked > 0 or summary_leaked > 0 or sq_leaked > 0:
         penalties += 10
-    if bad_sp > 0:
+    if bad_sp / n > 0.01:
         penalties += 5
     if dup_excess > 5:
         penalties += 10
@@ -713,7 +857,7 @@ def run_comprehensive_audit(
             scores["A_markdown"] = audit_markdown(md_files)
             scores["B_json"] = audit_json(json_files)
             scores["C_chunking"] = audit_chunking(json_files)
-            scores["D_milvus"] = audit_milvus(sample_limit=sample_limit)
+            scores["D_milvus"] = audit_milvus(sample_limit=sample_limit, json_files=json_files)
             scores["E_fidelity"] = audit_fidelity(json_files, target_pdf)
 
             # Final Report

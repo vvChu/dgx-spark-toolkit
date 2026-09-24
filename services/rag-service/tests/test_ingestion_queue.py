@@ -45,3 +45,29 @@ def test_in_memory_ingestion_queue_nack():
 
     # Check FAILED state
     assert queue.state_manager.get_status("/tmp/doc2.pdf") == "FAILED"
+
+
+def test_ingestion_queue_is_paused_backpressure():
+    from unittest.mock import MagicMock
+
+    mock_redis = MagicMock()
+    mock_redis_queue = MagicMock()
+    mock_redis_queue.redis = mock_redis
+
+    queue = IngestionQueue(redis_queue=mock_redis_queue)
+
+    # 1. Flag not set
+    mock_redis.get.return_value = None
+    assert queue.is_paused() is False
+
+    # 2. Flag set to "1"
+    mock_redis.get.return_value = "1"
+    assert queue.is_paused() is True
+
+    # 3. Flag set to bytes b"1"
+    mock_redis.get.return_value = b"1"
+    assert queue.is_paused() is True
+
+    # 4. In-memory queue is never paused
+    in_mem_queue = InMemoryIngestionQueue()
+    assert in_mem_queue.is_paused() is False

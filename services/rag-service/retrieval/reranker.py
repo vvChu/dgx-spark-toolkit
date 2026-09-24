@@ -17,8 +17,8 @@ class Reranker:
         self.model_name = model_name
         self.model = None
         self._load_lock = threading.Lock()
-        self.force_cpu = os.getenv("FORCE_CPU_RERANKER") == "1"
-        self.device = "cpu"
+        import torch
+        self.device = "cuda" if (torch.cuda.is_available() and os.getenv("FORCE_CPU_RERANKER") != "1") else "cpu"
 
     def load_model(self):
         if self.model is None:
@@ -38,10 +38,9 @@ class Reranker:
         if not docs:
             return []
 
-        pairs = [[query, doc] for doc in docs]
-        force_cpu = getattr(self, "force_cpu", True)
-        with vram_accelerate(self.model, min_vram_gb=2.0) if not force_cpu else contextlib.nullcontext():
-            scores = self.model.predict(pairs, batch_size=32)
+        # Truncate doc text to 1500 chars to avoid unnecessary tokenizer overhead
+        pairs = [[query, doc[:1500]] for doc in docs]
+        scores = self.model.predict(pairs, batch_size=32)
 
         doc_scores = list(zip(docs, scores))
         doc_scores.sort(key=lambda x: x[1], reverse=True)

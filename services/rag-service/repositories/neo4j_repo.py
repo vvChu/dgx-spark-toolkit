@@ -77,8 +77,8 @@ class Neo4jRepository:
         query = """
         MATCH (d:Document)
         WHERE d.id CONTAINS $query_id
-        OPTIONAL MATCH (d)-[r:REPLACES|AMENDS|REFERENCES*1..3]->(target:Document)
-        OPTIONAL MATCH (source:Document)-[r2:REPLACES|AMENDS*1..3]->(d)
+        OPTIONAL MATCH (d)-[r:REPLACES|AMENDS|REFERENCES|GUIDES*1..3]->(target:Document)
+        OPTIONAL MATCH (source:Document)-[r2:REPLACES|AMENDS|GUIDES*1..3]->(d)
         RETURN d.id as id,
                CASE WHEN d.status IS NOT NULL THEN d.status ELSE 'UNKNOWN' END as status,
                [rel in coalesce(r, []) | type(rel)] as out_rels, [t in coalesce(target, []) | t.id] as targets,
@@ -96,7 +96,7 @@ class Neo4jRepository:
 
     async def get_guided_circulars(self, doc_id: str):
         query = """
-        MATCH (d:Document)<-[:REFERENCES*1..2]-(guided:Document)
+        MATCH (d:Document)<-[:GUIDES|REFERENCES*1..2]-(guided:Document)
         WHERE d.id CONTAINS $query_id AND guided.doc_type = 'TT'
         RETURN d.id as source, guided.id as guided_id, guided.status as status
         LIMIT 15
@@ -277,31 +277,43 @@ class Neo4jRepository:
                 relationships = getattr(processed_doc, "relationships", None)
                 if relationships:
                     rel_dict = relationships.to_dict() if hasattr(relationships, "to_dict") else dict(relationships)
-                    for replaced in rel_dict.get("replaces", []):
-                        if replaced:
+                    for replaced in (rel_dict.get("replaces") or []):
+                        target_id = str(replaced).strip() if replaced else ""
+                        if target_id:
                             await session.run("""
                                 MERGE (target:Document {id: $target_id})
                                 MERGE (source:Document {id: $source_id})
                                 MERGE (source)-[:REPLACES]->(target)
                                 SET target.status = 'SUPERSEDED'
-                            """, source_id=doc_id, target_id=replaced)
+                            """, source_id=doc_id, target_id=target_id)
 
-                    for amended in rel_dict.get("amends", []):
-                        if amended:
+                    for amended in (rel_dict.get("amends") or []):
+                        target_id = str(amended).strip() if amended else ""
+                        if target_id:
                             await session.run("""
                                 MERGE (target:Document {id: $target_id})
                                 MERGE (source:Document {id: $source_id})
                                 MERGE (source)-[:AMENDS]->(target)
                                 SET target.status = 'OUTDATED'
-                            """, source_id=doc_id, target_id=amended)
+                            """, source_id=doc_id, target_id=target_id)
 
-                    for referenced in rel_dict.get("references", []):
-                        if referenced:
+                    for referenced in (rel_dict.get("references") or []):
+                        target_id = str(referenced).strip() if referenced else ""
+                        if target_id:
                             await session.run("""
                                 MERGE (target:Document {id: $target_id})
                                 MERGE (source:Document {id: $source_id})
                                 MERGE (source)-[:REFERENCES]->(target)
-                            """, source_id=doc_id, target_id=referenced)
+                            """, source_id=doc_id, target_id=target_id)
+
+                    for guided in (rel_dict.get("guides") or []):
+                        target_id = str(guided).strip() if guided else ""
+                        if target_id:
+                            await session.run("""
+                                MERGE (target:Document {id: $target_id})
+                                MERGE (source:Document {id: $source_id})
+                                MERGE (source)-[:GUIDES]->(target)
+                            """, source_id=doc_id, target_id=target_id)
         except Exception as e:
             logger.error(f"Failed to create Document node in Neo4j for {doc_id}: {e}")
             raise

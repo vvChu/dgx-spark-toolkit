@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # Milvus Configuration
     MILVUS_HOST: str = "milvus-standalone"
     MILVUS_PORT: int = 19530
-    MILVUS_COLLECTION: str = "legal_docs_v10"
+    MILVUS_COLLECTION: str = "legal_docs_v11"
 
     # Neo4j Configuration
     # Accepts both NEO4J_PASSWORD and the legacy NEO4J_PASS env var name
@@ -82,6 +82,10 @@ class Settings(BaseSettings):
 
     # Admin endpoint authentication
     ADMIN_SECRET: SecretStr = SecretStr("")
+
+    # Startup Warmup
+    WARMUP_ON_STARTUP: bool = True
+    WARMUP_TIMEOUT_SECONDS: float = 110.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -8,6 +8,20 @@ commands:
     service_lock: null
     runner: "internal"
 
+  - id: "system.memory"
+    slash: "/memory"
+    description: "Chi tiết RAM, Swap và Top 5 tiến trình ngốn bộ nhớ"
+    risk_tier: "READ_ONLY"
+    service_lock: null
+    runner: "internal"
+
+  - id: "system.stats"
+    slash: "/stats"
+    description: "Thống kê sản lượng Tokens, Requests và Top Models trong ngày"
+    risk_tier: "READ_ONLY"
+    service_lock: null
+    runner: "internal"
+
   - id: "host.gpu"
     slash: "/gpu"
     description: "Truy vấn nhiệt độ, xung nhịp và bộ nhớ GPU Blackwell GB10"

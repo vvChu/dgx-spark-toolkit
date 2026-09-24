@@ -76,6 +76,10 @@ def _strip_preamble(text: str) -> str:
         r'^Nhìn vào (?:ảnh|hình)[^\n]*\n+',
         r'^Nội dung (?:ảnh|hình|văn bản)[^\n]*\n+',
         r'^Theo (?:ảnh|hình|yêu cầu)[^\n]*\n+',
+        r'^\s*\*?\s*\*Draft \d+[^\n]*\n+',
+        r'^\s*\*?\s*\*Character Count Check:[^\n]*\n+',
+        r'^\s*\*?\s*(?:Did I include|Is the structure|Let\'s assemble|Let\'s refine|This looks correct|Text starts mid|KHÔNG dùng markdown)[^\n]*\n+',
+        r'^\s*-\s*Ignore logos, watermarks, electronic headers[^\n]*\n+',
     ]
     for pattern in preamble_patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.MULTILINE)
@@ -90,11 +94,17 @@ def _strip_preamble(text: str) -> str:
     legal_start = re.compile(
         r'^(?:Điều|Khoản|Điểm|Chương|Mục|Phần|Phụ lục|\d)', re.IGNORECASE
     )
+    draft_label = re.compile(
+        r'^\s*\*?\s*(?:\*Draft \d+|\*Character Count Check:|- Ignore logos)', re.IGNORECASE
+    )
     lines = text.split('\n')
     start_idx = 0
-    for i, line in enumerate(lines[:10]):
+    for i, line in enumerate(lines[:100]):
         stripped = line.strip()
         if not stripped:
+            continue
+        if draft_label.match(stripped):
+            start_idx = i + 1
             continue
         if viet_chars.search(stripped) or legal_start.match(stripped):
             start_idx = i

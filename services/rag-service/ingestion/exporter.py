@@ -1,3 +1,4 @@
+from dataclasses import asdict, is_dataclass
 import glob
 import json
 import logging
@@ -31,6 +32,11 @@ _QCVN_FILENAME_RE = re.compile(
     r"QCVN[_\s-]?(\d+)[_\s-](\d{4})[_\s-]([A-Za-z]+)"
 )
 
+# Luat doc pattern: Luat_50-2014-QH13 → 50/2014/QH13
+_LUAT_FILENAME_RE = re.compile(
+    r"Luat_(\d+)[-_](\d{4})[-_]QH(\d+)", re.IGNORECASE
+)
+
 # Standard doc pattern: TT01-2023-BTP → 01/2023/TT-BTP, QD08-2023-TTg → 08/2023/QĐ-TTg
 _DOC_NUM_FILENAME_RE = re.compile(
     r"([A-Z]{2,4})(\d+)[-_/](\d{4})[-_/]([A-Za-z]+)"
@@ -62,6 +68,11 @@ def extract_doc_number_from_path(filepath: str) -> Optional[str]:
     if m:
         return f"QCVN {m.group(1)}:{m.group(2)}/{m.group(3)}"
 
+    # Luat pattern: Luat_50-2014-QH13... -> 50/2014/QH13
+    m = _LUAT_FILENAME_RE.search(basename)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}/QH{m.group(3)}"
+
     # Standard full pattern: TT01-2023-BTP → 01/2023/TT-BTP, QD08-2023-TTg → 08/2023/QĐ-TTg
     m = _DOC_NUM_FILENAME_RE.search(basename)
     if m:
@@ -91,11 +102,18 @@ class DataExporter:
         except Exception as e:
             logger.debug(f"Could not create export directories ({self.export_dir}): {e}")
 
-    def export(self, rel_path: str, doc_id: str, meta: Dict[str, Any], summary: str, chunks: List[Dict[str, Any]]):
+    def export(
+        self,
+        rel_path: str,
+        doc_id: str,
+        meta: Dict[str, Any],
+        summary: str,
+        chunks: List[Dict[str, Any]],
+    ) -> tuple[Optional[Path], Optional[Path]]:
         """Export processed document data to JSON and Markdown."""
         try:
             # Sanitize doc_id for filename (replace / and other chars)
-            safe_filename = doc_id.replace('/', '_').replace('\\', '_').replace(':', '_').replace(' ', '_')
+            safe_filename = doc_id.replace('/', '_').replace('\\', '_').replace(':', '_').replace(' ', '_').lstrip('.')
 
             # 1. Export JSON
             json_path = os.path.join(self.json_dir, f"{safe_filename}.json")
@@ -116,8 +134,57 @@ class DataExporter:
                 f.write(md_content)
 
             logger.info(f"Successfully exported data for {doc_id} to {self.export_dir}")
+            return Path(json_path), Path(md_path)
         except Exception as e:
             logger.error(f"Failed to export data for {doc_id}: {e}")
+            return None, None
+
+    def export_document(self, doc: Any) -> tuple[Optional[Path], Optional[Path]]:
+        """Wrapper mapping ProcessedDocument or dict-like doc to export method."""
+        rel_path = getattr(doc, "file_path", None) or getattr(doc, "source_path", None) or "unknown"
+
+        # Resolve doc_id from identity (dataclass or dict) or doc_id attribute
+        doc_id = "unknown"
+        identity = getattr(doc, "identity", None)
+        if identity is not None:
+            if hasattr(identity, "doc_id"):
+                doc_id = getattr(identity, "doc_id", "unknown") or "unknown"
+            elif isinstance(identity, dict):
+                doc_id = identity.get("doc_id", "unknown") or "unknown"
+        if doc_id == "unknown":
+            doc_id = getattr(doc, "doc_id", "unknown") or "unknown"
+
+        # Resolve metadata dictionary safely
+        raw_meta = getattr(doc, "metadata", None)
+        if raw_meta is not None and hasattr(raw_meta, "to_dict"):
+            meta = raw_meta.to_dict()
+        elif isinstance(raw_meta, dict):
+            meta = raw_meta
+        elif is_dataclass(raw_meta) and not isinstance(raw_meta, type):
+            meta = asdict(raw_meta)
+        else:
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+
+        summary = getattr(doc, "summary", "") or ""
+
+        # Resolve chunks list safely
+        raw_chunks = getattr(doc, "chunks", None) or []
+        chunks = []
+        for c in raw_chunks:
+            if hasattr(c, "to_dict"):
+                chunks.append(c.to_dict())
+            elif is_dataclass(c) and not isinstance(c, type):
+                chunks.append(asdict(c))
+            elif isinstance(c, dict):
+                chunks.append(c)
+            elif hasattr(c, "__dict__"):
+                chunks.append(vars(c))
+            else:
+                chunks.append(c)
+
+        return self.export(rel_path=rel_path, doc_id=doc_id, meta=meta, summary=summary, chunks=chunks)
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -85,7 +85,7 @@ groups:
         labels:
           severity: critical
       - uid: 'vllm_high_vram'
-        title: 'vLLM High VRAM Usage'
+        title: 'vLLM High KV Cache Usage'
         condition: 'A'
         data:
           - refId: 'A'
@@ -94,14 +94,14 @@ groups:
               from: 300
               to: 0
             model:
-              expr: 'vllm:gpu_cache_usage_perc > 0.65'
+              expr: 'vllm:kv_cache_usage_perc > 0.85'
               refId: 'A'
         noDataState: OK
         execErrState: OK
         for: 5m
         annotations:
-          summary: 'vLLM VRAM Usage is HIGH ({{ $values.A.Value }})'
-          description: 'GPU KV Cache usage has exceeded 65% for more than 5 minutes on Blackwell GPU.'
+          summary: 'vLLM KV Cache Usage is HIGH ({{ $values.A.Value }})'
+          description: 'GPU KV Cache usage has exceeded 85% for more than 5 minutes on Blackwell GPU.'
         labels:
           severity: warning
 
@@ -115,13 +115,13 @@ groups:
               from: 300
               to: 0
             model:
-              expr: 'avg(vllm:avg_generation_throughput_toks_per_s) < 25'
+              expr: 'rate(vllm:generation_tokens_total[5m]) < 5 and vllm:num_requests_running > 0'
               refId: 'A'
         noDataState: OK
         execErrState: OK
         for: 10m
         annotations:
-          summary: 'vLLM Throughput is LOW ({{ $values.A.Value }} tok/s)'
-          description: 'The average generation speed has dropped below 25 tokens/sec, indicating potential congestion.'
+          summary: 'vLLM Throughput is LOW under load ({{ $values.A.Value }} tok/s)'
+          description: 'The average generation speed has dropped below 5 tokens/sec while requests are active.'
         labels:
           severity: warning

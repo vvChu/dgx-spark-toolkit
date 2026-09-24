@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from models.schemas import SyncStatusRequest, SyncStatusResponse
 from core.config import get_settings
@@ -138,3 +138,19 @@ async def get_quota_status():
             "search-grounding": {"rpd": 1500, "role": "Web Search Knowledge Fallback"}
         }
     }
+
+
+@router.post("/warmup")
+async def trigger_warmup(request: Request):
+    """Trigger manual model warmup at runtime (Zero-Downtime Recovery)."""
+    from core.warmup import perform_warmup, _warmup_thread_lock
+    if _warmup_thread_lock.locked():
+        raise HTTPException(status_code=409, detail="Warmup is already in progress")
+    res = await perform_warmup(request.app, force=True)
+    if res.get("status") == "ready":
+        return JSONResponse(status_code=200, content=res)
+    if res.get("reason") == "already_in_progress":
+        raise HTTPException(status_code=409, detail="Warmup is already in progress")
+    if res.get("status") == "in_progress":
+        return JSONResponse(status_code=202, content=res)
+    return JSONResponse(status_code=503, content=res)

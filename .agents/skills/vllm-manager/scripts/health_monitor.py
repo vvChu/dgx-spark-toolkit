@@ -16,7 +16,7 @@ sys.path.append(os.path.join(skills_dir, "shared"))
 from vllm_client import VLLM_API_BASE, GATEWAY_API_KEY, chat_completion
 
 VLLM_ENDPOINTS = [
-    {"name": "Qwen 3.5 35B", "port": 8004, "container": "qwen35b"},
+    {"name": "Qwen 3.5 35B", "port": 8004, "container": "qwen36b"},
 ]
 
 

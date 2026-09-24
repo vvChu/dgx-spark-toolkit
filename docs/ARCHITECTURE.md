@@ -23,7 +23,7 @@ Layered FastAPI application running on Python 3.12:
 - `core/database.py`: Lifespan management and dependency injection for all database clients.
 
 ### 2. Ingestion Pipeline (`services/rag-service/ingestion/`)
-A 9-stage pipeline consolidated in `pipeline.py` (orchestrated by `ProductionIngestor`):
+A 9-stage pipeline consolidated in `pipeline.py` (orchestrated by `DocumentIngestionPipeline`):
 1. `s01_intake`: File validation, hash deduplication, and initial registration.
 2. `s02_ocr`: PDF text and bounding-box extraction via Surya OCR or PyMuPDF.
 3. `s03_metadata`: Legal metadata extraction (issuing authority, date, type, signer).
@@ -35,7 +35,7 @@ A 9-stage pipeline consolidated in `pipeline.py` (orchestrated by `ProductionIng
 9. `s09_export`: Final document export artifact and status finalization.
 
 - **Workers**: Run as `rag-watcher` consuming tasks from Redis stream `ingest:queue`.
-- **Pipeline Implementation**: `services/rag-service/ingestion/pipeline.py` contains `ProductionIngestor`.
+- **Pipeline Implementation**: `services/rag-service/ingestion/pipeline.py` contains `DocumentIngestionPipeline` (aliased as `ProductionIngestor` for backward compatibility).
 
 ### 3. AI Gateway (`services/ai-gateway/`)
 LiteLLM proxy instance configured via `litellm_config.yaml`:
@@ -45,7 +45,7 @@ LiteLLM proxy instance configured via `litellm_config.yaml`:
 
 ### 4. Frontend (`services/frontend/`)
 Single-page application built with React 19, Vite 7, and Tailwind CSS 4:
-- API integration: `src/lib/api.ts` (REST) and `src/lib/streamApi.ts` (SSE).
+- API integration: `src/lib/api.ts` (REST) and `src/lib/streamClient.ts` (SSE).
 - Graph visualization: `react-force-graph`.
 - Markdown rendering: `react-markdown` + `remark-gfm`.
 
@@ -53,10 +53,10 @@ Single-page application built with React 19, Vite 7, and Tailwind CSS 4:
 
 | Database | Primary Purpose | Identifier / Namespace |
 |---|---|---|
-| **Milvus** | Hybrid vector search (dense + sparse BGE-M3) | Collection: `legal_docs_v9` |
-| **Neo4j** | Knowledge graph relationships (`REPLACES`, `AMENDS`, `REFERENCES`) | Document nodes |
+| **Milvus** | Hybrid vector search (dense + sparse BGE-M3) | Collection: `legal_docs_v11` |
+| **Neo4j** | Knowledge graph relationships (`REPLACES`, `AMENDS`, `REFERENCES`, `GUIDES`) | Document nodes |
 | **PostgreSQL** | Ingestion state tracking & LiteLLM state | Table: `ingestion_state` |
-| **Redis** | DB 0: LiteLLM semantic cache; DB 1: Ingestion stream queue | Stream: `ingest:queue` |
+| **Redis** | DB 0: LiteLLM cache, DB 1: Ingestion queue, DB 2: Context Lake, DB 3: SemanticCache L2, DB 4: HITL review queue | Stream: `ingest:queue` (DB 1) |
 
 ## Infrastructure & Docker
 
@@ -67,7 +67,7 @@ Single-page application built with React 19, Vite 7, and Tailwind CSS 4:
 - `loadtest`: `locust` load testing container at `:8089`.
 
 ### vLLM Model Containers
-- `vllm-35b`: Qwen3.5-35B (always-on, 96GB unified memory, 32k context).
+- `vllm-36b`: Qwen3.5-35B-FP8 (always-on, 78GB memory limit, 96k context).
 - `vllm-4b`: Qwen3.5-9B AWQ (on-demand via `vllm-light` profile, 12GB memory, 8k context).
 
 ### Alternative Deployment Targets

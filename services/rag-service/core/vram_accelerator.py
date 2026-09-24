@@ -5,6 +5,7 @@ mutex locking for concurrent model execution, and VRAM health monitoring.
 """
 import contextlib
 import logging
+import os
 import threading
 from typing import Any, Dict, Optional, Tuple
 
@@ -32,12 +33,49 @@ class GPUResourceManager:
     def get_vram_info(self) -> Tuple[float, float, bool]:
         """Check free & total GPU memory in GB.
 
-        Returns (free_gb, total_gb, is_available).
+        On Linux Unified Memory systems (NVIDIA Blackwell GB10),
+        torch.cuda.mem_get_info() only reports unmapped physical free pages (MemFree),
+        ignoring reclaimable memory and available host RAM. We inspect MemAvailable
+        and container cgroup limits to determine actual allocation headroom.
+
+        Returns:
+            Tuple of (free_or_available_gb, total_gb, is_available).
         """
         try:
             import torch
             if not torch.cuda.is_available():
                 return 0.0, 0.0, False
+
+            # Blackwell Unified Memory headroom detection
+            host_avail_gb: Optional[float] = None
+            total_gb: Optional[float] = None
+            if os.path.exists("/proc/meminfo"):
+                try:
+                    with open("/proc/meminfo", "r") as f:
+                        for line in f:
+                            if line.startswith("MemAvailable:"):
+                                host_avail_gb = int(line.split()[1]) / (1024 ** 2)
+                            elif line.startswith("MemTotal:"):
+                                total_gb = int(line.split()[1]) / (1024 ** 2)
+                except Exception as ex:
+                    logger.debug("Could not read /proc/meminfo: %s", ex)
+
+            cgroup_avail_gb = float("inf")
+            if os.path.exists("/sys/fs/cgroup/memory.max") and os.path.exists("/sys/fs/cgroup/memory.current"):
+                try:
+                    with open("/sys/fs/cgroup/memory.max", "r") as f:
+                        max_str = f.read().strip()
+                    with open("/sys/fs/cgroup/memory.current", "r") as f:
+                        cur_str = f.read().strip()
+                    if max_str != "max":
+                        cgroup_avail_gb = max(0.0, (int(max_str) - int(cur_str)) / (1024 ** 3))
+                except Exception as ex:
+                    logger.debug("Could not read cgroup limits: %s", ex)
+
+            if host_avail_gb is not None:
+                effective_free = min(host_avail_gb, cgroup_avail_gb)
+                return effective_free, total_gb or 128.0, True
+
             device_id = torch.cuda.current_device()
             free_mem, total_mem = torch.cuda.mem_get_info(device_id)
             return (
@@ -82,30 +120,50 @@ class GPUResourceManager:
         )
 
         try:
-            if hasattr(huggingface_wrapper, "model"):
+            if hasattr(huggingface_wrapper, "to") and callable(huggingface_wrapper.to):
+                huggingface_wrapper.to("cuda")
+            elif hasattr(huggingface_wrapper, "model") and hasattr(huggingface_wrapper.model, "to"):
                 huggingface_wrapper.model.to("cuda")
 
-            if old_device_attr is not None:
-                huggingface_wrapper.device = "cuda"
-            if old_target_device is not None:
-                huggingface_wrapper._target_device = "cuda"
-            if old_target_devices is not None:
-                huggingface_wrapper.target_devices = ["cuda"]
+            if not hasattr(huggingface_wrapper, "to"):
+                if old_device_attr is not None:
+                    try:
+                        huggingface_wrapper.device = "cuda"
+                    except (AttributeError, TypeError):
+                        pass
+                if old_target_devices is not None:
+                    try:
+                        huggingface_wrapper.target_devices = ["cuda"]
+                    except (AttributeError, TypeError):
+                        pass
 
             yield True
         except Exception as e:
             logger.error("[GPUManager] Error during GPU acceleration: %s", e)
             yield False
         finally:
-            if old_device_attr is not None:
-                huggingface_wrapper.device = old_device_attr
-            if old_target_device is not None:
-                huggingface_wrapper._target_device = old_target_device
-            if old_target_devices is not None:
-                huggingface_wrapper.target_devices = old_target_devices
+            if not hasattr(huggingface_wrapper, "to"):
+                if old_device_attr is not None:
+                    try:
+                        huggingface_wrapper.device = old_device_attr
+                    except (AttributeError, TypeError):
+                        pass
+                if old_target_devices is not None:
+                    try:
+                        huggingface_wrapper.target_devices = old_target_devices
+                    except (AttributeError, TypeError):
+                        pass
 
-            if hasattr(huggingface_wrapper, "model"):
-                huggingface_wrapper.model.to("cpu")
+            if hasattr(huggingface_wrapper, "to") and callable(huggingface_wrapper.to):
+                try:
+                    huggingface_wrapper.to("cpu")
+                except Exception:
+                    pass
+            elif hasattr(huggingface_wrapper, "model") and hasattr(huggingface_wrapper.model, "to"):
+                try:
+                    huggingface_wrapper.model.to("cpu")
+                except Exception:
+                    pass
 
             try:
                 torch.cuda.empty_cache()

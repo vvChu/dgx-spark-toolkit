@@ -109,7 +109,11 @@ class DocumentIngestionPipeline:
         from retrieval.search_pipeline import get_embedding_model
         self.model = get_embedding_model()
         self.chunker = DocumentChunker()
-        self.exporter = DataExporter(settings.EXPORT_DIR) if settings.EXPORT_PROCESSED_DATA else None
+        self.exporter = (
+            DataExporter(settings.EXPORT_DIR)
+            if (settings.EXPORT_PROCESSED_DATA and not isinstance(self.state_manager, InMemoryStateManager))
+            else None
+        )
         self._http_client = httpx.Client(timeout=300)
 
         # Legacy compatibility attributes
@@ -420,7 +424,7 @@ class DocumentIngestionPipeline:
             payload = {
                 "model": RELATIONSHIP_MODEL,
                 "messages": [
-                    {"role": "system", "content": "Extract relationships between documents as JSON: replaces, amends, references."},
+                    {"role": "system", "content": "Extract relationships between documents as JSON: replaces, amends, references, guides."},
                     {"role": "user", "content": f"Extract relationship JSON:\n\n{text[:4000]}"}
                 ],
                 "max_tokens": 2048,
@@ -428,10 +432,18 @@ class DocumentIngestionPipeline:
             }
             resp = self._http_client.post(self.vision.api_url, json=payload, headers={"Authorization": f"Bearer {self.vision.api_key}"})
             resp.raise_for_status()
-            return extract_json_from_response(resp.json()) or {"replaces": [], "amends": [], "references": []}
+            parsed = extract_json_from_response(resp.json())
+            if isinstance(parsed, dict):
+                return {
+                    "replaces": [str(x).strip() for x in (parsed.get("replaces") or []) if x and str(x).strip()],
+                    "amends": [str(x).strip() for x in (parsed.get("amends") or []) if x and str(x).strip()],
+                    "references": [str(x).strip() for x in (parsed.get("references") or []) if x and str(x).strip()],
+                    "guides": [str(x).strip() for x in (parsed.get("guides") or []) if x and str(x).strip()],
+                }
+            return {"replaces": [], "amends": [], "references": [], "guides": []}
         except Exception as e:
             logger.warning(f"Relationship extraction fallback: {e}")
-            return {"replaces": [], "amends": [], "references": []}
+            return {"replaces": [], "amends": [], "references": [], "guides": []}
 
     # ── Runner Loop ───────────────────────────────────────────────────
 
@@ -443,6 +455,11 @@ class DocumentIngestionPipeline:
             queue = IngestionQueue()
             logger.info("Connected to IngestionQueue ✓")
             while True:
+                if hasattr(queue, "is_paused") and queue.is_paused():
+                    logger.warning("[BACKPRESSURE] Ingestion temporarily paused due to memory pressure. Sleeping 10s...")
+                    time.sleep(10)
+                    continue
+
                 messages = queue.claim_next(count=1, block_ms=5000)
                 if messages:
                     for msg in messages:

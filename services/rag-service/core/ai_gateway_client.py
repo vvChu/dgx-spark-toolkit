@@ -37,8 +37,15 @@ class AIGatewayClient:
         self.api_key = self.settings.LITELLM_MASTER_KEY.get_secret_value() if hasattr(self.settings.LITELLM_MASTER_KEY, 'get_secret_value') else str(self.settings.LITELLM_MASTER_KEY)
 
     def _get_client(self) -> httpx.AsyncClient:
-        if self._http_client is None:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        client_loop = getattr(self, "_client_loop", None)
+        if self._http_client is None or self._http_client.is_closed or (client_loop is not None and client_loop != current_loop):
             self._http_client = httpx.AsyncClient(timeout=300.0)
+            self._client_loop = current_loop
         return self._http_client
 
     async def stream(
@@ -195,8 +202,16 @@ class AIGatewayClient:
                     data = resp.json()
                     if asyncio.iscoroutine(data):
                         data = await data
-                    msg = data["choices"][0]["message"]
-                    return (msg.get("content") or "").strip()
+                    choice = data["choices"][0]
+                    content = (choice.get("message", {}).get("content") or "").strip()
+                    if content:
+                        return content
+                    finish = choice.get("finish_reason")
+                    logger.warning(
+                        "AIGatewayClient model %s returned empty content (finish_reason: %s). Trying next fallback.",
+                        target_model, finish
+                    )
+                    break  # Break retry loop for this model and proceed to next model in chain
                 except Exception as e:
                     last_error = e
                     err_name = type(e).__name__

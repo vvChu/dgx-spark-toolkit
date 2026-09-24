@@ -14,7 +14,7 @@ async def migrate_neo4j():
         "MATCH (d:Document) WHERE d.effective_date IS NULL SET d.effective_date = coalesce(d.date, 'unknown')",
         "CREATE INDEX idx_document_status IF NOT EXISTS FOR (d:Document) ON (d.status)",
         "CREATE INDEX idx_document_doc_num IF NOT EXISTS FOR (d:Document) ON (d.doc_number)",
-        "CREATE INDEX idx_relation_type IF NOT EXISTS FOR ()-[r:AMENDS|REPLACES|REFERENCES]-() ON (r.type)"
+        "CREATE INDEX idx_relation_type IF NOT EXISTS FOR ()-[r:AMENDS|REPLACES|REFERENCES|GUIDES]-() ON (r.type)"
     ]
 
     async with driver.session() as session:
