@@ -10,7 +10,7 @@ bundle: _core
 tier: kernel
 command: /ccba-llm-pipeline-patterns
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   author: "CCBA Hub"
 gpi:
   s: 3.0
@@ -27,6 +27,10 @@ triggers:
 - self-correction
 - map reduce
 - multi turn memory
+- cold-cache
+- multi-key validation
+- vector-db parity
+- bilingual query cleaning
 ---
 
 # LLM Pipeline Patterns
@@ -456,12 +460,63 @@ def extract_last_exchange(file_content: str, max_chars: int = 4_000) -> dict[str
 
 ---
 
+## Pattern 15: Cold-Cache Benchmark & Multi-Key Cross-Validation
+
+### Vấn đề
+1. **Cold-Cache Illusion**: Đo lường latency trên pipeline có Semantic Cache bị đánh lừa bởi kết quả lưu tạm của lần chạy trước. Khi chạy thực tế trên truy vấn mới (Cold Cache), mô hình upstream lỗi khiến gateway retry 3 × 20s = 60s, gây timeout crash toàn bộ dịch vụ.
+2. **Multi-Key Asymmetry**: Thử nghiệm model trên 1 API key cũ chạy tốt (200 OK), nhưng khi triển khai vào pool round-robin, các key mới hơn bị lỗi 404 Not Found (do Google khai tử model đối với tài khoản mới) hoặc lỗi 503 (bóp tải theo thời điểm).
+
+### Giải pháp
+```
+Validation Routine:
+  Step 1: Test Cold Cache -> Dùng Prompt ngẫu nhiên f"UUID_{uuid.uuid4().hex[:6]} ...".
+  Step 2: Cross-Key Audit  -> Gửi request trực tiếp đến ít nhất 3 API Keys khác nhau trong pool.
+  Step 3: Phân tầng SLA    -> 
+           - Real-time RAG (Rewrite, Timeline, Rerank): Yêu cầu SLA < 2s.
+             Ưu tiên: claude-haiku-4 (1.2s) -> rag-core on-premise GPU (0.25s).
+           - Batch Offline (OCR, Summarization dài): Dùng gemini-3.1-flash-lite / ocr-primary.
+```
+
+### Key Invariants
+1. **Zero Trust in Warm Latency**: Mọi kết quả đo kiểm SLA LLM chỉ có giá trị khi chứng minh được cache bypass hoặc sinh prompt UUID độc bản.
+2. **Minimum 3-Key Quorum**: Tuyệt đối không phê duyệt model mới vào file cấu hình gateway nếu chưa vượt qua kiểm thử đồng thời trên $\ge 3$ tài khoản khác nhau trong pool.
+3. **Hard Real-Time Ceilings**: Các khâu nằm trên critical path của người dùng (Query Rewriter, Timeline Graph, Search Rerank) phải khống chế timeout $\le 2.0\text{s} - 4.0\text{s}$ và có fallback on-premise GPU ngay lập tức.
+4. **Lazy Lock Loop Binding**: Các biến đồng bộ asyncio (như `asyncio.Lock`) dùng cho bộ nhớ đệm trong module phải được khởi tạo lazy ở hàm gọi đầu tiên, tránh lỗi `RuntimeError: Task attached to a different loop`.
+
+---
+
+## Pattern 16: End-to-End Vector DB Parity Gate & Ingestion Guards
+
+### Vấn đề
+Audit tool chỉ query mẫu ngẫu nhiên (`limit=2000`) các parent chunks từ vector database để chấm điểm nội dung. Khi một file tài liệu bị sót hoàn toàn (ví dụ 641 chunks của một thông tư chưa từng được nạp), audit tool vẫn chấm 95-100 điểm vì các chunks được lấy mẫu đều sạch, tạo ra điểm mù kiểm toán nghiêm trọng. Đồng thời, exporter sinh file ẩn trên Linux hoặc lỗi serialize dataclass làm mất dữ liệu âm thầm.
+
+### Giải pháp
+```python
+# Bắt buộc đối soát Parity giữa Kho Dữ Liệu Xuất Khẩu và Vector DB:
+json_doc_ids = set(doc["doc_id"] for doc in exported_json_files)
+indexed_doc_ids = set(row["doc_id"] for row in vector_db.query(output_fields=["doc_id"], limit=16384))
+
+missing_docs = json_doc_ids - indexed_doc_ids
+if missing_docs:
+    logger.error(f"Parity Violation: Missing {len(missing_docs)} documents in Vector DB: {missing_docs}")
+    penalties += 25  # Trừ điểm nặng hoặc Fail Gate ngay lập tức
+```
+
+### Key Invariants
+1. **Set Parity Precedes Quality Scoring**: Kiểm tra tập hợp tài liệu (`json_doc_ids - indexed_doc_ids == empty`) là điều kiện tiên quyết trước khi tính toán các chỉ số thống kê chất lượng chunk.
+2. **Heavy Penalty on Missing Documents**: Bất kỳ tài liệu nào bị sót trong Vector DB phải chịu mức phạt tối thiểu $\ge 25$ điểm trên thang 100, ngăn chặn việc đạt điểm Pass giả tạo.
+3. **Safe File Naming Protection**: Mọi trình xuất dữ liệu phải loại bỏ tiền tố dấu chấm (`.lstrip('.')`) để tránh tạo ra file ẩn trên Linux làm vô hiệu hóa bộ thu thập dữ liệu.
+4. **In-Flight Document Dedup**: Các luồng làm giàu ngữ cảnh đồ thị (timeline summary) trong truy vấn phải đệm theo `doc_number` để tránh gọi LLM lặp lại cho các chunk cùng nguồn tài liệu.
+
+---
+
 ## Quick Reference — Model Routing cho Pipeline Tasks
 
 | Task trong pipeline | Model khuyến nghị | Lý do |
 |---|---|---|
 | Deep reasoning & synthesis | `claude-opus-4-6-thinking` | Port 8090 / Spark, deep academic reasoning, Map-Reduce Reduce phase |
 | Fast JIT Map / Interactive | `gemini-3.8-flash-high` | Port 8090, ~2s ultra-fast response, JIT URL Map phase, auto-downgrade fallback |
+| Real-time RAG (Rewrite / Timeline / Rerank) | `claude-haiku-4` $\rightarrow$ `rag-core` | Enterprise Proxy (1.2s) fallback DGX Spark GB10 GPU (0.25s), SLA < 2.0s |
 | OCR / Vision extract | `ocr-primary` (Gemini Flash) | Fast, cheap, multimodal |
 | Draft synthesis (Pass 1) | `qwen-local-primary` | Fast local GPU, Vietnamese |
 | Quality check (Pass 2) | `reasoning-gemma` / `claude-sonnet-thinking` | Precision verify |
@@ -485,6 +540,10 @@ def extract_last_exchange(file_content: str, max_chars: int = 4_000) -> dict[str
 | Zero-Broken-Link Fallbacks | `D:\VvC_Notes\scripts\services\diagram_base.py` + workers |
 | Heading-Aware Map-Reduce | `D:\VvC_Notes\scripts\core\text_chunker.py` |
 | Conditional Multi-turn Memory | `D:\VvC_Notes\scripts\services\command\coordinator.py` |
+| Cold-Cache & SLA Fallback | (Spoke: dgx-spark-toolkit) `services/rag-service/retrieval/query_rewriter.py` + `search_pipeline.py` |
+| Vector DB Parity Gate | (Spoke: dgx-spark-toolkit) `services/rag-service/scripts/comprehensive_audit.py` |
+| Synthetic Query Sanitizer | (Spoke: dgx-spark-toolkit) `services/rag-service/scripts/clean_synthetic_queries.py` |
+| Safe Data Exporter | (Spoke: dgx-spark-toolkit) `services/rag-service/ingestion/exporter.py` |
 
 ## Bất Biến Vận Hành & Khóa Cứng Hoàn Tất (ADR-0058)
 * **Tiêu chí hoàn thành tất định:** Mọi thay đổi mã nguồn, kỹ năng hoặc tài liệu bắt buộc phải vượt qua bộ kiểm thử tự động.

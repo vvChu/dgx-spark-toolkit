@@ -44,3 +44,29 @@ Critical technical gotchas, anti-patterns, and environment constraints to keep i
   api_base: os.environ/GATEWAY_PROXY_URL
   ```
 - **Anti-pattern**: Never use `anthropic/` with `GATEWAY_PROXY_URL`. When LiteLLM detects `anthropic/`, it switches to Anthropic native protocol and appends `/v1/messages` to `api_base`, generating duplicate paths like `http://100.83.192.30:8045/v1/v1/messages` (Protocol: Claude) and causing immediate **HTTP 404 Not Found (0ms)** errors on the proxy.
+
+## 9. The Semantic Cache Latency Illusion (Cold-Cache vs Cached SLAs)
+- **Trap**: Performance benchmarks and latency tests for LLM calls / fallback chains may falsely report fast response times (e.g., < 3.0s) because subsequent calls hit `SemanticCache` (Redis DB 0) from previous test runs.
+- **Consequence**: When a cold query arrives or the service restarts, a broken upstream model may trigger retries (e.g., 3 retries × 20s = 60s), causing silent `ReadTimeout` crashes.
+- **Rule**: Always benchmark latency on **Cold Cache** using unique dynamic UUID prompts (`f"UUID_{uuid.uuid4().hex[:6]} ..."`) or cache-bypass headers. Never trust warm cached calls as SLA proof.
+
+## 10. Multi-Key Deprecation Asymmetry (Provider Lifecycle Desync)
+- **Trap**: Recommending or deploying a cloud model based on a single passing API key test.
+- **Consequence**: Models like `gemini-2.5-flash-lite` remain active on legacy accounts/keys, but return `HTTP 404 NOT_FOUND` on newer projects. In round-robin pools, requests routed to newer keys will crash. Similarly, models like `gemini-3.1-flash-lite` suffer upstream 503 high-demand spikes during peak hours.
+- **Rule**: Always validate model availability across at least 3 distinct API keys in the gateway pool. For real-time RAG (query rewrite, timeline, rerank), strictly prioritize ultra-stable models (`claude-haiku-4` -> `rag-core` on-premise GPU).
+
+## 11. Vector DB Audit Sampling Blind Spot (Always Enforce Set Parity)
+- **Trap**: Auditing vector database quality using random entity sampling (e.g. `client.query(limit=2000)`).
+- **Consequence**: The audit may score 95+/100 while entirely missing a whole document (e.g., 641 chunks missing from an un-ingested file), because sampling only inspects entities that already exist.
+- **Rule**: Audit tools MUST enforce a Set Parity check: `missing = set(exported_json_doc_ids) - set(milvus_doc_ids)`. Any missing document must incur severe penalties (≥ 25 pts) and trigger gate rejection.
+
+## 12. Bilingual Diacritic Spoofing & Bare Negation False Interrogatives
+- **Trap**: Detecting language or interrogatives in synthetic queries using naive diacritic checks (`_VN_DIACRITICS.search(line)`) or standalone negation words like `'không'`.
+- **Consequence**: English queries quoting Vietnamese terms in parentheses (e.g., `What are the requirements for (thẩm duyệt)?`) or declarative sentences containing negative particles are falsely classified as valid Vietnamese questions, allowing AI scratchpads and prompt echoes into the vector database.
+- **Rule**: Always strip parentheses and quotes (`re.sub(r'\(.*?\)|"[^"]*"', '', line)`) before testing diacritics. Replace bare `'không'` with explicit compound interrogatives (`'được không'`, `'phải không'`, `'hay không'`), and aggressively reject English interrogatives (`\b(?:what|who|where|how|which)\b`). Use `re.split(r'\s+/\s+', line)` to preserve citations like `52/2019/TT-BCA`.
+
+## 13. Dataclass Serialization & Linux Hidden File Traps in Exporters
+- **Trap**: Passing dataclass objects (`ProcessedDocument`, `Chunk`) directly to `json.dump()` or deriving filenames directly from relative paths (e.g. `../52/2019/TT-BCA`).
+- **Consequence**: Unhandled dataclasses cause `TypeError` crashes during export. Unstripped leading dots (`safe_filename = doc_id.replace(...).lstrip('.')`) create hidden files on Linux (e.g., `.._52_2019_TT-BCA.json`), making exported documents invisible to file crawlers and resulting in complete data loss in Milvus.
+- **Rule**: In exporter pipelines, always normalize filenames with `.lstrip('.')` and ensure multi-tier serialization guards (`to_dict()`, `asdict()`, `vars()`).
+
