@@ -151,6 +151,15 @@ async def lifespan(app: FastAPI):
     app.state.trace_store = getattr(state, "trace_store", None)
     app.state.context_accumulator = getattr(state, "context_accumulator", None)
 
+    # Model Warmup (BGE-M3 + Reranker)
+    try:
+        from core.warmup import perform_warmup
+        await perform_warmup(app)
+    except Exception as exc:
+        logger.critical(f"Unhandled exception during startup warmup: {exc}", exc_info=True)
+        if hasattr(app, "state"):
+            app.state.warmup_status = {"status": "failed", "error": str(exc)}
+
     yield
 
     # Shutdown
@@ -159,8 +168,10 @@ async def lifespan(app: FastAPI):
         if svc and hasattr(svc, "close"):
             await svc.close()
             logger.info(f"Context Lake: {name} closed.")
-    if state.async_state_manager:
-        await state.async_state_manager.close()
+    if state.async_state_manager and hasattr(state.async_state_manager, "close"):
+        res = state.async_state_manager.close()
+        if asyncio.iscoroutine(res):
+            await res
         logger.info("AsyncStateManager closed.")
     if state.neo4j_driver:
         await state.neo4j_driver.close()

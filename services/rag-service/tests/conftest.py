@@ -60,6 +60,7 @@ from main import app
 
 @asynccontextmanager
 async def _test_lifespan(_app):
+    _app.state.warmup_status = {"status": "skipped", "reason": "test_env"}
     yield
 
 

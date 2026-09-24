@@ -70,3 +70,13 @@ Critical technical gotchas, anti-patterns, and environment constraints to keep i
 - **Consequence**: Unhandled dataclasses cause `TypeError` crashes during export. Unstripped leading dots (`safe_filename = doc_id.replace(...).lstrip('.')`) create hidden files on Linux (e.g., `.._52_2019_TT-BCA.json`), making exported documents invisible to file crawlers and resulting in complete data loss in Milvus.
 - **Rule**: In exporter pipelines, always normalize filenames with `.lstrip('.')` and ensure multi-tier serialization guards (`to_dict()`, `asdict()`, `vars()`).
 
+## 14. Cold-Startup Model Warmup Budget vs Theoretical Latency (DGX Spark GB10)
+- **Trap**: Estimating startup warmup duration based on theoretical or desktop benchmarks (e.g., assuming ~22s for BGE-M3 and ~12s for Reranker $\rightarrow$ setting a 60s timeout).
+- **Consequence**: In production on DGX Spark GB10 Blackwell hardware with full tokenizers, cold cache, and PyTorch CUDA context compilation, BGE-M3 (CPU) takes **~60s** (10.7s load + 49.3s cold query embed) and BGE-Reranker (GPU) takes **~34s** (load + predict), totalling **~94s**. Setting `WARMUP_TIMEOUT_SECONDS = 60s` causes 100% false timeouts on cold boot, dropping the container into degraded mode (503).
+- **Rule**: Set `WARMUP_TIMEOUT_SECONDS >= 110.0s`, safely below Docker's `start_period: 120s`. Use `asyncio.shield` so that if I/O spikes exceed the timeout, the worker continues in the background and self-heals by updating `warmup_status = ready` upon completion.
+
+## 15. Mutex Lock Leaks & Deadlocks in Asynchronous ML Warmup
+- **Trap**: Performing argument validation or type conversion (e.g., `float(timeout)`) *after* acquiring a non-blocking mutex (`_warmup_thread_lock.acquire(blocking=False)`).
+- **Consequence**: An unhandled `ValueError` or task dispatch failure before creating the worker task aborts the function while leaving the lock acquired in process memory. All subsequent warmup triggers (and `/admin/warmup` requests) permanently return `HTTP 409 Conflict` (`already_in_progress`) until the entire container process is restarted.
+- **Rule**: Always validate and parse all arguments *before* acquiring concurrency locks. Wrap worker task dispatch in `try...except` blocks that explicitly release the lock if dispatch fails.
+

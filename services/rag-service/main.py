@@ -38,6 +38,7 @@ app = FastAPI(
     openapi_tags=tags_metadata,
     lifespan=lifespan
 )
+app.state.warmup_status = {"status": "pending"}
 
 # Restrict CORS to the known frontend origin; uses Settings for single source of truth
 _settings_cors = get_settings()
@@ -133,11 +134,28 @@ async def health(request: Request):
     else:
         checks["neo4j"] = "not initialized"
 
+    # Warmup status check
+    warmup_status = getattr(request.app.state, "warmup_status", None)
+    if not isinstance(warmup_status, dict):
+        warmup_status = {"status": "pending"}
+    st = warmup_status.get("status")
+    if st in ("ready", "skipped", "disabled"):
+        checks["warmup"] = "ok"
+    elif st in ("pending", "in_progress"):
+        checks["warmup"] = "in_progress"
+    else:
+        checks["warmup"] = f"failed: {warmup_status.get('error', 'unknown error')}"
+
     all_ok = all(v in ("ok", "reconnected") for v in checks.values())
     status_code = 200 if all_ok else 503
     return JSONResponse(
         status_code=status_code,
-        content={"status": "ok" if all_ok else "degraded", "version": __version__, "checks": checks}
+        content={
+            "status": "ok" if all_ok else "degraded",
+            "version": __version__,
+            "checks": checks,
+            "warmup": warmup_status,
+        },
     )
 
 

@@ -39,6 +39,9 @@ services:
       - CROSS_VALIDATE_OCR=${CROSS_VALIDATE_OCR:-1}
       - REMOVE_WATERMARKS=${REMOVE_WATERMARKS:-0}
       - HF_HOME=/home/appuser/.cache/huggingface
+      - ADMIN_SECRET=${ADMIN_SECRET:-rag_admin_secret_key_2026}
+      - WARMUP_ON_STARTUP=${WARMUP_ON_STARTUP:-1}
+      - WARMUP_TIMEOUT_SECONDS=${WARMUP_TIMEOUT_SECONDS:-110.0}
     working_dir: /app
     command: ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:

@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     # Admin endpoint authentication
     ADMIN_SECRET: SecretStr = SecretStr("")
 
+    # Startup Warmup
+    WARMUP_ON_STARTUP: bool = True
+    WARMUP_TIMEOUT_SECONDS: float = 110.0
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
