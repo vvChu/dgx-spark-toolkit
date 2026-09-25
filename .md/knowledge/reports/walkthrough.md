@@ -3,8 +3,9 @@
 ## 1. Tóm Tắt Tác Vụ (Executive Summary)
 
 - **Mục tiêu**: Loại bỏ phụ thuộc zombie `react-force-graph` (phiên bản 3D WebGL không được sử dụng) trong `services/frontend`, giải phóng dung lượng đĩa `node_modules`, xóa bỏ chuỗi lỗ hổng bảo mật `got < 11.8.5` và dependency git+ssh (`three-bmfont-text`), bổ sung script `typecheck` vào cả package lẫn GitHub Actions CI, và đồng bộ hóa toàn diện tài liệu hệ thống.
-- **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN (100% SUCCESS — ĐÃ ĐƯỢC DEEPINVESTIGATOR THẨM ĐỊNH)**.
-- **Branch**: `chore/prune-unused-react-force-graph`.
+- **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN & ĐÃ SÁP NHẬP VÀO MASTER (MERGED)**.
+- **Pull Request**: [#61](https://github.com/vvChu/dgx-spark-toolkit/pull/61) (Squash & merged at `cdefb59`).
+- **Branch**: `chore/prune-unused-react-force-graph` (đã dọn dẹp).
 
 ---
 
