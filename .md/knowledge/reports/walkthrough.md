@@ -64,6 +64,12 @@ flowchart TD
    - Cập nhật `pillow>=11.3.0` (khử lỗi thời `<11.0.0`), đồng bộ `pymilvus>=2.6.0,<2.7.0` và `neo4j>=5.23.0,<5.27.0`.
 7. **[docs/DEVELOPMENT.md](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/DEVELOPMENT.md)**:
    - Bổ sung tài liệu hướng dẫn quản trị phụ thuộc, phân tầng kiến trúc 3-Tier và các jobs trong Continuous Radar.
+8. **[scripts/chatops_daemon.py](file:///home/vvc/Codebase/dgx-spark-toolkit/scripts/chatops_daemon.py)** *(PR #64)*:
+   - Thêm nút `[📦 Quản Lý Phụ Thuộc (MỚI)]` (`menu:deps_menu`) vào Menu Dashboard Telegram.
+   - Xây dựng Sub-menu `get_deps_menu_markup()` với 3 tác vụ: Rà soát (`/deps`), Nâng cấp Tier 1 Patch, Nâng cấp Tier 2 Minor.
+   - Thêm bộ xử lý callback queries kèm xác thực 2-bước (Two-phase confirmation) cho các thao tác nâng cấp.
+   - Hỗ trợ đầy đủ lệnh gõ tay `/deps` và `/upgrade_deps [patch|minor]`.
+   - Cập nhật toàn diện test suite trong [tests/test_chatops.py](file:///home/vvc/Codebase/dgx-spark-toolkit/tests/test_chatops.py) (42/42 tests passed).
 
 ---
 
@@ -77,6 +83,8 @@ Mã nguồn đã vượt qua 100% các cổng kiểm định cục bộ trước
 | **Frontend Typecheck** | `npm --prefix services/frontend run typecheck` | **PASS (0 errors)** | `tsc --noEmit` đạt 0 lỗi (`RULE-2.8`) |
 | **Frontend Build & Budget** | `npm --prefix services/frontend run build` | **PASS (5.28s)** | Cả 5 chunks đều nằm an toàn dưới ngưỡng trần (`RULE-2.7`) |
 | **Backend Flake8** | `flake8 services/rag-service/ --config=...` | **PASS (0 errors)** | Chuẩn hóa PEP8 |
+| **ChatOps Flake8** | `flake8 scripts/chatops_daemon.py tests/test_chatops.py` | **PASS (0 errors)** | Chuẩn hóa PEP8 |
+| **ChatOps Test Suite** | `pytest tests/test_chatops.py` | **PASS (42/42 passed in 4.62s)** | Toàn bộ 42 tests cho menu Telegram đạt chuẩn |
 | **Backend Unit Tests** | `pytest tests/ -k "not live and not integration"` | **PASS (474/474 passed in 10.11s)** | Lưới bảo vệ 474 tests hoàn toàn xanh |
 | **Full Security Audit** | `./scripts/check_dependency_updates.sh --audit` | **PASS (0 CVEs)** | Sạch hoàn toàn trên cả CI, App Lockfile và Frontend |
-| **ADR-0058 Verification Harness** | `python -m ccba_harness verify-patch` | **✅ ALL PASSED (5/5)** | Exit code 0 tuyệt đối |
+| **ADR-0058 Verification Harness** | `python -m ccba_harness verify-patch` | **✅ ALL PASSED** | Exit code 0 tuyệt đối |

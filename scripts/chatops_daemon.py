@@ -909,7 +909,7 @@ def reset_failed_pin_attempts() -> None:
 
 # --- 7. DASHBOARD MENUS BUILDER ---
 def get_main_dashboard_markup() -> Dict[str, Any]:
-    """Builds the main interactive dashboard keyboard (10 buttons, 5 rows)."""
+    """Builds the main interactive dashboard keyboard (11 buttons, 6 rows)."""
     return {
         "inline_keyboard": [
             [
@@ -930,7 +930,28 @@ def get_main_dashboard_markup() -> Dict[str, Any]:
             ],
             [
                 {"text": "📄 Hàng Đợi RAG Ingestion", "callback_data": "menu:rag_state"},
+                {"text": "📦 Quản Lý Phụ Thuộc (MỚI)", "callback_data": "menu:deps_menu"},
+            ],
+            [
                 {"text": "❓ Hướng Dẫn ChatOps", "callback_data": "menu:help"},
+            ],
+        ]
+    }
+
+
+def get_deps_menu_markup() -> Dict[str, Any]:
+    """Builds sub-menu for dependency management and 1-click upgrades."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🔍 Rà Soát Độ Trễ & CVE (/deps)", "callback_data": "menu:deps_check"},
+            ],
+            [
+                {"text": "⚡ Nâng Cấp Tier 1 (Patch)", "callback_data": "menu:deps_upg_patch"},
+                {"text": "🚀 Nâng Cấp Tier 2 (Minor)", "callback_data": "menu:deps_upg_minor"},
+            ],
+            [
+                {"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"},
             ],
         ]
     }
@@ -1444,6 +1465,72 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
         elif data == "menu:rag_state":
             await dispatch_command("rag.ingestion.state", {}, chat_id, message_id, cq_id=cq_id)
             return
+        elif data == "menu:deps_menu":
+            await answer_callback(cq_id)
+            deps_text = (
+                "📦 *QUẢN LÝ PHỤ THUỘC (DEPENDENCY LIFECYCLE)* 📦\n\n"
+                "Vui lòng chọn tác vụ kiểm tra hoặc nâng cấp bên dưới:\n"
+                "• *Rà soát:* Quét phiên bản lỗi thời & CVE bảo mật trên toàn hệ thống.\n"
+                "• *Tier 1 (Patch):* Nâng cấp bản vá an toàn 1-Click (0 CVE, regression check).\n"
+                "• *Tier 2 (Minor):* Nâng cấp tính năng mới có khóa bundle budget & typecheck."
+            )
+            if not await edit_telegram_msg(chat_id, message_id, deps_text, reply_markup=get_deps_menu_markup()):
+                await send_telegram_msg(chat_id, deps_text, reply_markup=get_deps_menu_markup())
+            return
+        elif data == "menu:deps_check":
+            await answer_callback(cq_id, "🔍 Đang rà soát phụ thuộc...")
+            await dispatch_command("system.deps.check", {}, chat_id, message_id, title="Rà soát phụ thuộc & bảo mật", cq_id=cq_id)
+            return
+        elif data == "menu:deps_upg_patch":
+            await answer_callback(cq_id)
+            nonce = hashlib.sha256(f"deps_upg_patch_{time.time()}".encode()).hexdigest()[:8]
+            action_cache[nonce] = {
+                "command": "system.deps.upgrade",
+                "params": {"tier": "patch"},
+                "title": "Nâng cấp phụ thuộc Tier 1 (Patch)",
+                "timeout": 300,
+                "expires": time.time() + 60,
+            }
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "⚡ XÁC NHẬN NÂNG CẤP TIER 1 (PATCH)", "callback_data": f"act:{nonce}"}],
+                    [{"text": "🔙 Quay Lại Menu Phụ Thuộc", "callback_data": "menu:deps_menu"}],
+                ]
+            }
+            confirm_text = (
+                "⚠️ *XÁC NHẬN NÂNG CẤP PHỤ THUỘC TIER 1 (PATCH)*\n\n"
+                "Thao tác này sẽ tự động cập nhật các bản vá lỗi bảo mật (Fast-track) "
+                "và chạy cổng kiểm định ADR-0058 Hard Completion Lock.\n\n"
+                "Bạn có muốn tiếp tục?"
+            )
+            if not await edit_telegram_msg(chat_id, message_id, confirm_text, reply_markup=markup):
+                await send_telegram_msg(chat_id, confirm_text, reply_markup=markup)
+            return
+        elif data == "menu:deps_upg_minor":
+            await answer_callback(cq_id)
+            nonce = hashlib.sha256(f"deps_upg_minor_{time.time()}".encode()).hexdigest()[:8]
+            action_cache[nonce] = {
+                "command": "system.deps.upgrade",
+                "params": {"tier": "minor"},
+                "title": "Nâng cấp phụ thuộc Tier 2 (Minor)",
+                "timeout": 300,
+                "expires": time.time() + 60,
+            }
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "🚀 XÁC NHẬN NÂNG CẤP TIER 2 (MINOR)", "callback_data": f"act:{nonce}"}],
+                    [{"text": "🔙 Quay Lại Menu Phụ Thuộc", "callback_data": "menu:deps_menu"}],
+                ]
+            }
+            confirm_text = (
+                "⚠️ *XÁC NHẬN NÂNG CẤP PHỤ THUỘC TIER 2 (MINOR)*\n\n"
+                "Thao tác này sẽ nâng cấp các phiên bản Minor tương thích SemVer, "
+                "tái biên dịch lockfile bằng uv và kiểm tra nghiêm ngặt ngưỡng Frontend Bundle Budget (`RULE-2.7`).\n\n"
+                "Bạn có muốn tiếp tục?"
+            )
+            if not await edit_telegram_msg(chat_id, message_id, confirm_text, reply_markup=markup):
+                await send_telegram_msg(chat_id, confirm_text, reply_markup=markup)
+            return
         elif data == "menu:autotuner":
             await dispatch_command("ccba.autotuner.status", {}, chat_id, message_id, cq_id=cq_id)
             return
@@ -1580,6 +1667,8 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 "• `/gpu`: Xem nhiệt độ, VRAM GPU Blackwell GB10.\n"
                 "• `/autotuner`: Kiểm tra tiến độ Nightly Auto-Tuner CCBA.\n"
                 "• `/rag_state`: Xem tiến độ hàng đợi RAG Ingestion.\n"
+                "• `/deps`: Rà soát độ trễ phiên bản và lỗ hổng bảo mật phụ thuộc.\n"
+                "• `/upgrade_deps [patch|minor]`: Nâng cấp phụ thuộc 1-Click kèm Hard Completion Lock.\n"
                 "• `/restart <service>`: Khởi động lại container.\n"
                 "• `/upgrade_owu`: Nâng cấp Open WebUI.\n"
                 "• `/boost <skill>`: Tăng cường suy luận sâu cho kỹ năng bị kẹt (ADR-0052).\n"
@@ -1692,7 +1781,28 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 await dispatch_command("ccba.autotuner.status", {}, chat_id, sent_id)
             return
 
-        # 4b. /help
+        # 4b. /deps
+        if text == "/deps" or text.startswith("/deps@") or text.startswith("/deps "):
+            sent_id = await send_telegram_msg(chat_id, "⏳ Đang rà soát phụ thuộc & kiểm tra bảo mật...")
+            if sent_id:
+                await dispatch_command("system.deps.check", {}, chat_id, sent_id, title="Rà soát phụ thuộc & bảo mật")
+            return
+
+        # 4c. /upgrade_deps [patch|minor]
+        if text == "/upgrade_deps" or text.startswith("/upgrade_deps@") or text.startswith("/upgrade_deps "):
+            parts = text.split(maxsplit=1)
+            tier = "patch"
+            if len(parts) > 1:
+                tier = parts[1].strip().lower()
+            if tier not in ["patch", "minor"]:
+                await send_telegram_msg(chat_id, "⚠️ Cú pháp: `/upgrade_deps [patch|minor]` (Mặc định: `patch`)")
+                return
+            sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị nâng cấp phụ thuộc ({tier})...")
+            if sent_id:
+                await dispatch_command("system.deps.upgrade", {"tier": tier}, chat_id, sent_id, title=f"Nâng cấp phụ thuộc ({tier})")
+            return
+
+        # 4d. /help
         if text == "/help" or text.startswith("/help@"):
             help_text = (
                 "❓ *HƯỚNG DẪN SỬ DỤNG DGX-CHATOPS*\n\n"
@@ -1703,6 +1813,8 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 "• `/gpu`: Xem nhiệt độ, VRAM GPU Blackwell GB10.\n"
                 "• `/autotuner`: Kiểm tra tiến độ Nightly Auto-Tuner CCBA.\n"
                 "• `/rag_state`: Xem tiến độ hàng đợi RAG Ingestion.\n"
+                "• `/deps`: Rà soát độ trễ phiên bản và lỗ hổng bảo mật phụ thuộc.\n"
+                "• `/upgrade_deps [patch|minor]`: Nâng cấp phụ thuộc 1-Click kèm Hard Completion Lock.\n"
                 "• `/restart <service>`: Khởi động lại container.\n"
                 "• `/upgrade_owu`: Nâng cấp Open WebUI.\n"
                 "• `/boost <skill>`: Tăng cường suy luận sâu cho kỹ năng bị kẹt (ADR-0052).\n"
