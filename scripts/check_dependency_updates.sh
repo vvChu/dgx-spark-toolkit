@@ -68,6 +68,11 @@ for arg in "$@"; do
     esac
 done
 
+if [[ "$MODE" == "upgrade" && "$UPGRADE_TIER" != "patch" && "$UPGRADE_TIER" != "minor" ]]; then
+    echo -e "${RED}Invalid upgrade tier: '${UPGRADE_TIER}'. Allowed values: patch, minor.${NC}"
+    exit 1
+fi
+
 # Resolve Python Executable deterministically (RULE-5.1)
 PYTHON_BIN=""
 if [[ -x "${RAG_DIR}/venv/bin/python" ]]; then
@@ -120,24 +125,25 @@ if [[ "$MODE" == "upgrade" ]]; then
 
     # 2. Backend Recompile Lockfile
     echo -e "\n${BOLD}>>> [2/3] Recompiling Deterministic Backend Lockfile...${NC}"
-    if command -v uv &>/dev/null; then
-        echo -e "Compiling ${CYAN}requirements-app.in${NC} -> ${CYAN}requirements-app.lock${NC} with Blackwell GPU exclusions..."
-        uv pip compile "${RAG_DIR}/requirements-app.in" \
-          --upgrade \
-          --no-emit-package torch --no-emit-package torchvision --no-emit-package torchaudio \
-          --no-emit-package vllm --no-emit-package triton \
-          --no-emit-package transformers --no-emit-package tokenizers \
-          --no-emit-package huggingface-hub --no-emit-package safetensors \
-          --no-emit-package cuda-bindings --no-emit-package cuda-pathfinder --no-emit-package cuda-toolkit \
-          --no-emit-package nvidia-cublas --no-emit-package nvidia-cuda-cupti --no-emit-package nvidia-cuda-nvrtc \
-          --no-emit-package nvidia-cuda-runtime --no-emit-package nvidia-cudnn-cu13 --no-emit-package nvidia-cufft \
-          --no-emit-package nvidia-cufile --no-emit-package nvidia-curand --no-emit-package nvidia-cusolver \
-          --no-emit-package nvidia-cusparse --no-emit-package nvidia-cusparselt-cu13 --no-emit-package nvidia-nccl-cu13 \
-          --no-emit-package nvidia-nvjitlink --no-emit-package nvidia-nvshmem-cu13 --no-emit-package nvidia-nvtx \
-          -o "${RAG_DIR}/requirements-app.lock"
-    else
-        echo -e "${YELLOW}'uv' not found. Skipping backend lockfile recompilation.${NC}"
+    if ! command -v uv &>/dev/null; then
+        echo -e "${RED}Error: 'uv' executable is required to recompile deterministic backend lockfile.${NC}"
+        exit 1
     fi
+
+    echo -e "Compiling ${CYAN}requirements-app.in${NC} -> ${CYAN}requirements-app.lock${NC} with 27 Blackwell GPU exclusions..."
+    uv pip compile "${RAG_DIR}/requirements-app.in" \
+      --upgrade \
+      --no-emit-package torch --no-emit-package torchvision --no-emit-package torchaudio \
+      --no-emit-package vllm --no-emit-package triton \
+      --no-emit-package transformers --no-emit-package tokenizers \
+      --no-emit-package huggingface-hub --no-emit-package safetensors \
+      --no-emit-package cuda-bindings --no-emit-package cuda-pathfinder --no-emit-package cuda-toolkit \
+      --no-emit-package nvidia-cublas --no-emit-package nvidia-cuda-cupti --no-emit-package nvidia-cuda-nvrtc \
+      --no-emit-package nvidia-cuda-runtime --no-emit-package nvidia-cudnn-cu13 --no-emit-package nvidia-cufft \
+      --no-emit-package nvidia-cufile --no-emit-package nvidia-curand --no-emit-package nvidia-cusolver \
+      --no-emit-package nvidia-cusparse --no-emit-package nvidia-cusparselt-cu13 --no-emit-package nvidia-nccl-cu13 \
+      --no-emit-package nvidia-nvjitlink --no-emit-package nvidia-nvshmem-cu13 --no-emit-package nvidia-nvtx \
+      -o "${RAG_DIR}/requirements-app.lock"
 
     # 3. Deterministic Verification Gate (ADR-0058 Hard Completion Lock)
     echo -e "\n${BOLD}>>> [3/3] Running Deterministic Verification Gate (ADR-0058)...${NC}"
@@ -230,8 +236,8 @@ if [[ "$MODE" == "all" || "$MODE" == "audit" ]]; then
             if uvx pip-audit -r "${RAG_DIR}/requirements-app.lock"; then
                 echo -e "  Status: ${GREEN}✅ CLEAN (No known vulnerabilities found in App Lockfile)${NC}"
             else
-                echo -e "  Status: ${YELLOW}⚠️  Advisories found in full app lockfile. Review Tier A/B upgrade paths.${NC}"
-                APP_LOCK_WARNINGS=$((APP_LOCK_WARNINGS + 1))
+                echo -e "  Status: ${RED}❌ VULNERABILITIES DETECTED in App Lockfile${NC}"
+                AUDIT_ERRORS=$((AUDIT_ERRORS + 1))
             fi
         fi
     fi

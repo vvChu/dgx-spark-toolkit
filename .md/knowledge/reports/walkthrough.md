@@ -5,7 +5,7 @@
 - **Mục tiêu**: Xây dựng quy trình tối ưu hóa bền vững để bảo đảm toàn bộ phụ thuộc (Frontend & Backend) liên tục được nâng cấp lên phiên bản mới nhất, tự động quét bảo mật định kỳ, triệt tiêu khoảng trống giữa CI và Docker production (Split Reality Gap), cưỡng chế ngân sách bundle Frontend (`RULE-2.7`), và cung cấp công cụ nâng cấp 1-Click tất định bảo vệ trọn vẹn hạ tầng NVIDIA DGX Spark Blackwell GB10.
 - **Trạng thái**: ✅ **HOÀN TẤT TOÀN DIỆN & ĐÃ MỞ PULL REQUEST**.
 - **Pull Request**: [#63 — feat(deps): establish automated continuous dependency radar and 1-click upgrade lifecycle](https://github.com/vvChu/dgx-spark-toolkit/pull/63).
-- **Branch**: [`feat/dependency-upgrade-pipeline`](file:///home/vvc/Codebase/dgx-spark-toolkit) (Commit `a83ff23`).
+- **Branch**: [`feat/dependency-upgrade-pipeline`](file:///home/vvc/Codebase/dgx-spark-toolkit) (Commits `a83ff23` & `1520fe9`).
 
 ---
 
@@ -25,7 +25,7 @@ flowchart TD
 
     subgraph ENGINE["1-Click Upgrade Engine (KISS)"]
         UPGRADE_SH["scripts/check_dependency_updates.sh<br/>--upgrade=patch / --upgrade=minor"]
-        UV_COMPILE["uv pip compile với 24 GPU Blackwell Exclusions"]
+        UV_COMPILE["uv pip compile với 27 GPU Blackwell Exclusions"]
         LOCK_GATE["ADR-0058 Hard Completion Lock<br/>474 Tests + Typecheck + Lint + Budget"]
     end
 
@@ -54,7 +54,7 @@ flowchart TD
      - `GraphPanel`: $\le 200.0\text{ kB}$ `[đo thực tế: 185.63 kB]`
 4. **[scripts/check_dependency_updates.sh](file:///home/vvc/Codebase/dgx-spark-toolkit/scripts/check_dependency_updates.sh)**:
    - Nâng cấp hỗ trợ `--upgrade=patch` (Tier 1) và `--upgrade=minor` (Tier 2).
-   - Tự động bóc tách **24 gói GPU Blackwell** (`torch`, `torchvision`, `vllm`, `triton`, `transformers`, `cuda-*`, `nvidia-*`) khi biên dịch lại lockfile bằng `uv pip compile`.
+   - Tự động bóc tách **27 gói GPU Blackwell** (`torch`, `torchvision`, `vllm`, `triton`, `transformers`, `cuda-*`, `nvidia-*`) khi biên dịch lại lockfile bằng `uv pip compile`.
    - Tự động chạy cổng kiểm định ADR-0058 trước khi xác nhận nâng cấp thành công.
 5. **[scripts/chatops_commands.yaml](file:///home/vvc/Codebase/dgx-spark-toolkit/scripts/chatops_commands.yaml)**:
    - Đăng ký lệnh `/deps` (`risk_tier: READ_ONLY`) để kiểm tra độ trễ phiên bản.
