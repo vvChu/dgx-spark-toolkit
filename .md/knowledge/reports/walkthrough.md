@@ -3,8 +3,9 @@
 ## 1. Tóm Tắt Tác Vụ (Executive Summary)
 
 - **Mục tiêu**: Nâng cấp toàn diện các thư viện Frontend lên phiên bản mới nhất theo yêu cầu (Tier 1, 2, 3), bao gồm React 19.3.0, Framer-Motion 13, Lucide-React 1.48, React-Markdown 10, ESLint 10 và Axios 1.20; đồng thời áp dụng kiến trúc tách chunk `react-vendor` để hạ main bundle xuống dưới 100 kB và triệt tiêu 100% lỗ hổng bảo mật.
-- **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN (100% SUCCESS)**.
-- **Branch**: `chore/upgrade-frontend-dependencies-to-latest`.
+- **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN & ĐÃ SÁP NHẬP VÀO MASTER (MERGED)**.
+- **Pull Request**: [#62](https://github.com/vvChu/dgx-spark-toolkit/pull/62) (Squash & merged at `38372d6`).
+- **Branch**: `chore/upgrade-frontend-dependencies-to-latest` (đã dọn dẹp).
 
 ---
 
