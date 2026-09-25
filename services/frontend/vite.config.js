@@ -15,6 +15,9 @@ export default defineConfig({
             if (id.includes('react-markdown') || id.includes('remark-gfm') || id.includes('unified')) {
               return 'markdown';
             }
+            if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
+              return 'react-vendor';
+            }
           }
         },
       },

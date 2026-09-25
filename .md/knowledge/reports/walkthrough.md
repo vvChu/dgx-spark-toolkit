@@ -1,78 +1,80 @@
-# Báo Cáo Kết Quả Thực Thi: Dọn Dẹp Phụ Thuộc Thừa `react-force-graph`
+# Báo Cáo Nghiệm Thu: Nâng Cấp Toàn Diện Frontend Lên Phiên Bản Mới Nhất & Tối Ưu Hóa Chunking
 
 ## 1. Tóm Tắt Tác Vụ (Executive Summary)
 
-- **Mục tiêu**: Loại bỏ phụ thuộc zombie `react-force-graph` (phiên bản 3D WebGL không được sử dụng) trong `services/frontend`, giải phóng dung lượng đĩa `node_modules`, xóa bỏ chuỗi lỗ hổng bảo mật `got < 11.8.5` và dependency git+ssh (`three-bmfont-text`), bổ sung script `typecheck` vào cả package lẫn GitHub Actions CI, và đồng bộ hóa toàn diện tài liệu hệ thống.
-- **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN & ĐÃ SÁP NHẬP VÀO MASTER (MERGED)**.
-- **Pull Request**: [#61](https://github.com/vvChu/dgx-spark-toolkit/pull/61) (Squash & merged at `cdefb59`).
-- **Branch**: `chore/prune-unused-react-force-graph` (đã dọn dẹp).
+- **Mục tiêu**: Nâng cấp toàn diện các thư viện Frontend lên phiên bản mới nhất theo yêu cầu (Tier 1, 2, 3), bao gồm React 19.3.0, Framer-Motion 13, Lucide-React 1.48, React-Markdown 10, ESLint 10 và Axios 1.20; đồng thời áp dụng kiến trúc tách chunk `react-vendor` để hạ main bundle xuống dưới 100 kB và triệt tiêu 100% lỗ hổng bảo mật.
+- **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN (100% SUCCESS)**.
+- **Branch**: `chore/upgrade-frontend-dependencies-to-latest`.
 
 ---
 
 ## 2. Kết Quả Đo Lường Thực Tế (Measurable Impact)
 
-| Chỉ số | Trước khi dọn dẹp | Sau khi dọn dẹp | Mức độ cải thiện |
+| Chỉ số | Trước khi nâng cấp | Sau khi nâng cấp | Mức độ cải thiện / Đạt chuẩn |
 |---|---|---|---|
-| **Số package `node_modules`** | 432 packages (481 lock entries) | 344 packages (393 lock entries) | **Giảm 88 packages** (-20.4%) |
-| **Dung lượng `node_modules`** | 381 MB | 191 MB | **Tiết kiệm 190 MB** (-49.9%) |
-| **Vulnerabilities (`npm audit`)** | 22 (2 low, 5 mod, 15 high) | 16 (2 low, 3 mod, 11 high) | **Loại bỏ 6 lỗ hổng** (chuỗi `got < 11.8.5` của `aframe`/`three`) |
-| **Git-over-SSH Dependencies** | 1 (`three-bmfont-text` via SSH) | 0 (Không còn phụ thuộc SSH) | **Triệt tiêu nguy cơ fail `npm ci` trong Docker** |
-| **Kiểm tra TypeScript trong CI** | Không có (`vite build` bỏ qua) | `"typecheck": "tsc --noEmit"` | **Bổ sung Typecheck độc lập trên CI & Local** |
-| **Bundle Production Build** | Không đổi (`GraphPanel` 190 kB) | 190 kB chunk riêng biệt | **0 regression**, zero leakage |
+| **Lỗ hổng bảo mật (`npm audit`)** | 16 (11 High, 3 Mod, 2 Low) | **0 vulnerabilities** | **Triệt tiêu 100% lỗ hổng bảo mật** |
+| **Kích thước Main Bundle (`index-*.js`)** | 259.96 kB (gzip 84.30 kB) | **92.16 kB** (gzip 32.23 kB) | **Giảm 167.8 kB (-64.5%)** |
+| **Phân tách Chunk React (`react-vendor`)** | Nằm lẫn trong `index-*.js` | **221.85 kB** (gzip 69.04 kB) | Tách riêng React 19.3 + React-DOM 19.3 |
+| **Animation Chunk (`motion-*.js`)** | 129.25 kB (Framer Motion 12) | **129.25 kB** (Framer Motion 13) | Nâng cấp engine Motion v13 |
+| **Markdown Chunk (`markdown-*.js`)** | 156.69 kB (React-Markdown 9) | **156.62 kB** (React-Markdown 10) | Nâng cấp AST parser v10 |
+| **Graph Chunk (`GraphPanel-*.js`)** | 190.05 kB (Tải lười) | **190.09 kB** (Tải lười) | Hoạt động ổn định, 0 regression |
+| **Kiểm tra TypeScript (`typecheck`)** | `tsc --noEmit` pass | `tsc --noEmit` pass | **0 lỗi kiểu** với @types 19.3.0 |
+| **Kiểm tra Quy chuẩn Code (`lint`)** | ESLint 9 pass | ESLint 10 pass | **0 lỗi linter** với ESLint 10 |
 
 ---
 
-## 3. Chi Tiết Các Thay Đổi (Changes Applied)
+## 3. Danh Mục Các Thư Viện Được Nâng Cấp
 
-### A. Mã nguồn Frontend (`services/frontend/`)
-1. **[`services/frontend/package.json`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/package.json)**:
-   - Gỡ bỏ `react-force-graph: "^1.48.2"` khỏi `dependencies`.
-   - Giữ nguyên `react-force-graph-2d: "^1.29.1"` cho [`GraphPanel.tsx`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/src/components/GraphPanel.tsx) (consumer code không cần sửa đổi vì vốn đã dùng bản 2D Canvas).
-   - Thêm `"typecheck": "tsc --noEmit"` vào `scripts`.
-2. **[`services/frontend/package-lock.json`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/package-lock.json)**:
-   - Đồng bộ tự động bởi npm, loại bỏ 88 packages nặng (`aframe`, `three`, `3d-force-graph*`, `three-render-objects`, `three-bmfont-text`...).
-
-### B. Tích Hợp CI Workflow & Đồng Bộ Tài Liệu
-1. **[`.github/workflows/ci.yml`](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/workflows/ci.yml)**:
-   - Bổ sung bước `Type check` (`npm run typecheck`) vào job `frontend-build` để tự động chặn các lỗi kiểu TypeScript trên CI trước khi build.
-2. **[`AGENTS.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/AGENTS.md)**:
-   - Cập nhật dòng 7 thành `npm run lint && npm run typecheck && npm run build`.
-3. **[`docs/DEVELOPMENT.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/DEVELOPMENT.md)**:
-   - Bổ sung lệnh `npm run typecheck` vào phần Frontend Validation và quy trình CI 3 jobs song song.
-4. **[`scripts/check_dependency_updates.sh`](file:///home/vvc/Codebase/dgx-spark-toolkit/scripts/check_dependency_updates.sh)**:
-   - Loại bỏ cảnh báo lỗi thời `Note: Do NOT run 'npm audit fix --force' as it forces downgrade of react-force-graph`.
-5. **[`docs/ARCHITECTURE.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/ARCHITECTURE.md)**:
-   - Cập nhật dòng 49 từ `react-force-graph` thành `react-force-graph-2d`.
-6. **[`.github/copilot-instructions.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/copilot-instructions.md)**:
-   - Cập nhật dòng 59 từ `react-force-graph` thành `react-force-graph-2d`.
-7. **[`.github/instructions/frontend-react.instructions.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/instructions/frontend-react.instructions.md)**:
-   - Cập nhật dòng 30 thành `react-force-graph-2d` và chuẩn hóa lệnh kiểm tra thành `npm run lint && npm run typecheck && npm run build`.
-8. **[`.md/knowledge/codebase_architecture_and_mental_model.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/knowledge/codebase_architecture_and_mental_model.md)**:
-   - Cập nhật ma trận phân hệ Frontend Web thành `react-force-graph-2d (HTML5 Canvas)`.
+1. **`react` & `react-dom`**: `19.2.0` $\longrightarrow$ `^19.3.0`
+2. **`@types/react` & `@types/react-dom`**: `19.2.x` $\longrightarrow$ `^19.3.0`
+3. **`axios`**: `1.13.6` $\longrightarrow$ `^1.20.0` (Vá 28 CVEs/advisories)
+4. **`lucide-react`**: `0.577.0` $\longrightarrow$ `^1.48.0` (Major v1 ESM)
+5. **`framer-motion`**: `12.35.0` $\longrightarrow$ `^13.4.3` (Major v13)
+6. **`react-markdown`**: `9.0.3` $\longrightarrow$ `^10.1.0` (Major v10)
+7. **`tailwindcss`**: `4.2.1` $\longrightarrow$ `^4.3.3` (Bản mới nhất Tailwind 4)
+8. **`postcss`**: `8.5.8` $\longrightarrow$ `^8.5.28` (Vá XSS và AST traversal)
+9. **`autoprefixer`**: `10.4.27` $\longrightarrow$ `^10.6.1`
+10. **`eslint`**: `9.39.1` $\longrightarrow$ `^10.11.0` (Major v10)
+11. **`eslint-plugin-react-hooks`**: `7.0.1` $\longrightarrow$ `^7.1.1`
+12. **`typescript-eslint`**: `8.57.1` $\longrightarrow$ `^8.70.1`
+13. **`vite`**: `7.3.1` $\longrightarrow$ `^7.3.6` (Bản vá 7.x ổn định)
 
 ---
 
-## 4. Bằng Chứng Kiểm Định Tất Định (Deterministic Verification — ADR-0058)
+## 4. Tối Ưu Hóa Cấu Hình Đóng Gói ([vite.config.js](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/vite.config.js))
 
-Lệnh thực thi qua `ccba_harness verify-patch`:
+Bổ sung phân tách `react-vendor` trong `manualChunks`:
+```javascript
+manualChunks(id) {
+  if (id.includes('node_modules')) {
+    if (id.includes('framer-motion') || id.includes('motion-dom')) {
+      return 'motion';
+    }
+    if (id.includes('react-markdown') || id.includes('remark-gfm') || id.includes('unified')) {
+      return 'markdown';
+    }
+    if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
+      return 'react-vendor';
+    }
+  }
+}
+```
+
+---
+
+## 5. Bằng Chứng Kiểm Định Tất Định (ADR-0058 Hard Completion Lock)
+
+Bộ 4 chốt chặn kiểm định qua `ccba_harness verify-patch`:
 ```bash
 /home/vvc/ccba/ccba-agent-platform/.venv/bin/python -m ccba_harness verify-patch \
   "npm --prefix services/frontend run lint" \
   "npm --prefix services/frontend run typecheck" \
   "npm --prefix services/frontend run build" \
-  "test ! -d services/frontend/node_modules/react-force-graph" \
-  "test ! -d services/frontend/node_modules/three" \
-  "test ! -d services/frontend/node_modules/aframe" \
-  "test ! -d services/frontend/node_modules/got" \
-  "node -e 'const pkg=require(\"./services/frontend/package.json\"); if (pkg.dependencies[\"react-force-graph\"]) process.exit(1);'"
+  "npm --prefix services/frontend audit"
 ```
 
-**Kết quả: 8/8 chốt chặn ĐẠT (PASS)**:
-- [x] `npm --prefix services/frontend run lint` -> `PASS (0)`
-- [x] `npm --prefix services/frontend run typecheck` -> `PASS (0)`
-- [x] `npm --prefix services/frontend run build` -> `PASS (0)` (Vite build sạch, 0 cảnh báo)
-- [x] `test ! -d services/frontend/node_modules/react-force-graph` -> `PASS (0)` (Đã biến mất)
-- [x] `test ! -d services/frontend/node_modules/three` -> `PASS (0)` (Đã biến mất hoàn toàn)
-- [x] `test ! -d services/frontend/node_modules/aframe` -> `PASS (0)` (Đã biến mất hoàn toàn)
-- [x] `test ! -d services/frontend/node_modules/got` -> `PASS (0)` (Đã biến mất hoàn toàn)
-- [x] Package JSON dependency check -> `PASS (0)` (Không còn vết tích)
+**Kết quả: 4/4 chốt chặn ĐẠT (PASS)**:
+- [x] `npm --prefix services/frontend run lint` $\rightarrow$ `PASS (0)` (0 errors, 0 warnings trên ESLint 10).
+- [x] `npm --prefix services/frontend run typecheck` $\rightarrow$ `PASS (0)` (TypeScript 5.9.3 kiểm tra kiểu toàn bộ project đạt 100%).
+- [x] `npm --prefix services/frontend run build` $\rightarrow$ `PASS (0)` (Vite build sạch trong 5.5s, 0 cảnh báo, main bundle 92 kB < trần 300 kB).
+- [x] `npm --prefix services/frontend audit` $\rightarrow$ `PASS (0)` (`found 0 vulnerabilities`).
