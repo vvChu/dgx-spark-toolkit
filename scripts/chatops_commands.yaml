@@ -70,3 +70,23 @@ commands:
     target: "bash /home/vvc/ccba/ccba-agent-platform/scripts/eval/run_boost_worktree.sh {skill}"
     param_rules:
       skill: "^[a-zA-Z0-9_-]+$"
+
+  - id: "system.deps.check"
+    slash: "/deps"
+    description: "Rà soát độ trễ phiên bản và lỗ hổng bảo mật các gói phụ thuộc"
+    risk_tier: "READ_ONLY"
+    service_lock: null
+    runner: "host_script"
+    target: "bash scripts/check_dependency_updates.sh --all"
+
+  - id: "system.deps.upgrade"
+    slash: "/upgrade_deps"
+    description: "Nâng cấp phụ thuộc 1-Click (Tier 1 Patch / Tier 2 Minor) kèm Hard Completion Lock"
+    risk_tier: "MUTATING_OPS"
+    service_lock: "rag-service"
+    is_heavy_op: true
+    timeout_seconds: 300
+    runner: "host_script"
+    target: "bash scripts/check_dependency_updates.sh --upgrade={tier}"
+    param_rules:
+      tier: "^(patch|minor)$"

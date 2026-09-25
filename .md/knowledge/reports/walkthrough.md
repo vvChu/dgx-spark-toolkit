@@ -1,81 +1,82 @@
-# Báo Cáo Nghiệm Thu: Nâng Cấp Toàn Diện Frontend Lên Phiên Bản Mới Nhất & Tối Ưu Hóa Chunking
+# Báo Cáo Nghiệm Thu: Thiết Lập Hệ Thống Continuous Dependency Radar & Nâng Cấp Phụ Thuộc 1-Click
 
 ## 1. Tóm Tắt Tác Vụ (Executive Summary)
 
-- **Mục tiêu**: Nâng cấp toàn diện các thư viện Frontend lên phiên bản mới nhất theo yêu cầu (Tier 1, 2, 3), bao gồm React 19.3.0, Framer-Motion 13, Lucide-React 1.48, React-Markdown 10, ESLint 10 và Axios 1.20; đồng thời áp dụng kiến trúc tách chunk `react-vendor` để hạ main bundle xuống dưới 100 kB và triệt tiêu 100% lỗ hổng bảo mật.
-- **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN & ĐÃ SÁP NHẬP VÀO MASTER (MERGED)**.
-- **Pull Request**: [#62](https://github.com/vvChu/dgx-spark-toolkit/pull/62) (Squash & merged at `38372d6`).
-- **Branch**: `chore/upgrade-frontend-dependencies-to-latest` (đã dọn dẹp).
+- **Mục tiêu**: Xây dựng quy trình tối ưu hóa bền vững để bảo đảm toàn bộ phụ thuộc (Frontend & Backend) liên tục được nâng cấp lên phiên bản mới nhất, tự động quét bảo mật định kỳ, triệt tiêu khoảng trống giữa CI và Docker production (Split Reality Gap), cưỡng chế ngân sách bundle Frontend (`RULE-2.7`), và cung cấp công cụ nâng cấp 1-Click tất định bảo vệ trọn vẹn hạ tầng NVIDIA DGX Spark Blackwell GB10.
+- **Trạng thái**: ✅ **HOÀN TẤT TOÀN DIỆN & ĐÃ MỞ PULL REQUEST**.
+- **Pull Request**: [#63 — feat(deps): establish automated continuous dependency radar and 1-click upgrade lifecycle](https://github.com/vvChu/dgx-spark-toolkit/pull/63).
+- **Branch**: [`feat/dependency-upgrade-pipeline`](file:///home/vvc/Codebase/dgx-spark-toolkit) (Commits `a83ff23` & `1520fe9`).
 
 ---
 
-## 2. Kết Quả Đo Lường Thực Tế (Measurable Impact)
+## 2. Các Thành Phần Kiến Trúc Đã Triển Khai
 
-| Chỉ số | Trước khi nâng cấp | Sau khi nâng cấp | Mức độ cải thiện / Đạt chuẩn |
+```mermaid
+flowchart TD
+    subgraph RADAR["Continuous Dependency Radar"]
+        CRON[".github/workflows/dependency-radar.yml<br/>(02:00 UTC Thứ Hai / Dispatch)"]
+        CHATOPS["ChatOps Integration<br/>/deps & /upgrade_deps"]
+    end
+
+    subgraph CI_PIPELINE["CI Hardening & Gates"]
+        CI_AUDIT["CI Security Audit (.github/workflows/ci.yml)<br/>Quét đồng bộ: requirements-ci.txt + requirements-app.lock"]
+        BUDGET_GATE["Frontend Budget Lock (services/frontend/package.json)<br/>check-budget cưỡng chế RULE-2.7"]
+    end
+
+    subgraph ENGINE["1-Click Upgrade Engine (KISS)"]
+        UPGRADE_SH["scripts/check_dependency_updates.sh<br/>--upgrade=patch / --upgrade=minor"]
+        UV_COMPILE["uv pip compile với 27 GPU Blackwell Exclusions"]
+        LOCK_GATE["ADR-0058 Hard Completion Lock<br/>474 Tests + Typecheck + Lint + Budget"]
+    end
+
+    CRON --> UPGRADE_SH
+    CHATOPS --> UPGRADE_SH
+    UPGRADE_SH --> UV_COMPILE
+    UV_COMPILE --> LOCK_GATE
+    LOCK_GATE --> CI_AUDIT
+    LOCK_GATE --> BUDGET_GATE
+```
+
+### Chi tiết các tệp sửa đổi & tạo mới:
+
+1. **[.github/workflows/dependency-radar.yml](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/workflows/dependency-radar.yml)** *(Tạo mới)*:
+   - Tự động quét định kỳ vào lúc **02:00 UTC Thứ Hai hàng tuần** (09:00 AM VN) hoặc kích hoạt bằng tay (`workflow_dispatch`).
+   - Quét toàn diện: Python outdated (`uv pip`), Backend CI audit, Backend App Lockfile audit, Frontend npm audit.
+   - Xuất báo cáo trực quan vào `$GITHUB_STEP_SUMMARY`.
+2. **[.github/workflows/ci.yml](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/workflows/ci.yml)**:
+   - Bổ sung quét `requirements-app.lock` bên cạnh `requirements-ci.txt` trong job `security-audit`, xóa bỏ hoàn toàn **Split Reality Gap** giữa CI và Dockerfile production.
+3. **[services/frontend/package.json](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/package.json)**:
+   - Nhúng script `"check-budget"` trực tiếp vào lệnh `"build"`, tự động chặn đứng mọi bản cập nhật làm phình dung lượng bundle vượt 5 trần an toàn (`RULE-2.7`):
+     - `index`: $\le 100.0\text{ kB}$ `[đo thực tế: 90.00 kB]`
+     - `react-vendor`: $\le 250.0\text{ kB}$ `[đo thực tế: 216.65 kB]`
+     - `motion`: $\le 150.0\text{ kB}$ `[đo thực tế: 126.22 kB]`
+     - `markdown`: $\le 180.0\text{ kB}$ `[đo thực tế: 152.94 kB]`
+     - `GraphPanel`: $\le 200.0\text{ kB}$ `[đo thực tế: 185.63 kB]`
+4. **[scripts/check_dependency_updates.sh](file:///home/vvc/Codebase/dgx-spark-toolkit/scripts/check_dependency_updates.sh)**:
+   - Nâng cấp hỗ trợ `--upgrade=patch` (Tier 1) và `--upgrade=minor` (Tier 2).
+   - Tự động bóc tách **27 gói GPU Blackwell** (`torch`, `torchvision`, `vllm`, `triton`, `transformers`, `cuda-*`, `nvidia-*`) khi biên dịch lại lockfile bằng `uv pip compile`.
+   - Tự động chạy cổng kiểm định ADR-0058 trước khi xác nhận nâng cấp thành công.
+5. **[scripts/chatops_commands.yaml](file:///home/vvc/Codebase/dgx-spark-toolkit/scripts/chatops_commands.yaml)**:
+   - Đăng ký lệnh `/deps` (`risk_tier: READ_ONLY`) để kiểm tra độ trễ phiên bản.
+   - Đăng ký lệnh `/upgrade_deps` (`risk_tier: MUTATING_OPS`, có khóa dịch vụ `rag-service`).
+6. **[services/rag-service/requirements.txt](file:///home/vvc/Codebase/dgx-spark-toolkit/services/rag-service/requirements.txt)**:
+   - Gỡ bỏ ghim cứng lỗi thời `torch==2.5.1+cu124` và `torchvision==0.20.1+cu124` (thay bằng ghi chú base image Blackwell).
+   - Cập nhật `pillow>=11.3.0` (khử lỗi thời `<11.0.0`), đồng bộ `pymilvus>=2.6.0,<2.7.0` và `neo4j>=5.23.0,<5.27.0`.
+7. **[docs/DEVELOPMENT.md](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/DEVELOPMENT.md)**:
+   - Bổ sung tài liệu hướng dẫn quản trị phụ thuộc, phân tầng kiến trúc 3-Tier và các jobs trong Continuous Radar.
+
+---
+
+## 3. Kết Quả Kiểm Thử & Kiểm Định Tự Động (Quality Gates — ADR-0058)
+
+Mã nguồn đã vượt qua 100% các cổng kiểm định cục bộ trước khi push:
+
+| Cổng kiểm định | Lệnh thực thi | Kết quả | Ghi chú |
 |---|---|---|---|
-| **Lỗ hổng bảo mật (`npm audit`)** | 16 (11 High, 3 Mod, 2 Low) | **0 vulnerabilities** | **Triệt tiêu 100% lỗ hổng bảo mật** |
-| **Kích thước Main Bundle (`index-*.js`)** | 259.96 kB (gzip 84.30 kB) | **92.16 kB** (gzip 32.23 kB) | **Giảm 167.8 kB (-64.5%)** |
-| **Phân tách Chunk React (`react-vendor`)** | Nằm lẫn trong `index-*.js` | **221.85 kB** (gzip 69.04 kB) | Tách riêng React 19.3 + React-DOM 19.3 |
-| **Animation Chunk (`motion-*.js`)** | 129.25 kB (Framer Motion 12) | **129.25 kB** (Framer Motion 13) | Nâng cấp engine Motion v13 |
-| **Markdown Chunk (`markdown-*.js`)** | 156.69 kB (React-Markdown 9) | **156.62 kB** (React-Markdown 10) | Nâng cấp AST parser v10 |
-| **Graph Chunk (`GraphPanel-*.js`)** | 190.05 kB (Tải lười) | **190.09 kB** (Tải lười) | Hoạt động ổn định, 0 regression |
-| **Kiểm tra TypeScript (`typecheck`)** | `tsc --noEmit` pass | `tsc --noEmit` pass | **0 lỗi kiểu** với @types 19.3.0 |
-| **Kiểm tra Quy chuẩn Code (`lint`)** | ESLint 9 pass | ESLint 10 pass | **0 lỗi linter** với ESLint 10 |
-
----
-
-## 3. Danh Mục Các Thư Viện Được Nâng Cấp
-
-1. **`react` & `react-dom`**: `19.2.0` $\longrightarrow$ `^19.3.0`
-2. **`@types/react` & `@types/react-dom`**: `19.2.x` $\longrightarrow$ `^19.3.0`
-3. **`axios`**: `1.13.6` $\longrightarrow$ `^1.20.0` (Vá 28 CVEs/advisories)
-4. **`lucide-react`**: `0.577.0` $\longrightarrow$ `^1.48.0` (Major v1 ESM)
-5. **`framer-motion`**: `12.35.0` $\longrightarrow$ `^13.4.3` (Major v13)
-6. **`react-markdown`**: `9.0.3` $\longrightarrow$ `^10.1.0` (Major v10)
-7. **`tailwindcss`**: `4.2.1` $\longrightarrow$ `^4.3.3` (Bản mới nhất Tailwind 4)
-8. **`postcss`**: `8.5.8` $\longrightarrow$ `^8.5.28` (Vá XSS và AST traversal)
-9. **`autoprefixer`**: `10.4.27` $\longrightarrow$ `^10.6.1`
-10. **`eslint`**: `9.39.1` $\longrightarrow$ `^10.11.0` (Major v10)
-11. **`eslint-plugin-react-hooks`**: `7.0.1` $\longrightarrow$ `^7.1.1`
-12. **`typescript-eslint`**: `8.57.1` $\longrightarrow$ `^8.70.1`
-13. **`vite`**: `7.3.1` $\longrightarrow$ `^7.3.6` (Bản vá 7.x ổn định)
-
----
-
-## 4. Tối Ưu Hóa Cấu Hình Đóng Gói ([vite.config.js](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/vite.config.js))
-
-Bổ sung phân tách `react-vendor` trong `manualChunks`:
-```javascript
-manualChunks(id) {
-  if (id.includes('node_modules')) {
-    if (id.includes('framer-motion') || id.includes('motion-dom')) {
-      return 'motion';
-    }
-    if (id.includes('react-markdown') || id.includes('remark-gfm') || id.includes('unified')) {
-      return 'markdown';
-    }
-    if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
-      return 'react-vendor';
-    }
-  }
-}
-```
-
----
-
-## 5. Bằng Chứng Kiểm Định Tất Định (ADR-0058 Hard Completion Lock)
-
-Bộ 4 chốt chặn kiểm định qua `ccba_harness verify-patch`:
-```bash
-/home/vvc/ccba/ccba-agent-platform/.venv/bin/python -m ccba_harness verify-patch \
-  "npm --prefix services/frontend run lint" \
-  "npm --prefix services/frontend run typecheck" \
-  "npm --prefix services/frontend run build" \
-  "npm --prefix services/frontend audit"
-```
-
-**Kết quả: 4/4 chốt chặn ĐẠT (PASS)**:
-- [x] `npm --prefix services/frontend run lint` $\rightarrow$ `PASS (0)` (0 errors, 0 warnings trên ESLint 10).
-- [x] `npm --prefix services/frontend run typecheck` $\rightarrow$ `PASS (0)` (TypeScript 5.9.3 kiểm tra kiểu toàn bộ project đạt 100%).
-- [x] `npm --prefix services/frontend run build` $\rightarrow$ `PASS (0)` (Vite build sạch trong 5.5s, 0 cảnh báo, main bundle 92 kB < trần 300 kB).
-- [x] `npm --prefix services/frontend audit` $\rightarrow$ `PASS (0)` (`found 0 vulnerabilities`).
+| **Frontend Lint** | `npm --prefix services/frontend run lint` | **PASS (0 errors)** | Tuân thủ nghiêm ngặt ESLint 10 |
+| **Frontend Typecheck** | `npm --prefix services/frontend run typecheck` | **PASS (0 errors)** | `tsc --noEmit` đạt 0 lỗi (`RULE-2.8`) |
+| **Frontend Build & Budget** | `npm --prefix services/frontend run build` | **PASS (5.28s)** | Cả 5 chunks đều nằm an toàn dưới ngưỡng trần (`RULE-2.7`) |
+| **Backend Flake8** | `flake8 services/rag-service/ --config=...` | **PASS (0 errors)** | Chuẩn hóa PEP8 |
+| **Backend Unit Tests** | `pytest tests/ -k "not live and not integration"` | **PASS (474/474 passed in 10.11s)** | Lưới bảo vệ 474 tests hoàn toàn xanh |
+| **Full Security Audit** | `./scripts/check_dependency_updates.sh --audit` | **PASS (0 CVEs)** | Sạch hoàn toàn trên cả CI, App Lockfile và Frontend |
+| **ADR-0058 Verification Harness** | `python -m ccba_harness verify-patch` | **✅ ALL PASSED (5/5)** | Exit code 0 tuyệt đối |

@@ -1,7 +1,7 @@
 # RAG Service Python Dependencies
 
-# Milvus client
-pymilvus>=2.3.0
+# Milvus client (Aligned with Milvus server container v2.6.14)
+pymilvus>=2.6.0,<2.7.0
 
 # Embeddings - BGE-M3
 FlagEmbedding[sparse]>=1.2.0
@@ -13,11 +13,11 @@ pdfplumber>=0.10.0
 # paddleocr>=2.7.0
 # paddlepaddle>=2.6.0
 surya-ocr==0.17.1
-# PyTorch — pinned to CUDA 12.4 build matching the Blackwell driver on DGX Spark.
-# Install via: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-torch==2.5.1+cu124
-torchvision==0.20.1+cu124
-pillow<11.0.0
+# PyTorch & Hardware-bound libraries: Pre-baked in Docker base image (hellohal2064/vllm-qwen3.5-gb10:blackwell-sm121)
+# For local CPU dev: pip install torch torchvision
+# torch>=2.5.0
+# torchvision>=0.20.0
+pillow>=11.3.0
 opencv-python-headless>=4.8.0,<5.0.0
 
 # NeMo (optional, for advanced extraction)
@@ -36,7 +36,7 @@ prometheus_client>=0.20.0,<1.0.0
 python-docx>=1.1.0,<2.0.0
 # Ingestion
 watchdog>=3.0.0,<5.0.0
-neo4j==5.23.1
+neo4j>=5.23.0,<5.27.0
 sqlalchemy>=2.0.0,<3.0.0
 psycopg2-binary>=2.9.0,<3.0.0
 redis>=5.0.0,<6.0.0
