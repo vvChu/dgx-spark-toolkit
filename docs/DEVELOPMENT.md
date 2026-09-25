@@ -40,6 +40,22 @@ Check PEP8 compliance and type standards:
 flake8 services/rag-service/ --config=services/rag-service/.flake8
 ```
 
+### Dependency Management & Security Audit
+Located in `scripts/check_dependency_updates.sh` (implements CCBA 3-Tier Upgrade Lifecycle):
+```bash
+# Check outdated dependencies across Backend & Frontend
+./scripts/check_dependency_updates.sh --outdated
+
+# Run security vulnerability audit (pip-audit on CI & lockfile, npm audit)
+./scripts/check_dependency_updates.sh --audit
+
+# 1-Click Tier 1 upgrade (patch bumps, 0 CVE)
+./scripts/check_dependency_updates.sh --upgrade=patch
+
+# 1-Click Tier 2 upgrade (minor bumps, bundle budget & typecheck lock)
+./scripts/check_dependency_updates.sh --upgrade=minor
+```
+
 ### Operational & Audit Scripts
 Located in `services/rag-service/scripts/` (requires running infrastructure):
 ```bash
@@ -50,12 +66,15 @@ python3 services/rag-service/scripts/smoke_test.py
 python3 services/rag-service/scripts/comprehensive_audit.py
 ```
 
-## Continuous Integration (GitHub Actions)
+## Continuous Integration & Continuous Radar
 
-On every push or PR to `master`, CI executes 3 parallel jobs:
-1. **`backend-tests`**: Python 3.12, installs `requirements-ci.txt` (excluding heavy GPU packages like torch/surya), executes `pytest tests/ -v --timeout=60`.
-2. **`frontend-build`**: Node 20, runs `npm ci && npm run lint && npm run typecheck && npm run build`.
+On every push or PR to `master`, CI executes 4 parallel jobs in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml):
+1. **`backend-tests`**: Python 3.12, installs `requirements-ci.txt`, executes `pytest tests/ -v --timeout=60`.
+2. **`frontend-build`**: Node 20, runs `npm ci && npm run lint && npm run typecheck && npm run build` (with bundle budget enforcement via `check-budget`).
 3. **`lint`**: Executes `flake8` on the RAG service with `--max-line-length=150`.
+4. **`security-audit`**: Runs `pip-audit` on both `requirements-ci.txt` and `requirements-app.lock`, plus `npm audit --omit=dev --audit-level=critical`.
+
+Additionally, [`.github/workflows/dependency-radar.yml`](../.github/workflows/dependency-radar.yml) runs every Monday at 02:00 UTC (or manually via `workflow_dispatch`) to proactively scan outdated packages and publish reports to GitHub Summary.
 
 ## Environment Variables
 
