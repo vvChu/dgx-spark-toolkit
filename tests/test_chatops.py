@@ -939,13 +939,16 @@ def test_execute_shell_job_two_phase_termination_sigkill_escalation():
     asyncio.run(_test())
 
 
-def test_main_dashboard_markup_10_buttons():
-    """Verify main dashboard markup has 10 buttons across 5 rows."""
+def test_main_dashboard_markup_11_buttons():
+    """Verify main dashboard markup has 11 buttons across 6 rows."""
     markup = daemon.get_main_dashboard_markup()
     keyboard = markup["inline_keyboard"]
-    assert len(keyboard) == 5
-    for row in keyboard:
-        assert len(row) == 2
+    assert len(keyboard) == 6
+    for i, row in enumerate(keyboard):
+        if i == 5:
+            assert len(row) == 1
+        else:
+            assert len(row) == 2
 
     callbacks = [btn["callback_data"] for row in keyboard for btn in row]
     assert "menu:status" in callbacks
@@ -957,6 +960,7 @@ def test_main_dashboard_markup_10_buttons():
     assert "menu:autotuner" in callbacks
     assert "menu:boost_list" in callbacks
     assert "menu:rag_state" in callbacks
+    assert "menu:deps_menu" in callbacks
     assert "menu:help" in callbacks
 
 
@@ -1484,6 +1488,144 @@ def test_cancelled_error_subprocess_reaping():
                 pass
             mock_proc_pg.kill.assert_called_once()
             mock_proc_pg.wait.assert_called_once()
+
+    asyncio.run(_test())
+
+
+def test_deps_submenu_markup():
+    """Verify get_deps_menu_markup contains required action buttons and back button."""
+    markup = daemon.get_deps_menu_markup()
+    keyboard = markup["inline_keyboard"]
+    callbacks = [btn["callback_data"] for row in keyboard for btn in row]
+    assert "menu:deps_check" in callbacks
+    assert "menu:deps_upg_patch" in callbacks
+    assert "menu:deps_upg_minor" in callbacks
+    assert "menu:main" in callbacks
+
+
+def test_callback_deps_menu_and_actions():
+    """Verify callback queries for deps menu, check, and upgrade confirmations."""
+    async def _test():
+        # 1. menu:deps_menu
+        cq_menu = {
+            "callback_query": {
+                "id": "cq_deps_menu",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"chat": {"id": daemon.ADMIN_USER_ID}, "message_id": 8801},
+                "data": "menu:deps_menu",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_ans, \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit:
+            mock_edit.return_value = True
+            await daemon.process_telegram_update(cq_menu)
+            mock_ans.assert_called_once_with("cq_deps_menu")
+            mock_edit.assert_called_once()
+            assert "QUẢN LÝ PHỤ THUỘC" in mock_edit.call_args[0][2]
+
+        # 2. menu:deps_check
+        cq_check = {
+            "callback_query": {
+                "id": "cq_deps_chk",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"chat": {"id": daemon.ADMIN_USER_ID}, "message_id": 8802},
+                "data": "menu:deps_check",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_ans, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_disp:
+            await daemon.process_telegram_update(cq_check)
+            mock_ans.assert_called_once_with("cq_deps_chk", "🔍 Đang rà soát phụ thuộc...")
+            mock_disp.assert_called_once_with("system.deps.check", {}, daemon.ADMIN_USER_ID, 8802, title="Rà soát phụ thuộc & bảo mật", cq_id="cq_deps_chk")
+
+        # 3. menu:deps_upg_patch
+        cq_patch = {
+            "callback_query": {
+                "id": "cq_deps_patch",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"chat": {"id": daemon.ADMIN_USER_ID}, "message_id": 8803},
+                "data": "menu:deps_upg_patch",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_ans, \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit:
+            mock_edit.return_value = True
+            await daemon.process_telegram_update(cq_patch)
+            mock_ans.assert_called_once_with("cq_deps_patch")
+            mock_edit.assert_called_once()
+            assert "TIER 1 (PATCH)" in mock_edit.call_args[0][2]
+
+        # 4. menu:deps_upg_minor
+        cq_minor = {
+            "callback_query": {
+                "id": "cq_deps_minor",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"chat": {"id": daemon.ADMIN_USER_ID}, "message_id": 8804},
+                "data": "menu:deps_upg_minor",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_ans, \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit:
+            mock_edit.return_value = True
+            await daemon.process_telegram_update(cq_minor)
+            mock_ans.assert_called_once_with("cq_deps_minor")
+            mock_edit.assert_called_once()
+            assert "TIER 2 (MINOR)" in mock_edit.call_args[0][2]
+
+    asyncio.run(_test())
+
+
+def test_message_deps_and_upgrade_deps():
+    """Verify /deps and /upgrade_deps text messages trigger command dispatch."""
+    async def _test():
+        # 1. /deps
+        msg_deps = {
+            "message": {
+                "message_id": 9901,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/deps",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_disp:
+            mock_send.return_value = 9902
+            await daemon.process_telegram_update(msg_deps)
+            mock_send.assert_called_once()
+            mock_disp.assert_called_once_with("system.deps.check", {}, daemon.ADMIN_USER_ID, 9902, title="Rà soát phụ thuộc & bảo mật")
+
+        # 2. /upgrade_deps minor
+        msg_upg = {
+            "message": {
+                "message_id": 9903,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/upgrade_deps minor",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_disp:
+            mock_send.return_value = 9904
+            await daemon.process_telegram_update(msg_upg)
+            mock_send.assert_called_once()
+            mock_disp.assert_called_once_with("system.deps.upgrade", {"tier": "minor"}, daemon.ADMIN_USER_ID, 9904, title="Nâng cấp phụ thuộc (minor)")
+
+        # 3. /upgrade_deps invalid
+        msg_invalid = {
+            "message": {
+                "message_id": 9905,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/upgrade_deps major",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
+            await daemon.process_telegram_update(msg_invalid)
+            mock_send.assert_called_once()
+            assert "Cú pháp: `/upgrade_deps [patch|minor]`" in mock_send.call_args[0][1]
 
     asyncio.run(_test())
 
