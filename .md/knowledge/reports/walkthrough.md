@@ -1,62 +1,77 @@
-# Báo cáo Nghiệm thu: Tối ưu Bundle Size Frontend (Issue #57)
+# Báo Cáo Kết Quả Thực Thi: Dọn Dẹp Phụ Thuộc Thừa `react-force-graph`
 
-- **Mã Issue:** [#57](https://github.com/vvChu/dgx-spark-toolkit/issues/57) (`perf(frontend): Optimize bundle size with dynamic code-splitting for GraphPanel`)
-- **Nhánh thực hiện:** `perf/issue-57-optimize-bundle-graphpanel`
-- **Trạng thái:** ✅ **HOÀN TẤT & ĐẠT 100% TIÊU CHÍ NGHIỆM THU**
+## 1. Tóm Tắt Tác Vụ (Executive Summary)
 
----
-
-## 1. Kết Quả Đo Lường Hiệu Năng Thực Tế (Before vs After)
-
-| Chỉ số | Trước tối ưu (Baseline) | Sau tối ưu (Optimized) | Mức cải thiện |
-| :--- | :--- | :--- | :--- |
-| **Initial Bundle (`index-*.js`)** | **737.98 kB** (gzip: 238.32 kB) | **259.96 kB** (gzip: 84.30 kB) | **Giảm 478.02 kB (-64.8%)** 🚀 |
-| **Cảnh báo Vite (`> 500 kB`)** | ⚠️ `(!) Some chunks are larger than 500 kB` |  **0 cảnh báo (Sạch 100%)** | Đạt chuẩn hiệu năng Vite |
-| **Vendor Chunks** | Dồn chung vào `index-*.js` | Phân tách riêng: `markdown` (156.7 kB), `motion` (130.8 kB) | Tận dụng bộ nhớ đệm HTTP dài hạn |
-| **Graph Chunk (`GraphPanel-*.js`)** | Nạp ngay từ đầu (blocking) | **190.05 kB** (chỉ nạp On-Demand khi mở tab) | Giảm tải initial payload |
+- **Mục tiêu**: Loại bỏ phụ thuộc zombie `react-force-graph` (phiên bản 3D WebGL không được sử dụng) trong `services/frontend`, giải phóng dung lượng đĩa `node_modules`, xóa bỏ chuỗi lỗ hổng bảo mật `got < 11.8.5` và dependency git+ssh (`three-bmfont-text`), bổ sung script `typecheck` vào cả package lẫn GitHub Actions CI, và đồng bộ hóa toàn diện tài liệu hệ thống.
+- **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN (100% SUCCESS — ĐÃ ĐƯỢC DEEPINVESTIGATOR THẨM ĐỊNH)**.
+- **Branch**: `chore/prune-unused-react-force-graph`.
 
 ---
 
-## 2. Chi Tiết Các Tệp Đã Chỉnh Sửa
+## 2. Kết Quả Đo Lường Thực Tế (Measurable Impact)
 
-### 1. [services/frontend/vite.config.js](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/vite.config.js)
-Bổ sung `build.rollupOptions.output.manualChunks` để chia tách vendor modules:
-- Chunk `motion`: gom `framer-motion` và `motion-dom`.
-- Chunk `markdown`: gom `react-markdown`, `remark-gfm`, `unified`.
-
-### 2. [services/frontend/src/App.tsx](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/src/App.tsx)
-- Chuyển `GraphPanel` sang dynamic import bằng `React.lazy(() => import('./components/GraphPanel'))`.
-- Bọc component trong `<Suspense key="graph" fallback={...}>` với fallback spinner `Loader2` màu `text-blue-500` và thuộc tính A11y (`role="status"`, `aria-live="polite"`).
-- Gán `key` trực tiếp cho mọi con của `<AnimatePresence mode="wait">` (`key="chat"`, `key="graph"`, `key="benchmarking"`, `key="compliance"`) để bảo vệ exit/enter animation khi chuyển đổi giữa các tab.
+| Chỉ số | Trước khi dọn dẹp | Sau khi dọn dẹp | Mức độ cải thiện |
+|---|---|---|---|
+| **Số package `node_modules`** | 432 packages (481 lock entries) | 344 packages (393 lock entries) | **Giảm 88 packages** (-20.4%) |
+| **Dung lượng `node_modules`** | 381 MB | 191 MB | **Tiết kiệm 190 MB** (-49.9%) |
+| **Vulnerabilities (`npm audit`)** | 22 (2 low, 5 mod, 15 high) | 16 (2 low, 3 mod, 11 high) | **Loại bỏ 6 lỗ hổng** (chuỗi `got < 11.8.5` của `aframe`/`three`) |
+| **Git-over-SSH Dependencies** | 1 (`three-bmfont-text` via SSH) | 0 (Không còn phụ thuộc SSH) | **Triệt tiêu nguy cơ fail `npm ci` trong Docker** |
+| **Kiểm tra TypeScript trong CI** | Không có (`vite build` bỏ qua) | `"typecheck": "tsc --noEmit"` | **Bổ sung Typecheck độc lập trên CI & Local** |
+| **Bundle Production Build** | Không đổi (`GraphPanel` 190 kB) | 190 kB chunk riêng biệt | **0 regression**, zero leakage |
 
 ---
 
-## 3. Kết Quả Cổng Kiểm Định Tự Động (Quality Gates — ADR-0058)
+## 3. Chi Tiết Các Thay Đổi (Changes Applied)
 
-### ✅ ESLint Gate
-```bash
-npm --prefix services/frontend run lint
-```
-- **Kết quả:** Code 0, không có lỗi định dạng hay kiểu dữ liệu.
+### A. Mã nguồn Frontend (`services/frontend/`)
+1. **[`services/frontend/package.json`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/package.json)**:
+   - Gỡ bỏ `react-force-graph: "^1.48.2"` khỏi `dependencies`.
+   - Giữ nguyên `react-force-graph-2d: "^1.29.1"` cho [`GraphPanel.tsx`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/src/components/GraphPanel.tsx) (consumer code không cần sửa đổi vì vốn đã dùng bản 2D Canvas).
+   - Thêm `"typecheck": "tsc --noEmit"` vào `scripts`.
+2. **[`services/frontend/package-lock.json`](file:///home/vvc/Codebase/dgx-spark-toolkit/services/frontend/package-lock.json)**:
+   - Đồng bộ tự động bởi npm, loại bỏ 88 packages nặng (`aframe`, `three`, `3d-force-graph*`, `three-render-objects`, `three-bmfont-text`...).
 
-### ✅ Build & Bundle Gate
-```bash
-npm --prefix services/frontend run build
-```
-- **Kết quả:** Code 0, build thành công trong 2.26s. Kích thước `index-*.js` đạt 259.96 kB (< 300 kB), không có bất kỳ warning nào.
+### B. Tích Hợp CI Workflow & Đồng Bộ Tài Liệu
+1. **[`.github/workflows/ci.yml`](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/workflows/ci.yml)**:
+   - Bổ sung bước `Type check` (`npm run typecheck`) vào job `frontend-build` để tự động chặn các lỗi kiểu TypeScript trên CI trước khi build.
+2. **[`AGENTS.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/AGENTS.md)**:
+   - Cập nhật dòng 7 thành `npm run lint && npm run typecheck && npm run build`.
+3. **[`docs/DEVELOPMENT.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/DEVELOPMENT.md)**:
+   - Bổ sung lệnh `npm run typecheck` vào phần Frontend Validation và quy trình CI 3 jobs song song.
+4. **[`scripts/check_dependency_updates.sh`](file:///home/vvc/Codebase/dgx-spark-toolkit/scripts/check_dependency_updates.sh)**:
+   - Loại bỏ cảnh báo lỗi thời `Note: Do NOT run 'npm audit fix --force' as it forces downgrade of react-force-graph`.
+5. **[`docs/ARCHITECTURE.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/ARCHITECTURE.md)**:
+   - Cập nhật dòng 49 từ `react-force-graph` thành `react-force-graph-2d`.
+6. **[`.github/copilot-instructions.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/copilot-instructions.md)**:
+   - Cập nhật dòng 59 từ `react-force-graph` thành `react-force-graph-2d`.
+7. **[`.github/instructions/frontend-react.instructions.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.github/instructions/frontend-react.instructions.md)**:
+   - Cập nhật dòng 30 thành `react-force-graph-2d` và chuẩn hóa lệnh kiểm tra thành `npm run lint && npm run typecheck && npm run build`.
+8. **[`.md/knowledge/codebase_architecture_and_mental_model.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/knowledge/codebase_architecture_and_mental_model.md)**:
+   - Cập nhật ma trận phân hệ Frontend Web thành `react-force-graph-2d (HTML5 Canvas)`.
 
-### ✅ Deterministic Patch Verification (`ccba_harness verify-patch`)
+---
+
+## 4. Bằng Chứng Kiểm Định Tất Định (Deterministic Verification — ADR-0058)
+
+Lệnh thực thi qua `ccba_harness verify-patch`:
 ```bash
-./.venv/bin/python -m ccba_harness verify-patch \
+/home/vvc/ccba/ccba-agent-platform/.venv/bin/python -m ccba_harness verify-patch \
   "npm --prefix services/frontend run lint" \
-  "npm --prefix services/frontend run build"
+  "npm --prefix services/frontend run typecheck" \
+  "npm --prefix services/frontend run build" \
+  "test ! -d services/frontend/node_modules/react-force-graph" \
+  "test ! -d services/frontend/node_modules/three" \
+  "test ! -d services/frontend/node_modules/aframe" \
+  "test ! -d services/frontend/node_modules/got" \
+  "node -e 'const pkg=require(\"./services/frontend/package.json\"); if (pkg.dependencies[\"react-force-graph\"]) process.exit(1);'"
 ```
-- **Trạng thái:** `✅ ALL PASSED` (2/2 commands đạt exit code 0, thời gian thực thi: 3592.5 ms).
 
----
-
-## 4. Nghiệm Thu Tiêu Chí (Acceptance Criteria Checklist)
-- [x] `GraphPanel` được code-split và chỉ nạp theo yêu cầu (On-Demand).
-- [x] Initial vendor/index bundle size giảm xuống < 300 kB (đạt **259.96 kB**).
-- [x] Giao diện đồ thị giữ nguyên 100% tính năng hiển thị và tương tác.
-- [x] `npm run lint` và `npm run build` vượt qua 100% không phát sinh cảnh báo.
+**Kết quả: 8/8 chốt chặn ĐẠT (PASS)**:
+- [x] `npm --prefix services/frontend run lint` -> `PASS (0)`
+- [x] `npm --prefix services/frontend run typecheck` -> `PASS (0)`
+- [x] `npm --prefix services/frontend run build` -> `PASS (0)` (Vite build sạch, 0 cảnh báo)
+- [x] `test ! -d services/frontend/node_modules/react-force-graph` -> `PASS (0)` (Đã biến mất)
+- [x] `test ! -d services/frontend/node_modules/three` -> `PASS (0)` (Đã biến mất hoàn toàn)
+- [x] `test ! -d services/frontend/node_modules/aframe` -> `PASS (0)` (Đã biến mất hoàn toàn)
+- [x] `test ! -d services/frontend/node_modules/got` -> `PASS (0)` (Đã biến mất hoàn toàn)
+- [x] Package JSON dependency check -> `PASS (0)` (Không còn vết tích)

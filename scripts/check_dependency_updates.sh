@@ -98,7 +98,6 @@ if [[ "$MODE" == "all" || "$MODE" == "outdated" ]]; then
     if command -v npm &>/dev/null && [[ -d "${FRONTEND_DIR}/node_modules" ]]; then
         echo -e "Running ${CYAN}npm outdated${NC} in ${FRONTEND_DIR}..."
         (cd "${FRONTEND_DIR}" && npm outdated || true)
-        echo -e "${YELLOW}Note: Do NOT run 'npm audit fix --force' as it forces downgrade of react-force-graph.${NC}"
     else
         echo -e "${YELLOW}Warning: npm or node_modules not found in ${FRONTEND_DIR}. Skipping frontend outdated check.${NC}"
     fi
