@@ -27,7 +27,7 @@ import shutil
 import signal
 import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -528,25 +528,129 @@ async def probe_memory_and_swap() -> str:
     return "\n".join(lines)
 
 
+async def _query_litellm_postgres_stats() -> Optional[Dict[str, Any]]:
+    """Queries LiteLLM PostgreSQL container for today's ICT local usage statistics via UNION ALL."""
+    sql = (
+        "(\n"
+        "  SELECT 'SUMMARY' AS tag, count(*)::text AS col1, coalesce(sum(total_tokens), 0)::text AS col2, coalesce(sum(prompt_tokens), 0)::text AS col3, coalesce(sum(completion_tokens), 0)::text AS col4\n"
+        '  FROM "LiteLLM_SpendLogs"\n'
+        "  WHERE \"startTime\" >= ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh' AT TIME ZONE 'UTC')\n"
+        ")\n"
+        "UNION ALL\n"
+        "(\n"
+        "  SELECT 'MODEL' AS tag, model AS col1, coalesce(sum(total_tokens), 0)::text AS col2, count(*)::text AS col3, '' AS col4\n"
+        '  FROM "LiteLLM_SpendLogs"\n'
+        "  WHERE \"startTime\" >= ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh' AT TIME ZONE 'UTC')\n"
+        "  GROUP BY model\n"
+        "  ORDER BY coalesce(sum(total_tokens), 0) DESC, model ASC\n"
+        "  LIMIT 4\n"
+        ");"
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "exec",
+            "litellm-postgres",
+            "psql",
+            "-U",
+            "litellm",
+            "-d",
+            "litellm",
+            "-t",
+            "-A",
+            "-F|",
+            "-c",
+            sql,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            return None
+        except asyncio.CancelledError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            raise
+
+        if proc.returncode != 0 or not stdout_bytes:
+            return None
+
+        summary_data: Dict[str, Any] = {
+            "total_requests": 0,
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "top_models": [],
+        }
+
+        for raw_line in stdout_bytes.decode("utf-8", errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            parts = line.split("|")
+            tag = parts[0]
+            if tag == "SUMMARY" and len(parts) >= 5:
+                try:
+                    summary_data["total_requests"] = int(parts[1])
+                    summary_data["total_tokens"] = int(parts[2])
+                    summary_data["prompt_tokens"] = int(parts[3])
+                    summary_data["completion_tokens"] = int(parts[4])
+                except ValueError:
+                    pass
+            elif tag == "MODEL" and len(parts) >= 4:
+                m_name = parts[1]
+                try:
+                    m_tok = int(parts[2])
+                    m_req = int(parts[3])
+                    summary_data["top_models"].append({
+                        "model": m_name,
+                        "tokens": m_tok,
+                        "requests": m_req,
+                    })
+                except ValueError:
+                    pass
+
+        return summary_data
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return None
+
+
 async def probe_gateway_stats() -> str:
-    """Queries Antigravity Tools API for token and request statistics."""
+    """Queries Antigravity Tools API (Cloud) and LiteLLM Postgres (Local GPU) for unified stats."""
     lines = ["📈 *BÁO CÁO SẢN LƯỢNG AI GATEWAY* 📈\n"]
     base_url = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045").rstrip("/").removesuffix("/v1")
     key = os.environ.get("GATEWAY_PROXY_KEY", "")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
 
+    cloud_req = 0
+    cloud_tok = 0
+    cloud_in = 0
+    cloud_out = 0
+
+    # 1. Cloud Proxy (:8045)
+    lines.append("☁️ *CỔNG CLOUD (:8045)*")
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             res = await client.get(f"{base_url}/api/stats/token/summary", headers=headers)
             if res.status_code == 200:
                 s = res.json()
-                tot_req = s.get("total_requests", 0)
-                tot_tok = s.get("total_tokens", 0)
-                in_tok = s.get("total_input_tokens", 0)
-                out_tok = s.get("total_output_tokens", 0)
-                lines.append(f"• *Tổng Requests:* `{tot_req:,}`")
-                lines.append(f"• *Tổng Tokens:* `{tot_tok:,}`")
-                lines.append(f"• *Input Tokens:* `{in_tok:,}` | *Output:* `{out_tok:,}`")
+                cloud_req = s.get("total_requests") or 0
+                cloud_tok = s.get("total_tokens") or 0
+                cloud_in = s.get("total_input_tokens") or 0
+                cloud_out = s.get("total_output_tokens") or 0
+                lines.append(f"• *Requests:* `{cloud_req:,}` | *Tokens:* `{cloud_tok:,}`")
+                lines.append(f"• *Input:* `{cloud_in:,}` | *Output:* `{cloud_out:,}`")
             else:
                 lines.append(f"• Không thể tải số liệu tổng hợp (HTTP {res.status_code})")
 
@@ -554,22 +658,62 @@ async def probe_gateway_stats() -> str:
             if res_m.status_code == 200:
                 models = res_m.json()
                 if isinstance(models, list) and models:
-                    lines.append("\n🏆 *TOP MÔ HÌNH TIÊU THỤ:*")
-                    sorted_models = sorted(models, key=lambda m: m.get("total_tokens", 0), reverse=True)
+                    lines.append("• *Top Mô Hình Cloud:*")
+                    # Rule 5: Multi-Key Deterministic Sorting
+                    sorted_models = sorted(
+                        models,
+                        key=lambda m: (-int(m.get("total_tokens") or 0), str(m.get("model") or "")),
+                    )
                     for m in sorted_models[:4]:
-                        m_name = m.get("model", "unknown")
-                        m_tok = m.get("total_tokens", 0)
-                        m_req = m.get("request_count", 0)
-                        lines.append(f"• `{m_name}`: `{m_tok:,}` tokens (`{m_req}` reqs)")
+                        m_name = str(m.get("model") or "unknown").replace("`", "'")
+                        m_tok = int(m.get("total_tokens") or 0)
+                        m_req = int(m.get("request_count") or 0)
+                        lines.append(f"  └─ `{m_name}`: `{m_tok:,}` tokens (`{m_req}` reqs)")
 
             res_acc = await client.get(f"{base_url}/api/accounts", headers=headers)
             if res_acc.status_code == 200:
                 data = res_acc.json()
                 accounts = data.get("accounts", []) if isinstance(data, dict) else []
                 active = sum(1 for a in accounts if not a.get("disabled"))
-                lines.append(f"\n👥 *Quota Pool:* `{active}/{len(accounts)}` tài khoản khả dụng")
+                lines.append(f"• *Quota Pool:* `{active}/{len(accounts)}` tài khoản khả dụng")
     except Exception as e:
-        lines.append(f"• Lỗi kết nối Antigravity Tools API: {e}")
+        clean_err = str(e).replace("`", "'")
+        lines.append(f"• Lỗi kết nối Antigravity Tools API: `{clean_err}`")
+
+    # 2. Local GPU (:8090 - LiteLLM Postgres)
+    lines.append("\n🖥️ *CỔNG GPU CỤC BỘ (:8090)*")
+    local_stats = await _query_litellm_postgres_stats()
+    local_req = 0
+    local_tok = 0
+    local_in = 0
+    local_out = 0
+
+    if local_stats is not None:
+        local_req = local_stats.get("total_requests") or 0
+        local_tok = local_stats.get("total_tokens") or 0
+        local_in = local_stats.get("prompt_tokens") or 0
+        local_out = local_stats.get("completion_tokens") or 0
+        lines.append(f"• *Requests:* `{local_req:,}` | *Tokens:* `{local_tok:,}`")
+        lines.append(f"• *Input:* `{local_in:,}` | *Output:* `{local_out:,}`")
+        top_local = local_stats.get("top_models", [])
+        if top_local:
+            lines.append("• *Top Mô Hình Cục Bộ:*")
+            for m in top_local:
+                m_name = str(m.get("model") or "unknown").replace("`", "'")
+                m_t = int(m.get("tokens") or 0)
+                m_r = int(m.get("requests") or 0)
+                lines.append(f"  └─ `{m_name}`: `{m_t:,}` tokens (`{m_r}` reqs)")
+    else:
+        lines.append("• Không thể truy vấn LiteLLM Postgres cục bộ")
+
+    # 3. Aggregate Summary
+    lines.append("\n📊 *TỔNG HỢP TOÀN HỆ THỐNG*")
+    total_req = cloud_req + local_req
+    total_tok = cloud_tok + local_tok
+    offload_ratio = (local_tok / total_tok * 100.0) if total_tok > 0 else 0.0
+    lines.append(f"• *Tổng Requests:* `{total_req:,}`")
+    lines.append(f"• *Tổng Tokens:* `{total_tok:,}`")
+    lines.append(f"• *Tỷ Lệ Tải Cục Bộ (Offload):* `{offload_ratio:.1f}%`")
 
     lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
     return "\n".join(lines)
@@ -765,7 +909,7 @@ def reset_failed_pin_attempts() -> None:
 
 # --- 7. DASHBOARD MENUS BUILDER ---
 def get_main_dashboard_markup() -> Dict[str, Any]:
-    """Builds the main interactive dashboard keyboard."""
+    """Builds the main interactive dashboard keyboard (10 buttons, 5 rows)."""
     return {
         "inline_keyboard": [
             [
@@ -774,11 +918,15 @@ def get_main_dashboard_markup() -> Dict[str, Any]:
             ],
             [
                 {"text": "🎮 GPU Blackwell", "callback_data": "menu:gpu"},
-                {"text": "📈 Sản Lượng Token", "callback_data": "menu:stats"},
+                {"text": "📈 Sản Lượng Token (Dual)", "callback_data": "menu:stats"},
             ],
             [
                 {"text": "🔄 Khởi Động Lại Service", "callback_data": "menu:restart_list"},
                 {"text": "📦 Cập Nhật Open WebUI", "callback_data": "menu:upgrade_owu"},
+            ],
+            [
+                {"text": "🌙 Auto-Tuner CCBA (MỚI)", "callback_data": "menu:autotuner"},
+                {"text": "⚡ Can Thiệp /boost (MỚI)", "callback_data": "menu:boost_list"},
             ],
             [
                 {"text": "📄 Hàng Đợi RAG Ingestion", "callback_data": "menu:rag_state"},
@@ -806,6 +954,35 @@ def get_restart_service_markup() -> Dict[str, Any]:
         if i + 1 < len(services):
             row.append({"text": f"🔄 {services[i+1]}", "callback_data": f"rst:{services[i+1]}"})
         keyboard.append(row)
+    keyboard.append([{"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"}])
+    return {"inline_keyboard": keyboard}
+
+
+def get_boost_skills_markup(
+    escalations_dir: str = "/home/vvc/ccba/ccba-agent-platform/.md/knowledge/escalations",
+) -> Dict[str, Any]:
+    """Builds single-column mobile-friendly keyboard for top 6 plateau skills."""
+    p_dir = Path(escalations_dir)
+    keyboard = []
+    if p_dir.exists() and p_dir.is_dir():
+        files = [p for p in p_dir.glob("*_plateau.md") if p.is_file()]
+
+        def _safe_mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        # Rule 5: Multi-Key Deterministic Sorting
+        files.sort(key=lambda p: (-_safe_mtime(p), p.name))
+        for p in files[:6]:
+            skill_name = p.name.removesuffix("_plateau.md").strip()
+            if skill_name:
+                keyboard.append([{"text": f"🚀 {skill_name}", "callback_data": f"bst:{skill_name}"}])
+
+    if not keyboard:
+        keyboard.append([{"text": "ℹ️ Không có kỹ năng plateau", "callback_data": "menu:main"}])
+
     keyboard.append([{"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"}])
     return {"inline_keyboard": keyboard}
 
@@ -872,6 +1049,146 @@ async def probe_rag_state() -> str:
             lines.append(f"\n• Thống kê cơ sở dữ liệu: ⚠️ Lỗi truy vấn stats ({e})")
     else:
         lines.append("\n• Thống kê cơ sở dữ liệu: ⚠️ Bỏ qua do `rag-service` không khả dụng")
+
+    lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
+    return "\n".join(lines)
+
+
+async def probe_autotuner_status() -> str:
+    """Probes CCBA Nightly Auto-Tuner status via Hub Monorepo CLI."""
+    lines = []
+    hub_python = "/home/vvc/ccba/ccba-agent-platform/.venv/bin/python"
+    if not os.path.exists(hub_python):
+        hub_python = sys.executable
+    hub_script = "/home/vvc/ccba/ccba-agent-platform/scripts/eval/check_nightly_status.py"
+    hub_dir = "/home/vvc/ccba/ccba-agent-platform"
+
+    if not os.path.exists(hub_script):
+        return f"❌ *Lỗi Cấu Hình:* Không tìm thấy script `{hub_script}`!"
+
+    def _clean_md(val: Any) -> str:
+        if val is None:
+            return "N/A"
+        return str(val).replace("`", "'")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            hub_python,
+            hub_script,
+            "--json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=hub_dir,
+        )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=8.0)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            return "❌ *Lỗi Timeout:* Lệnh kiểm tra Auto-Tuner vượt quá thời gian phản hồi (8s)!"
+        except asyncio.CancelledError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            raise
+
+        exit_code = proc.returncode or 0
+        stdout_text = (stdout_bytes or b"").decode("utf-8", errors="replace").strip()
+        stderr_text = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
+
+        if exit_code != 0:
+            if "Không tìm thấy daemon" in stdout_text or "Không tìm thấy daemon" in stderr_text:
+                lines.append("🌙 *CCBA NIGHTLY AUTO-TUNER* 🌙\n")
+                lines.append("• *Trạng thái:* ⏸️ Đang nghỉ")
+                lines.append("• _Không tìm thấy tiến trình Auto-Tuner đang chạy và chưa có báo cáo lưu trữ._")
+                lines.append("• _Ca tối ưu tự động sẽ kích hoạt theo lịch ban đêm._")
+            else:
+                err_raw = stderr_text or stdout_text or f"Exit code {exit_code}"
+                clean_err = _clean_md(err_raw[:200])
+                lines.append("🌙 *CCBA NIGHTLY AUTO-TUNER* 🌙\n")
+                lines.append(f"❌ *Lỗi kiểm tra Auto-Tuner:* `{clean_err}`")
+            lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
+            return "\n".join(lines)
+
+        data = None
+        try:
+            data = json.loads(stdout_text)
+        except json.JSONDecodeError:
+            m = re.search(r"(\{.*\})", stdout_text, re.DOTALL)
+            if m:
+                try:
+                    data = json.loads(m.group(1))
+                except Exception:
+                    data = None
+
+        if not isinstance(data, dict):
+            lines.append("🌙 *CCBA NIGHTLY AUTO-TUNER* 🌙\n")
+            lines.append("⚠️ *Lỗi phân tích JSON:* Không thể đọc dữ liệu phản hồi.")
+            lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
+            return "\n".join(lines)
+
+        mode = data.get("mode")
+        is_running = bool(data.get("is_running", False))
+
+        if mode == "live" or is_running:
+            lines.append("🌙 *TIẾN ĐỘ CCBA NIGHTLY AUTO-TUNER* 🌙\n")
+            pid = _clean_md(data.get("pid"))
+            uptime = _clean_md(data.get("uptime"))
+            lines.append(f"• *Trạng thái:* 🟢 Đang chạy (PID: `{pid}`)")
+            lines.append(f"• *Thời gian chạy (Uptime):* `{uptime}`")
+
+            cur_skill = _clean_md(data.get("current_skill"))
+            completed = data.get("completed") or 0
+            total = data.get("total") or 0
+            pct = (completed / total * 100.0) if total > 0 else 0.0
+            lines.append(f"• *Kỹ năng đang xử lý:* `{cur_skill}` (`{completed}/{total}` ~ `{pct:.1f}%`)")
+
+            commits = data.get("commits_count") or data.get("commit_count") or 0
+            lines.append(f"• *Số commits đã tạo:* `{commits}` commits")
+
+            matrix_warn = bool(data.get("matrix_warning", False))
+            if matrix_warn:
+                lines.append("• *Ma trận truy vết:* 🚨 Cảnh báo lệch đồng bộ (Traceability Matrix)!")
+            else:
+                lines.append("• *Ma trận truy vết:* 🟢 Bình thường")
+        else:
+            # Post-run / Archive mode
+            lines.append("🌙 *CCBA NIGHTLY AUTO-TUNER (LƯU TRỮ)* 🌙\n")
+            lines.append("• *Trạng thái:* ⏸️ Đang nghỉ (Không có tiến trình đang chạy)")
+            rep_file = _clean_md(data.get("report_file"))
+            ts = _clean_md(data.get("timestamp"))
+            branch = _clean_md(data.get("git_branch"))
+            lines.append(f"• *Báo cáo gần nhất:* `{rep_file}`")
+            lines.append(f"• *Phiên thực thi:* `{ts}`")
+            lines.append(f"• *Nhánh Git:* `{branch}`")
+
+            scanned = data.get("total_scanned") or data.get("total") or 0
+            improved = data.get("improved_count") or data.get("completed") or 0
+            commits = data.get("commit_count") or data.get("commits_count") or 0
+            tok = _clean_md(data.get("total_tokens"))
+            lines.append(f"• *Thống kê:* `{improved}/{scanned}` kỹ năng cải thiện | `{commits}` commits | `{tok}` tokens")
+
+            improvements = data.get("improvements", [])
+            if isinstance(improvements, list) and improvements:
+                lines.append("\n🏆 *KỸ NĂNG CẢI THIỆN NỔI BẬT:*")
+                for imp in improvements[:4]:
+                    if isinstance(imp, dict):
+                        s_name = _clean_md(imp.get("skill"))
+                        s_init = _clean_md(imp.get("init"))
+                        s_final = _clean_md(imp.get("final"))
+                        s_delta = _clean_md(imp.get("delta"))
+                        lines.append(f"• `{s_name}`: `{s_init}` ➔ `{s_final}` (`{s_delta}`)")
+
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        clean_e = _clean_md(e)
+        lines.append(f"❌ *Lỗi không mong muốn khi kiểm tra Auto-Tuner:* `{clean_e}`")
 
     lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
     return "\n".join(lines)
@@ -1042,6 +1359,11 @@ async def dispatch_command(
                 if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
                     await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
                 append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed RAG state")
+            elif command_id == "ccba.autotuner.status":
+                text = await probe_autotuner_status()
+                if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
+                    await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
+                append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed autotuner status")
             else:
                 unhandled = f"⚠️ Chưa xử lý runner internal cho lệnh `{command_id}`"
                 if not await edit_telegram_msg(chat_id, message_id, unhandled, reply_markup=get_main_dashboard_markup()):
@@ -1121,6 +1443,51 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             return
         elif data == "menu:rag_state":
             await dispatch_command("rag.ingestion.state", {}, chat_id, message_id, cq_id=cq_id)
+            return
+        elif data == "menu:autotuner":
+            await dispatch_command("ccba.autotuner.status", {}, chat_id, message_id, cq_id=cq_id)
+            return
+        elif data == "menu:boost_list":
+            if is_kernel_runner_locked():
+                await answer_callback(cq_id, "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!", show_alert=True)
+                return
+            await answer_callback(cq_id)
+            boost_markup = get_boost_skills_markup()
+            boost_text = "⚡ *CHỌN KỸ NĂNG CẦN CAN THIỆP /BOOST:*\n_(Danh sách kỹ năng đang plateau theo thứ tự cập nhật)_"
+            if not await edit_telegram_msg(chat_id, message_id, boost_text, reply_markup=boost_markup):
+                await send_telegram_msg(chat_id, boost_text, reply_markup=boost_markup)
+            return
+        elif data.startswith("bst:"):
+            skill = data.split(":", 1)[1].strip()
+            if not skill or not re.match(r"^[a-zA-Z0-9_-]+$", skill):
+                await answer_callback(cq_id, "❌ Tên kỹ năng không hợp lệ!", show_alert=True)
+                return
+            if is_kernel_runner_locked():
+                await answer_callback(cq_id, "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!", show_alert=True)
+                return
+            await answer_callback(cq_id)
+            nonce = hashlib.sha256(f"bst_{time.time()}_{skill}".encode()).hexdigest()[:8]
+            action_cache[nonce] = {
+                "command": "ccba.skill.boost",
+                "params": {"skill": skill},
+                "title": f"🚀 /boost {skill}",
+                "timeout": 600,
+                "expires": time.time() + 60,
+            }
+            confirm_msg = (
+                f"⚡ *XÁC NHẬN CAN THIỆP SUY LUẬN SÂU (/BOOST)* ⚡\n\n"
+                f"• Kỹ năng mục tiêu: `{skill}`\n"
+                f"• Thời hạn xác nhận: 60 giây\n\n"
+                f"Bạn có chắc chắn muốn khởi chạy `/boost {skill}` ngay bây giờ?"
+            )
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "✅ Xác Nhận Chạy /boost", "callback_data": f"act:{nonce}"}],
+                    [{"text": "❌ Hủy Bỏ", "callback_data": "menu:main"}],
+                ]
+            }
+            if not await edit_telegram_msg(chat_id, message_id, confirm_msg, reply_markup=markup):
+                await send_telegram_msg(chat_id, confirm_msg, reply_markup=markup)
             return
         elif data == "menu:restart_list":
             await answer_callback(cq_id)
@@ -1208,7 +1575,10 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                 "❓ *HƯỚNG DẪN SỬ DỤNG DGX-CHATOPS*\n\n"
                 "• `/menu` hoặc `/start`: Bật bảng điều khiển cảm ứng.\n"
                 "• `/status`: Kiểm tra nhanh phần cứng & containers.\n"
+                "• `/memory`: Chi tiết RAM, Swap và Top 5 tiến trình ngốn bộ nhớ.\n"
+                "• `/stats`: Thống kê sản lượng Tokens, Requests (Dual-Gateway).\n"
                 "• `/gpu`: Xem nhiệt độ, VRAM GPU Blackwell GB10.\n"
+                "• `/autotuner`: Kiểm tra tiến độ Nightly Auto-Tuner CCBA.\n"
                 "• `/rag_state`: Xem tiến độ hàng đợi RAG Ingestion.\n"
                 "• `/restart <service>`: Khởi động lại container.\n"
                 "• `/upgrade_owu`: Nâng cấp Open WebUI.\n"
@@ -1313,6 +1683,32 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra hàng đợi RAG...")
             if sent_id:
                 await dispatch_command("rag.ingestion.state", {}, chat_id, sent_id)
+            return
+
+        # 4a. /autotuner
+        if text == "/autotuner" or text.startswith("/autotuner@"):
+            sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra trạng thái Nightly Auto-Tuner...")
+            if sent_id:
+                await dispatch_command("ccba.autotuner.status", {}, chat_id, sent_id)
+            return
+
+        # 4b. /help
+        if text == "/help" or text.startswith("/help@"):
+            help_text = (
+                "❓ *HƯỚNG DẪN SỬ DỤNG DGX-CHATOPS*\n\n"
+                "• `/menu` hoặc `/start`: Bật bảng điều khiển cảm ứng.\n"
+                "• `/status`: Kiểm tra nhanh phần cứng & containers.\n"
+                "• `/memory`: Chi tiết RAM, Swap và Top 5 tiến trình ngốn bộ nhớ.\n"
+                "• `/stats`: Thống kê sản lượng Tokens, Requests (Dual-Gateway).\n"
+                "• `/gpu`: Xem nhiệt độ, VRAM GPU Blackwell GB10.\n"
+                "• `/autotuner`: Kiểm tra tiến độ Nightly Auto-Tuner CCBA.\n"
+                "• `/rag_state`: Xem tiến độ hàng đợi RAG Ingestion.\n"
+                "• `/restart <service>`: Khởi động lại container.\n"
+                "• `/upgrade_owu`: Nâng cấp Open WebUI.\n"
+                "• `/boost <skill>`: Tăng cường suy luận sâu cho kỹ năng bị kẹt (ADR-0052).\n"
+                "• `/exec <PIN> <command>`: Thực thi lệnh khẩn cấp (có 2-step confirmation).\n"
+            )
+            await send_telegram_msg(chat_id, help_text, reply_markup=get_main_dashboard_markup())
             return
 
         # 5. /restart <service>

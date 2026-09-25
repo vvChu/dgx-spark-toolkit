@@ -59,6 +59,13 @@ commands:
     service_lock: null
     runner: "internal"
 
+  - id: "ccba.autotuner.status"
+    slash: "/autotuner"
+    description: "Kiểm tra trạng thái tiến trình Nightly Auto-Tuner CCBA"
+    risk_tier: "READ_ONLY"
+    service_lock: null
+    runner: "internal"
+
   - id: "ccba.skill.boost"
     slash: "/boost"
     description: "Tăng cường suy luận sâu cho kỹ năng bị kẹt (ADR-0052)"

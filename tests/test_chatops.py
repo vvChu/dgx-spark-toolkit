@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -73,6 +74,13 @@ def test_command_registry_service_lock_and_whitelist():
     assert skill_regex.match("ccba_legal_123")
     assert not skill_regex.match("skill;rm -rf /")
     assert not skill_regex.match("skill with spaces")
+
+    # 4. Check ccba.autotuner.status command definition
+    autotuner_cmd = cmds["ccba.autotuner.status"]
+    assert autotuner_cmd["slash"] == "/autotuner"
+    assert autotuner_cmd["risk_tier"] == "READ_ONLY"
+    assert autotuner_cmd["service_lock"] is None
+    assert autotuner_cmd["runner"] == "internal"
 
 
 def test_restart_service_markup():
@@ -426,7 +434,8 @@ def test_dynamic_action_callback_handling():
         }
         with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
              patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
-             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch, \
+             patch("scripts.chatops_daemon.is_kernel_runner_locked", return_value=False):
             mock_send.return_value = 1001  # status_msg_id
             await daemon.process_telegram_update(cq_valid)
             mock_answer.assert_called_once_with("cq_valid_1", "🚀 Khởi chạy 🚀 /boost bigbim-risk...")
@@ -471,7 +480,8 @@ def test_dynamic_action_callback_restores_nonce_on_busy_lock():
         }
         with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
              patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
-             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit:
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.is_kernel_runner_locked", return_value=False):
             mock_send.return_value = 1002
 
             await daemon.process_telegram_update(cq_busy)
@@ -517,7 +527,8 @@ def test_boost_text_command_handling():
             }
         }
         with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
-             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch, \
+             patch("scripts.chatops_daemon.is_kernel_runner_locked", return_value=False):
             mock_send.return_value = 1003
             mock_dispatch.return_value = True
 
@@ -926,4 +937,554 @@ def test_execute_shell_job_two_phase_termination_sigkill_escalation():
             mock_killpg.assert_any_call(99999, signal.SIGKILL)
 
     asyncio.run(_test())
+
+
+def test_main_dashboard_markup_10_buttons():
+    """Verify main dashboard markup has 10 buttons across 5 rows."""
+    markup = daemon.get_main_dashboard_markup()
+    keyboard = markup["inline_keyboard"]
+    assert len(keyboard) == 5
+    for row in keyboard:
+        assert len(row) == 2
+
+    callbacks = [btn["callback_data"] for row in keyboard for btn in row]
+    assert "menu:status" in callbacks
+    assert "menu:memory" in callbacks
+    assert "menu:gpu" in callbacks
+    assert "menu:stats" in callbacks
+    assert "menu:restart_list" in callbacks
+    assert "menu:upgrade_owu" in callbacks
+    assert "menu:autotuner" in callbacks
+    assert "menu:boost_list" in callbacks
+    assert "menu:rag_state" in callbacks
+    assert "menu:help" in callbacks
+
+
+def test_boost_submenu_markup_deterministic_sorting(tmp_path):
+    """Verify get_boost_skills_markup sorts plateau files by mtime desc and name asc, limited to 6."""
+    now = time.time()
+    files_data = [
+        ("skill_c_plateau.md", now - 100),
+        ("skill_a_plateau.md", now - 50),
+        ("skill_b_plateau.md", now - 50),
+        ("skill_d_plateau.md", now - 200),
+        ("skill_e_plateau.md", now - 10),
+        ("skill_f_plateau.md", now - 20),
+        ("skill_g_plateau.md", now - 30),
+        ("skill_h_plateau.md", now - 300),
+    ]
+    for fname, mtime in files_data:
+        f = tmp_path / fname
+        f.write_text("test")
+        os.utime(f, (mtime, mtime))
+
+    markup = daemon.get_boost_skills_markup(escalations_dir=str(tmp_path))
+    keyboard = markup["inline_keyboard"]
+
+    assert len(keyboard) == 7
+    expected_order = ["skill_e", "skill_f", "skill_g", "skill_a", "skill_b", "skill_c"]
+    for i, exp in enumerate(expected_order):
+        row = keyboard[i]
+        assert len(row) == 1
+        assert row[0]["text"] == f"🚀 {exp}"
+        assert row[0]["callback_data"] == f"bst:{exp}"
+
+    assert keyboard[-1][0]["callback_data"] == "menu:main"
+
+
+def test_query_litellm_postgres_stats():
+    """Verify _query_litellm_postgres_stats parses UNION ALL output from psql correctly."""
+    fake_psql_output = (
+        b"SUMMARY|42|1050000|750000|300000\n"
+        b"MODEL|openai/qwen-local-primary|1000000|35|\n"
+        b"MODEL|gemini/gemini-flash|50000|7|\n"
+    )
+
+    async def _test():
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(fake_psql_output, b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            stats = await daemon._query_litellm_postgres_stats()
+
+        assert stats is not None
+        assert stats["total_requests"] == 42
+        assert stats["total_tokens"] == 1050000
+        assert stats["prompt_tokens"] == 750000
+        assert stats["completion_tokens"] == 300000
+        assert len(stats["top_models"]) == 2
+        assert stats["top_models"][0]["model"] == "openai/qwen-local-primary"
+        assert stats["top_models"][0]["tokens"] == 1000000
+        assert stats["top_models"][0]["requests"] == 35
+
+    asyncio.run(_test())
+
+
+def test_probe_autotuner_status_live():
+    """Verify probe_autotuner_status renders live running mode properly with backticks."""
+    fake_json = json.dumps({
+        "mode": "live",
+        "is_running": True,
+        "pid": 54321,
+        "uptime": "02:15:30",
+        "current_skill": "ccba-legal-intel",
+        "completed": 4,
+        "total": 12,
+        "commits_count": 7,
+        "matrix_warning": False,
+    }).encode("utf-8")
+
+    async def _test():
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(fake_json, b""))
+
+        with patch("os.path.exists", return_value=True), \
+             patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await daemon.probe_autotuner_status()
+
+        assert "TIẾN ĐỘ CCBA NIGHTLY AUTO-TUNER" in result
+        assert "🟢 Đang chạy (PID: `54321`)" in result
+        assert "*Thời gian chạy (Uptime):* `02:15:30`" in result
+        assert "*Kỹ năng đang xử lý:* `ccba-legal-intel` (`4/12` ~ `33.3%`)" in result
+        assert "*Số commits đã tạo:* `7` commits" in result
+        assert "🟢 Bình thường" in result
+
+    asyncio.run(_test())
+
+
+def test_probe_autotuner_status_idle():
+    """Verify probe_autotuner_status renders post-run archive mode properly."""
+    fake_json = json.dumps({
+        "mode": "post_run",
+        "is_running": False,
+        "report_file": "nightly_tuner_report_20260925_0300.md",
+        "timestamp": "20260925_0300",
+        "git_branch": "auto-tune/nightly-20260925",
+        "total_scanned": 20,
+        "improved_count": 5,
+        "commit_count": 6,
+        "total_tokens": "1.5M",
+        "improvements": [
+            {
+                "skill": "bigbim-risk",
+                "init": "12.0",
+                "final": "15.0",
+                "delta": "+3.0",
+            }
+        ],
+    }).encode("utf-8")
+
+    async def _test():
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(fake_json, b""))
+
+        with patch("os.path.exists", return_value=True), \
+             patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await daemon.probe_autotuner_status()
+
+        assert "CCBA NIGHTLY AUTO-TUNER (LƯU TRỮ)" in result
+        assert "*Báo cáo gần nhất:* `nightly_tuner_report_20260925_0300.md`" in result
+        assert "*Phiên thực thi:* `20260925_0300`" in result
+        assert "*Nhánh Git:* `auto-tune/nightly-20260925`" in result
+        assert "*Thống kê:* `5/20` kỹ năng cải thiện | `6` commits | `1.5M` tokens" in result
+        assert "`bigbim-risk`: `12.0` ➔ `15.0` (`+3.0`)" in result
+
+    asyncio.run(_test())
+
+
+def test_probe_gateway_stats_dual():
+    """Verify probe_gateway_stats displays Cloud, Local GPU and unified summary with offload ratio."""
+    fake_local = {
+        "total_requests": 200,
+        "total_tokens": 800000,
+        "prompt_tokens": 600000,
+        "completion_tokens": 200000,
+        "top_models": [
+            {"model": "openai/qwen-local-primary", "tokens": 800000, "requests": 200}
+        ],
+    }
+
+    async def _test():
+        with patch("scripts.chatops_daemon._query_litellm_postgres_stats", new_callable=AsyncMock) as mock_local, \
+             patch("httpx.AsyncClient") as mock_client_cls:
+            mock_local.return_value = fake_local
+
+            mock_client = AsyncMock()
+            mock_resp_sum = MagicMock()
+            mock_resp_sum.status_code = 200
+            mock_resp_sum.json.return_value = {
+                "total_requests": 100,
+                "total_tokens": 200000,
+                "total_input_tokens": 150000,
+                "total_output_tokens": 50000,
+            }
+
+            mock_resp_model = MagicMock()
+            mock_resp_model.status_code = 200
+            mock_resp_model.json.return_value = [
+                {"model": "gemini-2.5-pro", "total_tokens": 200000, "request_count": 100}
+            ]
+
+            mock_resp_acc = MagicMock()
+            mock_resp_acc.status_code = 200
+            mock_resp_acc.json.return_value = {"accounts": [{"disabled": False}, {"disabled": True}]}
+
+            async def mock_get(url, **kwargs):
+                if "/summary" in url:
+                    return mock_resp_sum
+                if "/by-model" in url:
+                    return mock_resp_model
+                if "/accounts" in url:
+                    return mock_resp_acc
+                return MagicMock(status_code=404)
+
+            mock_client.get = mock_get
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+            result = await daemon.probe_gateway_stats()
+
+            assert "CỔNG CLOUD (:8045)" in result
+            assert "CỔNG GPU CỤC BỘ (:8090)" in result
+            assert "TỔNG HỢP TOÀN HỆ THỐNG" in result
+            assert "*Tổng Requests:* `300`" in result
+            assert "*Tổng Tokens:* `1,000,000`" in result
+            assert "*Tỷ Lệ Tải Cục Bộ (Offload):* `80.0%`" in result
+            assert "`openai/qwen-local-primary`" in result
+
+    asyncio.run(_test())
+
+
+def test_autotuner_and_boost_routing():
+    """Verify menu:autotuner, menu:boost_list, bst:<skill>, and /autotuner routing."""
+    async def _test():
+        # 1. /autotuner text command
+        msg_update = {
+            "message": {
+                "message_id": 301,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/autotuner",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+            mock_send.return_value = 2001
+            await daemon.process_telegram_update(msg_update)
+            mock_send.assert_called_once()
+            mock_dispatch.assert_called_once_with("ccba.autotuner.status", {}, daemon.ADMIN_USER_ID, 2001)
+
+        # 2. menu:autotuner callback
+        cq_update = {
+            "callback_query": {
+                "id": "cq_at_1",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"message_id": 999, "chat": {"id": daemon.ADMIN_USER_ID}},
+                "data": "menu:autotuner",
+            }
+        }
+        with patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+            await daemon.process_telegram_update(cq_update)
+            mock_dispatch.assert_called_once_with("ccba.autotuner.status", {}, daemon.ADMIN_USER_ID, 999, cq_id="cq_at_1")
+
+        # 3. menu:boost_list callback
+        cq_boost = {
+            "callback_query": {
+                "id": "cq_bst_list",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"message_id": 999, "chat": {"id": daemon.ADMIN_USER_ID}},
+                "data": "menu:boost_list",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.is_kernel_runner_locked", return_value=False):
+            await daemon.process_telegram_update(cq_boost)
+            mock_answer.assert_called_once_with("cq_bst_list")
+            mock_edit.assert_called_once()
+            assert "CHỌN KỸ NĂNG CẦN CAN THIỆP /BOOST" in mock_edit.call_args[0][2]
+
+        # 4. bst:<skill> callback triggers 2-step confirmation
+        cq_bst_skill = {
+            "callback_query": {
+                "id": "cq_bst_skill_1",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"message_id": 999, "chat": {"id": daemon.ADMIN_USER_ID}},
+                "data": "bst:bigbim-risk",
+            }
+        }
+        daemon.action_cache.clear()
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.is_kernel_runner_locked", return_value=False):
+            await daemon.process_telegram_update(cq_bst_skill)
+            mock_answer.assert_called_once_with("cq_bst_skill_1")
+            mock_edit.assert_called_once()
+            assert "XÁC NHẬN CAN THIỆP SUY LUẬN SÂU" in mock_edit.call_args[0][2]
+            assert "bigbim-risk" in mock_edit.call_args[0][2]
+            assert len(daemon.action_cache) == 1
+            cached = list(daemon.action_cache.values())[0]
+            assert cached["command"] == "ccba.skill.boost"
+            assert cached["params"] == {"skill": "bigbim-risk"}
+
+    asyncio.run(_test())
+
+
+def test_edge_cases_autotuner_boost_gateway(tmp_path):
+    """Verify edge cases: empty escalations dir, autotuner timeout, exit 1, and postgres query failure."""
+    # 1. Empty escalations directory
+    empty_dir = tmp_path / "empty_escalations"
+    empty_dir.mkdir()
+    empty_markup = daemon.get_boost_skills_markup(escalations_dir=str(empty_dir))
+    assert len(empty_markup["inline_keyboard"]) == 2
+    assert "Không có kỹ năng plateau" in empty_markup["inline_keyboard"][0][0]["text"]
+    assert empty_markup["inline_keyboard"][1][0]["callback_data"] == "menu:main"
+
+    # Non-existent escalations directory
+    non_existent = tmp_path / "does_not_exist"
+    non_exist_markup = daemon.get_boost_skills_markup(escalations_dir=str(non_existent))
+    assert len(non_exist_markup["inline_keyboard"]) == 2
+
+    async def _test_async():
+        # 2. Autotuner script timeout
+        mock_proc_timeout = MagicMock()
+        mock_proc_timeout.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_proc_timeout.kill = MagicMock()
+        mock_proc_timeout.wait = AsyncMock()
+
+        with patch("os.path.exists", return_value=True), \
+             patch("asyncio.create_subprocess_exec", return_value=mock_proc_timeout):
+            timeout_res = await daemon.probe_autotuner_status()
+            assert "Lỗi Timeout" in timeout_res
+            mock_proc_timeout.kill.assert_called_once()
+            mock_proc_timeout.wait.assert_called_once()
+
+        # 3. Autotuner exit 1 (no daemon and no archive report)
+        mock_proc_exit1 = MagicMock()
+        mock_proc_exit1.returncode = 1
+        mock_proc_exit1.communicate = AsyncMock(
+            return_value=("Không tìm thấy daemon đang chạy và cũng không có báo cáo lưu trữ.".encode("utf-8"), b"")
+        )
+
+        with patch("os.path.exists", return_value=True), \
+             patch("asyncio.create_subprocess_exec", return_value=mock_proc_exit1):
+            exit1_res = await daemon.probe_autotuner_status()
+            assert "Đang nghỉ" in exit1_res
+            assert "Không tìm thấy tiến trình Auto-Tuner đang chạy và chưa có báo cáo lưu trữ" in exit1_res
+
+        # 4. Autotuner script does not exist
+        with patch("os.path.exists", side_effect=lambda p: False if "check_nightly_status.py" in p else True):
+            missing_script_res = await daemon.probe_autotuner_status()
+            assert "Không tìm thấy script" in missing_script_res
+
+        # 5. Postgres query failure / timeout
+        mock_psql_timeout = MagicMock()
+        mock_psql_timeout.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_psql_timeout.kill = MagicMock()
+        mock_psql_timeout.wait = AsyncMock()
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_psql_timeout):
+            pg_res = await daemon._query_litellm_postgres_stats()
+            assert pg_res is None
+            mock_psql_timeout.kill.assert_called_once()
+            mock_psql_timeout.wait.assert_called_once()
+
+    asyncio.run(_test_async())
+
+
+def test_probe_autotuner_status_null_fields_and_embedded_json():
+    """Verify probe_autotuner_status handles null values without TypeError and parses embedded JSON."""
+    async def _test():
+        # 1. Null fields in live mode (must not crash with '>' not supported between NoneType and int)
+        null_live_json = json.dumps({
+            "mode": "live",
+            "is_running": True,
+            "pid": None,
+            "uptime": None,
+            "current_skill": None,
+            "completed": None,
+            "total": None,
+            "commits_count": None,
+            "matrix_warning": False,
+        }).encode("utf-8")
+
+        mock_proc_live = MagicMock()
+        mock_proc_live.returncode = 0
+        mock_proc_live.communicate = AsyncMock(return_value=(null_live_json, b""))
+
+        with patch("os.path.exists", return_value=True), \
+             patch("asyncio.create_subprocess_exec", return_value=mock_proc_live):
+            live_res = await daemon.probe_autotuner_status()
+            assert "TIẾN ĐỘ CCBA NIGHTLY AUTO-TUNER" in live_res
+            assert "PID: `N/A`" in live_res
+            assert "(Uptime):* `N/A`" in live_res
+            assert "`N/A` (`0/0` ~ `0.0%`)" in live_res
+            assert "`0` commits" in live_res
+            assert "Lỗi không mong muốn" not in live_res
+
+        # 2. Embedded JSON with preceding logging lines
+        embedded_json = (
+            b"[INFO] Scanning git branches...\n"
+            b"[DEBUG] Found worktree at /tmp/tuner\n"
+            + json.dumps({
+                "mode": "post_run",
+                "is_running": False,
+                "report_file": "report_embedded.md",
+                "timestamp": "20260925_000000",
+                "git_branch": "auto-tune/test",
+                "total_scanned": 15,
+                "improved_count": 3,
+                "commit_count": 3,
+                "total_tokens": "500K",
+                "improvements": [],
+            }).encode("utf-8")
+        )
+
+        mock_proc_emb = MagicMock()
+        mock_proc_emb.returncode = 0
+        mock_proc_emb.communicate = AsyncMock(return_value=(embedded_json, b""))
+
+        with patch("os.path.exists", return_value=True), \
+             patch("asyncio.create_subprocess_exec", return_value=mock_proc_emb):
+            emb_res = await daemon.probe_autotuner_status()
+            assert "CCBA NIGHTLY AUTO-TUNER (LƯU TRỮ)" in emb_res
+            assert "`report_embedded.md`" in emb_res
+            assert "`3/15` kỹ năng cải thiện" in emb_res
+
+    asyncio.run(_test())
+
+
+def test_probe_gateway_stats_rule5_sorting():
+    """Verify probe_gateway_stats sorts cloud models deterministically by tokens desc and model asc."""
+    async def _test():
+        models_data = [
+            {"model": "model-z", "total_tokens": 1000, "request_count": 5},
+            {"model": "model-a", "total_tokens": 1000, "request_count": 5},
+            {"model": "model-top", "total_tokens": 5000, "request_count": 10},
+            {"model": "model-b", "total_tokens": 500, "request_count": 2},
+        ]
+
+        with patch("scripts.chatops_daemon._query_litellm_postgres_stats", new_callable=AsyncMock, return_value=None), \
+             patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_resp_sum = MagicMock(status_code=200)
+            mock_resp_sum.json.return_value = {"total_requests": 22, "total_tokens": 7500}
+            mock_resp_model = MagicMock(status_code=200)
+            mock_resp_model.json.return_value = models_data
+            mock_resp_acc = MagicMock(status_code=200)
+            mock_resp_acc.json.return_value = {"accounts": []}
+
+            async def mock_get(url, **kwargs):
+                if "/summary" in url:
+                    return mock_resp_sum
+                if "/by-model" in url:
+                    return mock_resp_model
+                if "/accounts" in url:
+                    return mock_resp_acc
+                return MagicMock(status_code=404)
+
+            mock_client.get = mock_get
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+            res = await daemon.probe_gateway_stats()
+
+            # model-top (5000) should appear first, followed by model-a (1000, before model-z)
+            idx_top = res.find("`model-top`")
+            idx_a = res.find("`model-a`")
+            idx_z = res.find("`model-z`")
+            assert idx_top < idx_a < idx_z
+
+    asyncio.run(_test())
+
+
+def test_bst_callback_validation_and_slash_autocomplete():
+    """Verify bst:<skill> rejects invalid skill names and /autotuner@bot routes properly."""
+    async def _test():
+        # 1. Invalid skill name in callback query
+        cq_invalid_skill = {
+            "callback_query": {
+                "id": "cq_inv_1",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"message_id": 999, "chat": {"id": daemon.ADMIN_USER_ID}},
+                "data": "bst:bad;rm -rf /",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer:
+            await daemon.process_telegram_update(cq_invalid_skill)
+            mock_answer.assert_called_once_with("cq_inv_1", "❌ Tên kỹ năng không hợp lệ!", show_alert=True)
+
+        # 2. /autotuner@bot_username autocomplete
+        msg_at = {
+            "message": {
+                "message_id": 501,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/autotuner@dgx_chatops_bot",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+            mock_send.return_value = 5001
+            await daemon.process_telegram_update(msg_at)
+            mock_send.assert_called_once()
+            mock_dispatch.assert_called_once_with("ccba.autotuner.status", {}, daemon.ADMIN_USER_ID, 5001)
+
+        # 3. /help@bot_username autocomplete
+        msg_help = {
+            "message": {
+                "message_id": 502,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/help@dgx_chatops_bot",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
+            await daemon.process_telegram_update(msg_help)
+            mock_send.assert_called_once()
+            assert "HƯỚNG DẪN SỬ DỤNG DGX-CHATOPS" in mock_send.call_args[0][1]
+
+    asyncio.run(_test())
+
+
+def test_cancelled_error_subprocess_reaping():
+    """Verify asyncio.CancelledError properly kills child process and re-raises in daemon probes."""
+    async def _test():
+        # 1. probe_autotuner_status
+        mock_proc_tuner = MagicMock()
+        mock_proc_tuner.communicate = AsyncMock(side_effect=asyncio.CancelledError())
+        mock_proc_tuner.kill = MagicMock()
+        mock_proc_tuner.wait = AsyncMock()
+
+        with patch("os.path.exists", return_value=True), \
+             patch("asyncio.create_subprocess_exec", return_value=mock_proc_tuner):
+            try:
+                await daemon.probe_autotuner_status()
+                assert False, "Should have re-raised CancelledError"
+            except asyncio.CancelledError:
+                pass
+            mock_proc_tuner.kill.assert_called_once()
+            mock_proc_tuner.wait.assert_called_once()
+
+        # 2. _query_litellm_postgres_stats
+        mock_proc_pg = MagicMock()
+        mock_proc_pg.communicate = AsyncMock(side_effect=asyncio.CancelledError())
+        mock_proc_pg.kill = MagicMock()
+        mock_proc_pg.wait = AsyncMock()
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc_pg):
+            try:
+                await daemon._query_litellm_postgres_stats()
+                assert False, "Should have re-raised CancelledError"
+            except asyncio.CancelledError:
+                pass
+            mock_proc_pg.kill.assert_called_once()
+            mock_proc_pg.wait.assert_called_once()
+
+    asyncio.run(_test())
+
 
