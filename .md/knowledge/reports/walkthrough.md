@@ -4,8 +4,10 @@
 
 - **Mục tiêu**: Xây dựng quy trình tối ưu hóa bền vững để bảo đảm toàn bộ phụ thuộc (Frontend & Backend) liên tục được nâng cấp lên phiên bản mới nhất, tự động quét bảo mật định kỳ, triệt tiêu khoảng trống giữa CI và Docker production (Split Reality Gap), cưỡng chế ngân sách bundle Frontend (`RULE-2.7`), và cung cấp công cụ nâng cấp 1-Click tất định bảo vệ trọn vẹn hạ tầng NVIDIA DGX Spark Blackwell GB10.
 - **Trạng thái**: ✅ **HOÀN THẤT TOÀN DIỆN & ĐÃ SÁP NHẬP VÀO MASTER (MERGED)**.
-- **Pull Request**: [#63 — feat(deps): establish automated continuous dependency radar and 1-click upgrade lifecycle](https://github.com/vvChu/dgx-spark-toolkit/pull/63) (Squash & merged at `bebf35c`).
-- **Branch**: `feat/dependency-upgrade-pipeline` (đã dọn dẹp).
+- **Pull Requests**:
+  - [#63](https://github.com/vvChu/dgx-spark-toolkit/pull/63): Continuous dependency radar & 1-click upgrade lifecycle (merged at `bebf35c`).
+  - [#64](https://github.com/vvChu/dgx-spark-toolkit/pull/64): Telegram ChatOps interactive menu & slash commands integration (merged at `402e8c3`).
+- **Branches**: `feat/dependency-upgrade-pipeline` & `feat/chatops-telegram-deps-menu` (đã dọn dẹp).
 
 ---
 
