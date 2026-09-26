@@ -973,7 +973,7 @@ def reset_failed_pin_attempts() -> None:
 
 # --- 7. DASHBOARD MENUS BUILDER ---
 def get_main_dashboard_markup() -> Dict[str, Any]:
-    """Builds the main interactive dashboard keyboard (11 buttons, 6 rows)."""
+    """Builds the main interactive dashboard keyboard (12 buttons, 6 rows)."""
     return {
         "inline_keyboard": [
             [

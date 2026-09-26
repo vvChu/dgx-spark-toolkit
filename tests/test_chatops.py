@@ -939,16 +939,13 @@ def test_execute_shell_job_two_phase_termination_sigkill_escalation():
     asyncio.run(_test())
 
 
-def test_main_dashboard_markup_11_buttons():
-    """Verify main dashboard markup has 11 buttons across 6 rows."""
+def test_main_dashboard_markup_12_buttons():
+    """Verify main dashboard markup has 12 buttons across 6 rows (2 per row)."""
     markup = daemon.get_main_dashboard_markup()
     keyboard = markup["inline_keyboard"]
     assert len(keyboard) == 6
-    for i, row in enumerate(keyboard):
-        if i == 5:
-            assert len(row) == 1
-        else:
-            assert len(row) == 2
+    for row in keyboard:
+        assert len(row) == 2
 
     callbacks = [btn["callback_data"] for row in keyboard for btn in row]
     assert "menu:status" in callbacks
@@ -961,6 +958,7 @@ def test_main_dashboard_markup_11_buttons():
     assert "menu:boost_list" in callbacks
     assert "menu:rag_state" in callbacks
     assert "menu:deps_menu" in callbacks
+    assert "menu:antigravity" in callbacks
     assert "menu:help" in callbacks
 
 
