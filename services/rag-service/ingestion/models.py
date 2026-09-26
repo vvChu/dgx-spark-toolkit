@@ -25,11 +25,17 @@ class DocumentIdentity:
     content_hash: str       # MD5 of file bytes
     file_name: str          # Original filename
     rel_path: str           # Relative path from SOURCE_DIR
+    override_doc_id: str = ""  # Explicit canonical doc_id override
 
     @property
     def doc_id(self) -> str:
         """Globally unique: namespace/doc_number (or namespace/filename fallback)."""
-        if self.doc_number and re.match(r'^\d+/', self.doc_number):
+        if self.override_doc_id:
+            return self.override_doc_id
+        if self.doc_number and (
+            re.match(r'^\d+/', self.doc_number)
+            or re.match(r'^(?:QCVN|TCVN|TCXD|TCXDVN|APPENDIX|PL)', self.doc_number, re.IGNORECASE)
+        ):
             raw = f"{self.namespace}/{self.doc_number}"
         else:
             clean_fn = os.path.splitext(self.file_name)[0].replace(' ', '_')
@@ -111,6 +117,7 @@ class Chunk:
     doc_id: str = ""
     doc_number: str = ""
     chunk_id: str = ""
+    validity_status: str = "ACTIVE"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -126,6 +133,7 @@ class Chunk:
             "doc_id": self.doc_id,
             "doc_number": self.doc_number,
             "chunk_id": self.chunk_id,
+            "validity_status": self.validity_status,
         }
 
 

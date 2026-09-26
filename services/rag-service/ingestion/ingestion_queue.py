@@ -127,6 +127,13 @@ class InMemoryIngestionQueue(IngestionQueue):
         self.state_manager.update_status(file_path, "PENDING")
         return msg_id
 
+    def enqueue_batch(self, files: List[Dict[str, str]]) -> int:
+        count = 0
+        for f in files:
+            self.enqueue(f["file_path"], f["content_hash"], f["rel_path"])
+            count += 1
+        return count
+
     def claim_next(
         self,
         count: int = 1,

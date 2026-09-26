@@ -64,7 +64,7 @@ class ExtractedDocument:
 class DocumentReader:
     """Unified deep module for multi-format document ingestion and OCR routing."""
 
-    SUPPORTED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.jpg', '.jpeg', '.png', '.xls', '.xlsx'}
+    SUPPORTED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.jpg', '.jpeg', '.png', '.xls', '.xlsx', '.md', '.markdown'}
 
     def __init__(self, vision_extractor: Optional[Any] = None):
         self.vision_extractor = vision_extractor
@@ -91,6 +91,8 @@ class DocumentReader:
                 return self._extract_spreadsheet(path_str)
             elif ext in ('.jpg', '.jpeg', '.png'):
                 return self._extract_image(path_str)
+            elif ext in ('.md', '.markdown'):
+                return self._extract_markdown(path_str)
             else:
                 logger.warning(f"[DocumentReader] Unsupported file extension: {ext} for {path_str}")
                 return ExtractedDocument(
@@ -414,6 +416,19 @@ class DocumentReader:
         except Exception as e:
             logger.error(f"[DocumentReader] Image extraction error: {e}")
             return ExtractedDocument(file_path=file_path, format_type="image", error=str(e))
+
+    def _extract_markdown(self, file_path: str) -> ExtractedDocument:
+        """Extract text from Markdown files directly, stripping YAML frontmatter if present."""
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                raw_text = f.read()
+            clean_text = raw_text.lstrip("\ufeff")
+            clean_text = re.sub(r"^---\s*[\r\n]+.*?[\r\n]+---\s*[\r\n]*", "", clean_text, flags=re.DOTALL).lstrip()
+            pages = [PageContent(page=1, text=clean_text, route="markdown")]
+            return ExtractedDocument(file_path=file_path, format_type="md", pages=pages)
+        except Exception as e:
+            logger.error(f"[DocumentReader] Markdown extraction error for {file_path}: {e}")
+            return ExtractedDocument(file_path=file_path, format_type="md", error=str(e))
 
 
 class InMemoryDocumentReader(DocumentReader):
