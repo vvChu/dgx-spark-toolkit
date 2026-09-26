@@ -33,7 +33,7 @@ class RAGRouter:
 
     def get_embedding(self, text: str, dimensions: int = 1024) -> List[float]:
         """Embedding function - Sử dụng BGE-M3 hybrid embedding model."""
-        from services.retrieval_service import get_embedding_model
+        from retrieval.search_pipeline import get_embedding_model
         model = get_embedding_model()
         res = model.embed_query(text)
         return res.get("dense", []) if isinstance(res, dict) else res
