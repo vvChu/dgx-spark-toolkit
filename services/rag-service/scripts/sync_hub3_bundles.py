@@ -41,7 +41,7 @@ from ingestion.pipeline_config import (
 logger = logging.getLogger("sync_hub3_bundles")
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Synchronize Hub 3 OKF v2.4 Gazette Bundles into DGX Spark RAG pipeline."
@@ -88,7 +88,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose DEBUG logging",
     )
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 async def sync_to_neo4j(bridge: Hub3Bridge, bundles: List[Hub3BundleInfo]) -> Dict[str, int]:
@@ -123,9 +123,9 @@ def run_enqueue(bridge: Hub3Bridge, bundles: List[Hub3BundleInfo]) -> int:
     return count
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     """Main execution function."""
-    args = parse_args()
+    args = parse_args(argv)
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
         level=log_level,
@@ -148,12 +148,13 @@ def main() -> int:
         logger.warning("No bundles found matching criteria.")
         return 0
 
-    # Build canonical ID map
-    id_map = bridge.build_canonical_id_map(bundles)
-    logger.info("Constructed Bidirectional ID Resolver map with %d alias entries", len(id_map))
-
     # 2. SHA-256 Cryptographic Verification (ADR-0059)
-    if args.verify_sha:
+    # Automatically enabled if --enqueue or --sync-neo4j is active (Hard Security Gate)
+    if args.enqueue or args.sync_neo4j:
+        args.verify_sha = True
+
+    should_verify_sha = args.verify_sha
+    if should_verify_sha:
         logger.info("Running streaming 64KB SHA-256 verification on %d bundles...", len(bundles))
         sha_stats = {
             ShaVerificationStatus.VERIFIED.value: 0,
@@ -161,11 +162,18 @@ def main() -> int:
             ShaVerificationStatus.NO_SOURCE.value: 0,
             ShaVerificationStatus.NON_STATUTORY.value: 0,
         }
+        tampered_bundles: List[Hub3BundleInfo] = []
         for b in bundles:
             status = bridge.verify_bundle_sha256(b)
             sha_stats[status] = sha_stats.get(status, 0) + 1
             if status == ShaVerificationStatus.TAMPERED.value:
-                logger.error("TAMPERED: %s (%s)", b.slug, b.document_number)
+                tampered_bundles.append(b)
+                logger.critical(
+                    "SECURITY GATE BREACH: Bundle %s (%s) is TAMPERED! Hash mismatch on %s",
+                    b.slug,
+                    b.document_number,
+                    b.pdf_path,
+                )
             elif args.verbose:
                 logger.debug("[%s] %s: %s", status, b.slug, b.canonical_id)
 
@@ -173,6 +181,27 @@ def main() -> int:
         for k, v in sha_stats.items():
             print(f"  {k:15s}: {v:3d}")
         print("------------------------------------------------------------\n")
+
+        if tampered_bundles:
+            is_production = os.getenv("ENVIRONMENT") == "production" or os.getenv("PRODUCTION_MODE", "0") == "1"
+            if is_production:
+                raise RuntimeError(
+                    f"Production Security Gate: Aborting sync due to {len(tampered_bundles)} TAMPERED bundles."
+                )
+            logger.warning(
+                "Hard Security Gate: Removing %d TAMPERED bundles from sync pipeline.",
+                len(tampered_bundles),
+            )
+            tampered_slugs = {b.slug for b in tampered_bundles}
+            bundles = [b for b in bundles if b.slug not in tampered_slugs]
+
+    if not bundles:
+        logger.warning("No valid bundles found matching criteria.")
+        return 0
+
+    # Build canonical ID map
+    id_map = bridge.build_canonical_id_map(bundles)
+    logger.info("Constructed Bidirectional ID Resolver map with %d alias entries", len(id_map))
 
     # 3. Dry-Run Check
     if args.dry_run:

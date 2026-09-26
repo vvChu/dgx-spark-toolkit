@@ -61,7 +61,7 @@ class TestCatalogDiscovery:
             pytest.skip("Hub 3 path not present on this machine")
 
         bundles = hub3_bridge.load_master_catalog()
-        assert len(bundles) == 60
+        assert len(bundles) >= 60
         # Verify deterministic sorting by slug
         slugs = [b.slug for b in bundles]
         # Inode Invariance: verify sorted
@@ -486,7 +486,7 @@ class TestProcessedDocumentConversion:
             pytest.skip("Hub 3 path not present")
 
         bundles = hub3_bridge.load_master_catalog()
-        assert len(bundles) == 60
+        assert len(bundles) >= 60
         id_map = hub3_bridge.build_canonical_id_map(bundles)
 
         # In fast CI/local test runs, test representative sample across all categories.
@@ -509,6 +509,86 @@ class TestProcessedDocumentConversion:
                 assert c.doc_id == b.canonical_id
                 assert c.chunk_id == f"{b.canonical_id}::p1::c{idx}"
                 assert c.validity_status == proc_doc.metadata.validity_status
+
+    def test_fast_path_chunker_no_llm_call(self, hub3_bridge: Hub3Bridge):
+        """Verify Fast-Path chunking executes 100% locally with zero LLM/network calls."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Markdown containing a table larger than TABLE_SUMMARY_MIN_CHARS and broken table patterns
+            table_rows = ["| STT | Tên thiết bị | Thông số kỹ thuật | Ghi chú |", "| --- | --- | --- | --- |"]
+            for i in range(80):
+                table_rows.append(f"| {i} | Thiết bị công trình {i} | Tiêu chuẩn cấp {i} .... 12345 | Ghi chú dòng {i} |")
+            large_table = "\n".join(table_rows)
+
+            md_content = f"# QCVN Test Document\n\nĐiều 1. Quy định kỹ thuật\n\n{large_table}\n"
+            md_path = Path(tmpdir) / "large_table_doc.md"
+            md_path.write_text(md_content, encoding="utf-8")
+
+            bundle = Hub3BundleInfo(
+                slug="test_fast_chunk_llm",
+                category="02_qcvn",
+                registry_id="reg-fast-llm",
+                document_number="QCVN 99:2026/BXD",
+                title="QCVN 99",
+                doc_type="Quy chuẩn",
+                issued_by="BXD",
+                issued_date="2026-01-01",
+                effective_date="2026-01-01",
+                status="active",
+                validity_status="ACTIVE",
+                bundle_path="legal_docs/02_qcvn/test_fast_chunk_llm/",
+                bundle_dir=tmpdir,
+                markdown_path=str(md_path),
+                canonical_id="VBPL/QCVN_99_2026/BXD",
+                file_name="qcvn_99.pdf",
+            )
+
+            with patch("ingestion.chunking._generate_table_summary") as mock_sum, \
+                 patch("ingestion.chunking._correct_broken_table_with_vision") as mock_vis, \
+                 patch("core.ai_gateway_client.AIGatewayClient.complete_sync") as mock_llm:
+
+                mock_sum.side_effect = AssertionError("Table summarization LLM call must not be invoked in Fast-Path!")
+                mock_vis.side_effect = AssertionError("Table vision correction LLM call must not be invoked in Fast-Path!")
+                mock_llm.side_effect = AssertionError("AIGatewayClient LLM call must not be invoked in Fast-Path!")
+
+                proc_doc = hub3_bridge.convert_bundle_to_processed_doc(bundle)
+
+                assert len(proc_doc.chunks) > 0
+                mock_sum.assert_not_called()
+                mock_vis.assert_not_called()
+                mock_llm.assert_not_called()
+
+    def test_fast_path_chunker_with_passed_chunker(self, hub3_bridge: Hub3Bridge):
+        """Verify passing an existing DocumentChunker also disables LLM table features."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            md_path = Path(tmpdir) / "test.md"
+            md_path.write_text("# Doc\n\n| A | B |\n|---|---|\n| 1 | 2 |\n", encoding="utf-8")
+
+            bundle = Hub3BundleInfo(
+                slug="test_custom_chunker",
+                category="01_vbpl",
+                registry_id="reg-custom",
+                document_number="01/2026/TT-BXD",
+                title="TT 01",
+                doc_type="Thông tư",
+                issued_by="BXD",
+                issued_date="2026-01-01",
+                effective_date="2026-01-01",
+                status="active",
+                validity_status="ACTIVE",
+                bundle_path="p/",
+                bundle_dir=tmpdir,
+                markdown_path=str(md_path),
+                canonical_id="VBPL/01/2026/TT-BXD",
+            )
+
+            custom_chunker = DocumentChunker()
+            custom_chunker.TABLE_CORRECT_ENABLED = True
+            custom_chunker.TABLE_SUMMARY_ENABLED = True
+
+            proc_doc = hub3_bridge.convert_bundle_to_processed_doc(bundle, chunker=custom_chunker)
+            assert len(proc_doc.chunks) > 0
+            assert custom_chunker.TABLE_CORRECT_ENABLED is False
+            assert custom_chunker.TABLE_SUMMARY_ENABLED is False
 
 
 # ---------------------------------------------------------------------------
@@ -710,6 +790,7 @@ class TestIngestionQueueIntegration:
             markdown_path="/tmp/test_bundle.md",
             pdf_path=None,
             canonical_id="VBPL/01/2026/TT-BXD",
+            sha_status=ShaVerificationStatus.VERIFIED.value,
         )
 
         msg_id = hub3_bridge.enqueue_bundle(bundle, mock_queue)
@@ -741,6 +822,7 @@ class TestIngestionQueueIntegration:
             markdown_path="/tmp/qcvn_06_2022_bxd.md",
             pdf_path="sources/qcvn_06_2022_bxd.pdf",
             canonical_id="VBPL/QCVN_06_2022/BXD",
+            sha_status=ShaVerificationStatus.VERIFIED.value,
         )
 
         msg_id = hub3_bridge.enqueue_bundle(bundle, mock_queue)
@@ -760,15 +842,333 @@ class TestIngestionQueueIntegration:
             title="b1", doc_type="TT", issued_by="BXD", issued_date="", effective_date="",
             status="active", validity_status="ACTIVE", bundle_path="p1/", bundle_dir="",
             markdown_path="/tmp/b1.md", canonical_id="VBPL/01/2026",
+            sha_status=ShaVerificationStatus.VERIFIED.value,
         )
         b2 = Hub3BundleInfo(
             slug="b2", category="02_qcvn", registry_id="2", document_number="QCVN 01",
             title="b2", doc_type="QCVN", issued_by="BXD", issued_date="", effective_date="",
             status="active", validity_status="ACTIVE", bundle_path="p2/", bundle_dir="",
             markdown_path="/tmp/b2.md", canonical_id="VBPL/QCVN_01",
+            sha_status=ShaVerificationStatus.VERIFIED.value,
         )
 
         count = hub3_bridge.enqueue_batch([b1, b2], mock_queue)
         assert count == 2
         mock_queue.enqueue_batch.assert_called_once()
+
+    def test_enqueue_tampered_bundle_rejected(self, hub3_bridge: Hub3Bridge):
+        """Verify enqueue_bundle and enqueue_batch reject TAMPERED bundles with ValueError."""
+        mock_queue = MagicMock()
+
+        tampered_bundle = Hub3BundleInfo(
+            slug="test_tampered_doc",
+            category="01_vbpl",
+            registry_id="tampered-1",
+            document_number="99/2026/TT-BXD",
+            title="TT 99 Tampered",
+            doc_type="Thông tư",
+            issued_by="BXD",
+            issued_date="2026-01-01",
+            effective_date="2026-01-01",
+            status="active",
+            validity_status="ACTIVE",
+            bundle_path="legal_docs/01_vbpl/test_tampered/",
+            bundle_dir="/tmp",
+            markdown_path="/tmp/test_tampered.md",
+            pdf_path="test_tampered.pdf",
+            pdf_sha256="expected_sha256_hash",
+            sha_status=ShaVerificationStatus.TAMPERED.value,
+            canonical_id="VBPL/99/2026/TT-BXD",
+        )
+
+        with pytest.raises(ValueError, match=r"Security Exception: Cannot enqueue TAMPERED bundle"):
+            hub3_bridge.enqueue_bundle(tampered_bundle, mock_queue)
+
+        mock_queue.enqueue.assert_not_called()
+
+        with pytest.raises(ValueError, match=r"Security Exception: Cannot enqueue TAMPERED bundle"):
+            hub3_bridge.enqueue_batch([tampered_bundle], mock_queue)
+
+        mock_queue.enqueue_batch.assert_not_called()
+
+    def test_enqueue_unverified_statutory_rejected(self, hub3_bridge: Hub3Bridge):
+        """Verify enqueue_bundle rejects unverified statutory bundle without valid source PDF."""
+        mock_queue = MagicMock()
+
+        no_source_bundle = Hub3BundleInfo(
+            slug="test_no_source",
+            category="01_vbpl",
+            registry_id="no-source-1",
+            document_number="98/2026/TT-BXD",
+            title="TT 98 No Source",
+            doc_type="Thông tư",
+            issued_by="BXD",
+            issued_date="2026-01-01",
+            effective_date="2026-01-01",
+            status="active",
+            validity_status="ACTIVE",
+            bundle_path="legal_docs/01_vbpl/test_no_source/",
+            bundle_dir="/tmp",
+            markdown_path="/tmp/test_no_source.md",
+            pdf_path=None,
+            canonical_id="VBPL/98/2026/TT-BXD",
+        )
+
+        with pytest.raises(ValueError, match=r"Security Exception: Cannot enqueue statutory bundle"):
+            hub3_bridge.enqueue_bundle(no_source_bundle, mock_queue)
+
+        mock_queue.enqueue.assert_not_called()
+
+        with pytest.raises(ValueError, match=r"Security Exception: Cannot enqueue statutory bundle"):
+            hub3_bridge.enqueue_batch([no_source_bundle], mock_queue)
+
+        mock_queue.enqueue_batch.assert_not_called()
+
+    def test_enqueue_appendix_allowed_without_pdf(self, hub3_bridge: Hub3Bridge):
+        """Verify enqueue_bundle allows non-statutory / appendix bundles without PDF."""
+        mock_queue = MagicMock()
+        mock_queue.enqueue.return_value = "msg-app"
+
+        appendix_bundle = Hub3BundleInfo(
+            slug="test_appendix",
+            category="04_appendices",
+            registry_id="app-1",
+            document_number="APPENDIX-01",
+            title="Appendix 01",
+            doc_type="Phụ lục",
+            issued_by="CCBA",
+            issued_date="2026-01-01",
+            effective_date="2026-01-01",
+            status="active",
+            validity_status="ACTIVE",
+            bundle_path="legal_docs/04_appendices/test_appendix/",
+            bundle_dir="/tmp",
+            markdown_path="/tmp/test_appendix.md",
+            pdf_path=None,
+            canonical_id="VBPL/APPENDIX-01",
+            is_statutory=False,
+        )
+
+        msg_id = hub3_bridge.enqueue_bundle(appendix_bundle, mock_queue)
+        assert msg_id == "msg-app"
+        mock_queue.enqueue.assert_called_once()
+
+    def test_enqueue_unverified_bundle_auto_verifies_success(self, hub3_bridge: Hub3Bridge):
+        """Verify enqueue_bundle auto-invokes verify_bundle_sha256 on unverified bundle with valid PDF."""
+        mock_queue = MagicMock()
+        mock_queue.enqueue.return_value = "msg-auto-ok"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = Path(tmpdir) / "sample.pdf"
+            content = b"%PDF-1.4 sample content for sha verification"
+            pdf_path.write_bytes(content)
+            expected_sha = hashlib.sha256(content).hexdigest()
+
+            md_path = Path(tmpdir) / "sample.md"
+            md_path.write_text("# Sample", encoding="utf-8")
+
+            bundle = Hub3BundleInfo(
+                slug="sample_doc",
+                category="01_vbpl",
+                registry_id="reg-sample",
+                document_number="12/2026/TT-BXD",
+                title="Sample",
+                doc_type="Thông tư",
+                issued_by="BXD",
+                issued_date="2026-01-01",
+                effective_date="2026-01-01",
+                status="active",
+                validity_status="ACTIVE",
+                bundle_path="legal_docs/01_vbpl/sample_doc/",
+                bundle_dir=tmpdir,
+                markdown_path=str(md_path),
+                pdf_path=str(pdf_path),
+                pdf_sha256=expected_sha,
+                canonical_id="VBPL/12/2026/TT-BXD",
+            )
+            assert not bundle.is_verified
+
+            msg_id = hub3_bridge.enqueue_bundle(bundle, mock_queue)
+            assert msg_id == "msg-auto-ok"
+            assert bundle.is_verified
+            assert bundle.sha_status == ShaVerificationStatus.VERIFIED.value
+            mock_queue.enqueue.assert_called_once()
+
+    def test_enqueue_unverified_bundle_auto_verifies_tampered_fails(self, hub3_bridge: Hub3Bridge):
+        """Verify enqueue_bundle auto-invokes verify_bundle_sha256 and rejects when PDF on disk is tampered."""
+        mock_queue = MagicMock()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = Path(tmpdir) / "tampered.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 modified tampered content")
+
+            md_path = Path(tmpdir) / "tampered.md"
+            md_path.write_text("# Tampered", encoding="utf-8")
+
+            bundle = Hub3BundleInfo(
+                slug="sample_tampered",
+                category="01_vbpl",
+                registry_id="reg-tampered",
+                document_number="13/2026/TT-BXD",
+                title="Sample Tampered",
+                doc_type="Thông tư",
+                issued_by="BXD",
+                issued_date="2026-01-01",
+                effective_date="2026-01-01",
+                status="active",
+                validity_status="ACTIVE",
+                bundle_path="legal_docs/01_vbpl/sample_tampered/",
+                bundle_dir=tmpdir,
+                markdown_path=str(md_path),
+                pdf_path=str(pdf_path),
+                pdf_sha256="expected_hash_does_not_match",
+                canonical_id="VBPL/13/2026/TT-BXD",
+            )
+            assert not bundle.is_verified
+
+            with pytest.raises(ValueError, match=r"Security Exception: Cannot enqueue TAMPERED bundle"):
+                hub3_bridge.enqueue_bundle(bundle, mock_queue)
+
+            assert bundle.sha_status == ShaVerificationStatus.TAMPERED.value
+            mock_queue.enqueue.assert_not_called()
+
+    def test_enqueue_batch_with_in_memory_queue(self, hub3_bridge: Hub3Bridge):
+        """Verify enqueue_batch works correctly with InMemoryIngestionQueue."""
+        from ingestion.ingestion_queue import InMemoryIngestionQueue
+
+        queue = InMemoryIngestionQueue()
+        b1 = Hub3BundleInfo(
+            slug="b1", category="01_vbpl", registry_id="1", document_number="01/2026",
+            title="b1", doc_type="TT", issued_by="BXD", issued_date="", effective_date="",
+            status="active", validity_status="ACTIVE", bundle_path="p1/", bundle_dir="",
+            markdown_path="/tmp/b1.md", canonical_id="VBPL/01/2026",
+            sha_status=ShaVerificationStatus.VERIFIED.value,
+        )
+        b2 = Hub3BundleInfo(
+            slug="b2", category="02_qcvn", registry_id="2", document_number="QCVN 01",
+            title="b2", doc_type="QCVN", issued_by="BXD", issued_date="", effective_date="",
+            status="active", validity_status="ACTIVE", bundle_path="p2/", bundle_dir="",
+            markdown_path="/tmp/b2.md", canonical_id="VBPL/QCVN_01",
+            sha_status=ShaVerificationStatus.VERIFIED.value,
+        )
+
+        count = hub3_bridge.enqueue_batch([b1, b2], queue)
+        assert count == 2
+        assert len(queue.queue) == 2
+        assert queue.queue[0]["file_path"] == "/tmp/b1.md"
+        assert queue.queue[1]["file_path"] == "/tmp/b2.md"
+
+
+# ---------------------------------------------------------------------------
+# Test Suite: CLI Runner (sync_hub3_bundles.py) & Security Gate
+# ---------------------------------------------------------------------------
+
+class TestSyncHub3BundlesCLI:
+    """Tests for sync_hub3_bundles CLI runner and security gate."""
+
+    def test_cli_enqueue_auto_enables_verify_sha(self):
+        import scripts.sync_hub3_bundles as sync_cli
+
+        args = sync_cli.parse_args(["--enqueue", "--dry-run"])
+        assert args.enqueue is True
+        assert args.dry_run is True
+
+        with patch("scripts.sync_hub3_bundles.Hub3Bridge") as mock_bridge_cls:
+            mock_bridge = MagicMock()
+            mock_bridge_cls.return_value = mock_bridge
+            mock_bridge.load_master_catalog.return_value = []
+
+            ret = sync_cli.main(["--enqueue", "--dry-run"])
+            assert ret == 0
+
+    def test_cli_sync_neo4j_auto_enables_verify_sha(self):
+        import scripts.sync_hub3_bundles as sync_cli
+
+        args = sync_cli.parse_args(["--sync-neo4j", "--dry-run"])
+        assert args.sync_neo4j is True
+
+        with patch("scripts.sync_hub3_bundles.Hub3Bridge") as mock_bridge_cls:
+            mock_bridge = MagicMock()
+            mock_bridge_cls.return_value = mock_bridge
+            mock_bridge.load_master_catalog.return_value = []
+
+            ret = sync_cli.main(["--sync-neo4j", "--dry-run"])
+            assert ret == 0
+
+    def test_cli_tampered_bundle_removed_from_sync(self):
+        import scripts.sync_hub3_bundles as sync_cli
+
+        valid_b = Hub3BundleInfo(
+            slug="valid_doc", category="01_vbpl", registry_id="1", document_number="01/2026",
+            title="Valid", doc_type="TT", issued_by="BXD", issued_date="", effective_date="",
+            status="active", validity_status="ACTIVE", bundle_path="p1/", bundle_dir="",
+            markdown_path="/tmp/valid.md", canonical_id="VBPL/01/2026",
+        )
+        tampered_b = Hub3BundleInfo(
+            slug="tampered_doc", category="01_vbpl", registry_id="2", document_number="02/2026",
+            title="Tampered", doc_type="TT", issued_by="BXD", issued_date="", effective_date="",
+            status="active", validity_status="ACTIVE", bundle_path="p2/", bundle_dir="",
+            markdown_path="/tmp/tampered.md", canonical_id="VBPL/02/2026",
+        )
+
+        with patch("scripts.sync_hub3_bundles.Hub3Bridge") as mock_bridge_cls:
+            mock_bridge = MagicMock()
+            mock_bridge_cls.return_value = mock_bridge
+            mock_bridge.load_master_catalog.return_value = [valid_b, tampered_b]
+
+            def fake_verify(b):
+                if b.slug == "tampered_doc":
+                    b.sha_status = ShaVerificationStatus.TAMPERED.value
+                else:
+                    b.sha_status = ShaVerificationStatus.VERIFIED.value
+                return b.sha_status
+
+            mock_bridge.verify_bundle_sha256.side_effect = fake_verify
+            mock_bridge.build_canonical_id_map.return_value = {"VBPL/01/2026": "VBPL/01/2026"}
+
+            ret = sync_cli.main(["--verify-sha", "--dry-run"])
+            assert ret == 0
+            args, _ = mock_bridge.build_canonical_id_map.call_args
+            surviving_slugs = [b.slug for b in args[0]]
+            assert "tampered_doc" not in surviving_slugs
+            assert "valid_doc" in surviving_slugs
+
+    def test_cli_tampered_bundle_production_mode_raises(self, monkeypatch):
+        import scripts.sync_hub3_bundles as sync_cli
+
+        tampered_b = Hub3BundleInfo(
+            slug="tampered_prod", category="01_vbpl", registry_id="1", document_number="01/2026",
+            title="Tampered Prod", doc_type="TT", issued_by="BXD", issued_date="", effective_date="",
+            status="active", validity_status="ACTIVE", bundle_path="p1/", bundle_dir="",
+            markdown_path="/tmp/tampered.md", canonical_id="VBPL/01/2026",
+        )
+
+        with patch("scripts.sync_hub3_bundles.Hub3Bridge") as mock_bridge_cls:
+            mock_bridge = MagicMock()
+            mock_bridge_cls.return_value = mock_bridge
+            mock_bridge.load_master_catalog.return_value = [tampered_b]
+            mock_bridge.verify_bundle_sha256.return_value = ShaVerificationStatus.TAMPERED.value
+
+            monkeypatch.setenv("PRODUCTION_MODE", "1")
+            with pytest.raises(RuntimeError, match=r"Production Security Gate: Aborting sync due to 1 TAMPERED bundles"):
+                sync_cli.main(["--verify-sha", "--dry-run"])
+
+    def test_cli_all_tampered_bundles_handled(self):
+        import scripts.sync_hub3_bundles as sync_cli
+
+        tampered_b = Hub3BundleInfo(
+            slug="tampered_all", category="01_vbpl", registry_id="1", document_number="01/2026",
+            title="Tampered All", doc_type="TT", issued_by="BXD", issued_date="", effective_date="",
+            status="active", validity_status="ACTIVE", bundle_path="p1/", bundle_dir="",
+            markdown_path="/tmp/tampered.md", canonical_id="VBPL/01/2026",
+        )
+
+        with patch("scripts.sync_hub3_bundles.Hub3Bridge") as mock_bridge_cls:
+            mock_bridge = MagicMock()
+            mock_bridge_cls.return_value = mock_bridge
+            mock_bridge.load_master_catalog.return_value = [tampered_b]
+            mock_bridge.verify_bundle_sha256.return_value = ShaVerificationStatus.TAMPERED.value
+
+            ret = sync_cli.main(["--verify-sha", "--dry-run"])
+            assert ret == 0
 

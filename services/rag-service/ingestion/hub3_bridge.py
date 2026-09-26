@@ -599,9 +599,16 @@ class Hub3Bridge:
             guides=[],
         )
 
-        # Fast-Path Chunking
+        # Fast-Path Chunking: disable table vision correction & summarization for 100% local execution
         if chunker is None:
             chunker = DocumentChunker()
+            chunker.TABLE_CORRECT_ENABLED = False
+            chunker.TABLE_SUMMARY_ENABLED = False
+        else:
+            if hasattr(chunker, "TABLE_CORRECT_ENABLED"):
+                chunker.TABLE_CORRECT_ENABLED = False
+            if hasattr(chunker, "TABLE_SUMMARY_ENABLED"):
+                chunker.TABLE_SUMMARY_ENABLED = False
 
         raw_chunks = chunker.chunk_document(
             text=clean_text,
@@ -671,11 +678,45 @@ class Hub3Bridge:
             return result
         return {"nodes_synced": 0, "replaces_created": 0, "amends_created": 0}
 
+    def _validate_bundle_security(self, bundle: Hub3BundleInfo) -> None:
+        """Validate cryptographic provenance of bundle before ingestion queueing.
+
+        Enforces ADR-0059 Hard Security Gate:
+        - If bundle has not been verified yet, auto-invokes verify_bundle_sha256(bundle).
+        - If bundle is TAMPERED, immediately raises ValueError.
+        - Statutory documents must be cryptographically VERIFIED (or appendices/non-statutory).
+
+        Args:
+            bundle: Hub3BundleInfo instance.
+
+        Raises:
+            ValueError: If bundle is TAMPERED or statutory document without verified source PDF.
+        """
+        if not bundle.is_verified and bundle.sha_status != ShaVerificationStatus.TAMPERED.value:
+            self.verify_bundle_sha256(bundle)
+
+        if bundle.sha_status == ShaVerificationStatus.TAMPERED.value:
+            raise ValueError(
+                f"Security Exception: Cannot enqueue TAMPERED bundle {bundle.slug} ({bundle.document_number})"
+            )
+
+        is_allowed = (
+            bundle.is_verified
+            or bundle.category == "04_appendices"
+            or not bundle.is_statutory
+        )
+        if not is_allowed:
+            raise ValueError(
+                f"Security Exception: Cannot enqueue statutory bundle {bundle.slug} ({bundle.document_number}) "
+                f"with unverified source (status: {bundle.sha_status})"
+            )
+
     def enqueue_bundle(self, bundle: Hub3BundleInfo, queue: Any) -> str:
         """Enqueue bundle into IngestionQueue for asynchronous ingestion.
 
         Fast-Path: Enqueues the pre-standardized, frontmatter-stripped Markdown
         path, bypassing GPU-heavy OCR and LLM extraction stages.
+        Strictly enforces ADR-0059 Hard Security Gate before queueing.
 
         Args:
             bundle: Hub3BundleInfo instance.
@@ -684,6 +725,8 @@ class Hub3Bridge:
         Returns:
             Queue message ID string.
         """
+        self._validate_bundle_security(bundle)
+
         target_file = bundle.markdown_path
         content_hash = bundle.pdf_sha256 or hashlib.md5(bundle.slug.encode("utf-8")).hexdigest()
         return queue.enqueue(
@@ -695,7 +738,7 @@ class Hub3Bridge:
     def enqueue_batch(self, bundles: List[Hub3BundleInfo], queue: Any) -> int:
         """Enqueue multiple bundles into IngestionQueue in batch.
 
-        Fast-Path: Enqueues Markdown files directly.
+        Fast-Path: Enqueues Markdown files directly after validating cryptographic SHA-256 provenance.
 
         Args:
             bundles: List of Hub3BundleInfo instances.
@@ -704,6 +747,9 @@ class Hub3Bridge:
         Returns:
             Count of successfully enqueued items.
         """
+        for b in bundles:
+            self._validate_bundle_security(b)
+
         files = []
         for b in bundles:
             target_file = b.markdown_path
