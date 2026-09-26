@@ -267,7 +267,11 @@ class TestBGEM3HybridLock:
         mock_fe = types.ModuleType("FlagEmbedding")
         mock_fe.BGEM3FlagModel = MagicMock(return_value=mock_model)
 
-        with patch.dict(sys.modules, {"FlagEmbedding": mock_fe}):
+        mock_torch = types.ModuleType("torch")
+        mock_torch.cuda = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+
+        with patch.dict(sys.modules, {"FlagEmbedding": mock_fe, "torch": mock_torch}):
             spec.loader.exec_module(real_mod)
             emb = real_mod.BGE_M3_HybridEmbedding()
             assert hasattr(emb, "_lock")
