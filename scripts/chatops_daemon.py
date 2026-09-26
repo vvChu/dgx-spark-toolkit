@@ -719,6 +719,70 @@ async def probe_gateway_stats() -> str:
     return "\n".join(lines)
 
 
+async def probe_antigravity_status() -> str:
+    """Queries Antigravity Tools API (:8045) for account pool health and blocked states."""
+    base_url = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045").rstrip("/").removesuffix("/v1")
+    key = os.environ.get("GATEWAY_PROXY_KEY", "")
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+
+    lines = ["🤖 *HỒ BƠI TÀI KHOẢN ANTIGRAVITY TOOLS* 🤖\n"]
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            h_res = await client.get(f"{base_url}/healthz")
+            if h_res.status_code == 200:
+                lines.append("• *Trạng thái:* 🟢 Online (`:8045`) | Mode: `CacheFirst`")
+            else:
+                lines.append(f"• *Trạng thái:* 🔴 HTTP {h_res.status_code}")
+
+            a_res = await client.get(f"{base_url}/api/accounts", headers=headers)
+            if a_res.status_code == 200:
+                data = a_res.json()
+                accounts = data.get("accounts", []) if isinstance(data, dict) else data
+                total = len(accounts)
+                active_list = []
+                blocked_list = []
+
+                for a in accounts:
+                    is_blocked = (
+                        a.get("proxy_disabled")
+                        or a.get("disabled")
+                        or a.get("validation_blocked")
+                        or (a.get("quota") or {}).get("is_forbidden")
+                    )
+                    if is_blocked:
+                        blocked_list.append(a)
+                    else:
+                        active_list.append(a)
+
+                lines.append(f"• *Hồ bơi tài khoản:* `{len(active_list)}/{total}` tài khoản khả dụng\n")
+
+                if blocked_list:
+                    lines.append("⚠️ *Tài khoản bị ngắt kết nối:*")
+                    for b in blocked_list:
+                        b_email = b.get("email")
+                        b_reason = b.get("proxy_disabled_reason") or b.get("disabled_reason") or "403 Forbidden"
+                        if "Verify your account" in b_reason:
+                            r_desc = "Cần xác minh danh tính (403)"
+                        elif "quota fetch denied" in b_reason:
+                            r_desc = "Warmup 403 Forbidden"
+                        else:
+                            r_desc = b_reason[:40]
+                        lines.append(f"  └─ 🔴 `{b_email}`: {r_desc}")
+                    lines.append("")
+
+                lines.append("✅ *Tài khoản hoạt động:*")
+                for act in active_list:
+                    lines.append(f"  └─ 🟢 `{act.get('email')}`")
+            else:
+                lines.append(f"• Không thể đọc danh sách tài khoản (HTTP {a_res.status_code})")
+    except Exception as e:
+        clean_err = str(e).replace("`", "'")
+        lines.append(f"• Lỗi kết nối Antigravity Tools: `{clean_err}`")
+
+    lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
+    return "\n".join(lines)
+
+
 async def probe_blackwell_gpu() -> str:
     """Deep probe for NVIDIA GB10 with compute processes memory summation."""
     lines = ["🎮 *THÔNG SỐ GPU NVIDIA BLACKWELL GB10* 🎮\n"]
@@ -933,6 +997,7 @@ def get_main_dashboard_markup() -> Dict[str, Any]:
                 {"text": "📦 Quản Lý Phụ Thuộc (MỚI)", "callback_data": "menu:deps_menu"},
             ],
             [
+                {"text": "🤖 Hồ Bơi Antigravity", "callback_data": "menu:antigravity"},
                 {"text": "❓ Hướng Dẫn ChatOps", "callback_data": "menu:help"},
             ],
         ]
@@ -1385,6 +1450,11 @@ async def dispatch_command(
                 if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
                     await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
                 append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed autotuner status")
+            elif command_id in ["antigravity.status", "antigravity"]:
+                text = await probe_antigravity_status()
+                if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
+                    await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
+                append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed Antigravity pool status")
             else:
                 unhandled = f"⚠️ Chưa xử lý runner internal cho lệnh `{command_id}`"
                 if not await edit_telegram_msg(chat_id, message_id, unhandled, reply_markup=get_main_dashboard_markup()):
@@ -1464,6 +1534,9 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             return
         elif data == "menu:rag_state":
             await dispatch_command("rag.ingestion.state", {}, chat_id, message_id, cq_id=cq_id)
+            return
+        elif data == "menu:antigravity":
+            await dispatch_command("antigravity.status", {}, chat_id, message_id, cq_id=cq_id)
             return
         elif data == "menu:deps_menu":
             await answer_callback(cq_id)
@@ -1779,6 +1852,13 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra trạng thái Nightly Auto-Tuner...")
             if sent_id:
                 await dispatch_command("ccba.autotuner.status", {}, chat_id, sent_id)
+            return
+
+        # 4b. /antigravity
+        if text in ["/antigravity", "/accounts"] or text.startswith("/antigravity@") or text.startswith("/accounts@"):
+            sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra hồ bơi tài khoản Antigravity...")
+            if sent_id:
+                await dispatch_command("antigravity.status", {}, chat_id, sent_id)
             return
 
         # 4b. /deps

@@ -227,29 +227,127 @@ def check_antigravity_tools() -> None:
         )
 
 
+known_blocked_accounts: Dict[str, float] = {}
+
+
+def extract_validation_url(account_data: Dict[str, Any]) -> Optional[str]:
+    """Extracts Google verification URL from account metadata or error strings."""
+    import re
+    url = account_data.get("validation_url")
+    if url:
+        return str(url)
+
+    raw = (
+        account_data.get("validation_blocked_reason")
+        or account_data.get("proxy_disabled_reason")
+        or account_data.get("disabled_reason")
+        or (account_data.get("quota") or {}).get("forbidden_reason")
+        or ""
+    )
+    if "accounts.google.com/signin/continue" in str(raw):
+        m = re.search(r"https://accounts\.google\.com/signin/continue[^\s\"'\\]+", str(raw))
+        if m:
+            return m.group(0).replace("\\u0026", "&")
+    return None
+
+
 def check_quota_pool() -> None:
-    """Checks for account pool exhaustion in Antigravity Tools."""
+    """Monitors Antigravity Tools account pool health and detects checkpoints."""
     if not GATEWAY_PROXY_KEY:
         return
     base_url = get_proxy_base_url()
     headers = {"Authorization": f"Bearer {GATEWAY_PROXY_KEY}"}
     try:
         res = requests.get(f"{base_url}/api/accounts", headers=headers, timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            accounts = data.get("accounts", []) if isinstance(data, dict) else []
-            total = len(accounts)
-            if total > 0:
-                disabled_or_error = [
-                    a for a in accounts
-                    if a.get("disabled") or a.get("status") in ["error", "rate_limited", "quota_exceeded"]
-                ]
-                if len(disabled_or_error) >= max(1, total - 1):
-                    send_telegram_alert(
-                        f"CẢNH BÁO NGUY CẤP: Pool tài khoản Google cạn kiệt! "
-                        f"Hiện có {len(disabled_or_error)}/{total} tài khoản bị khóa/lỗi quota.",
-                        "quota_pool_exhausted",
+        if res.status_code != 200:
+            return
+
+        data = res.json()
+        accounts = data.get("accounts", []) if isinstance(data, dict) else data
+        total = len(accounts)
+        if total == 0:
+            return
+
+        current_blocked: Dict[str, Dict[str, Any]] = {}
+        active_count = 0
+
+        for a in accounts:
+            email = a.get("email", "unknown")
+            is_blocked = (
+                a.get("proxy_disabled")
+                or a.get("disabled")
+                or a.get("validation_blocked")
+                or (a.get("quota") or {}).get("is_forbidden")
+            )
+            if is_blocked:
+                val_url = extract_validation_url(a)
+                raw_reason = (
+                    a.get("validation_blocked_reason")
+                    or a.get("proxy_disabled_reason")
+                    or a.get("disabled_reason")
+                    or (a.get("quota") or {}).get("forbidden_reason")
+                    or "Tài khoản bị ngắt kết nối tạm thời"
+                )
+                current_blocked[email] = {
+                    "id": a.get("id"),
+                    "reason": str(raw_reason),
+                    "validation_url": val_url,
+                }
+            else:
+                active_count += 1
+
+        now = time.time()
+
+        # 1. Alert for newly blocked accounts (cooldown: 2 hours per account)
+        for email, info in current_blocked.items():
+            last_alert = known_blocked_accounts.get(email, 0.0)
+            if now - last_alert >= 7200:
+                known_blocked_accounts[email] = now
+                val_url = info.get("validation_url")
+                raw_reason = info.get("reason", "")
+
+                if "Verify your account" in raw_reason:
+                    reason_desc = "Yêu cầu xác minh danh tính người dùng (VALIDATION_REQUIRED 403)"
+                elif "quota fetch denied" in raw_reason:
+                    reason_desc = "Không thể lấy hạn mức (Warmup 403 Forbidden)"
+                elif "invalid_grant" in raw_reason:
+                    reason_desc = "Phiên đăng nhập hết hạn (invalid_grant)"
+                else:
+                    reason_desc = raw_reason[:120]
+
+                title = "CẢNH BÁO TÀI KHOẢN GOOGLE CẦN XÁC MINH"
+                body = (
+                    f"⚠️ *Tài khoản `{email}` tạm thời bị ngắt kết nối!*\n"
+                    f"• **Lý do**: {reason_desc}\n"
+                    f"• **Trạng thái Pool**: Còn `{active_count}/{total}` tài khoản khả dụng.\n"
+                )
+                if val_url:
+                    body += (
+                        f"\n🔗 **Link xác thực Google (1-Click):**\n"
+                        f"[👉 Bấm vào đây để mở khóa tài khoản]({val_url})\n\n"
+                        f"_Sau khi xác minh trên trình duyệt, hãy bật lại tài khoản trên giao diện._"
                     )
+
+                notify_chatops(title, body, actions=[], severity="WARNING")
+
+        # 2. Alert for newly recovered accounts
+        for email in list(known_blocked_accounts.keys()):
+            if email not in current_blocked:
+                del known_blocked_accounts[email]
+                title = "TÀI KHOẢN GOOGLE ĐÃ PHỤC HỒI"
+                body = (
+                    f"✅ Tài khoản `{email}` đã được kích hoạt lại thành công!\n"
+                    f"• Hiện có `{active_count}/{total}` tài khoản sẵn sàng phục vụ."
+                )
+                notify_chatops(title, body, actions=[], severity="INFO")
+
+        # 3. Critical alert if available accounts drop to <= 2
+        if active_count <= 2 and total > 2:
+            send_telegram_alert(
+                f"CẢNH BÁO NGUY CẤP: Pool tài khoản Google cạn kiệt! "
+                f"Chỉ còn `{active_count}/{total}` tài khoản khả dụng trong hệ thống.",
+                "quota_pool_exhausted",
+            )
     except requests.RequestException as e:
         print(f"Error checking quota pool: {e}", flush=True)
 
@@ -363,22 +461,29 @@ def build_daily_digest_message(date_str: str) -> str:
     top_models_line = get_top_models(base_url, headers)
 
     # 4. Account pool
-    acc_line = "• Quota Pool: 7/7 accounts khả dụng (0 bị khóa 7-ngày)"
+    acc_line = "• Quota Pool: Đang kiểm tra..."
     try:
         res = requests.get(f"{base_url}/api/accounts", headers=headers, timeout=5)
         if res.status_code == 200:
             data = res.json()
-            accounts = data.get("accounts", []) if isinstance(data, dict) else []
-            active = sum(1 for a in accounts if not a.get("disabled"))
-            acc_line = f"• Quota Pool: {active}/{len(accounts)} accounts khả dụng"
-    except Exception:
-        pass
+            accounts = data.get("accounts", []) if isinstance(data, dict) else data
+            active = sum(
+                1 for a in accounts
+                if not a.get("disabled") and not a.get("proxy_disabled") and not (a.get("quota") or {}).get("is_forbidden")
+            )
+            blocked = len(accounts) - active
+            if blocked > 0:
+                acc_line = f"• Quota Pool: `{active}/{len(accounts)}` accounts khả dụng ({blocked} tạm ngắt)"
+            else:
+                acc_line = f"• Quota Pool: `{active}/{len(accounts)}` accounts khả dụng (100% OK)"
+    except Exception as e:
+        acc_line = f"• Quota Pool: Lỗi đọc dữ liệu ({e})"
 
     return (
         f"📊 **[SPARK-AI] BÁO CÁO HOẠT ĐỘNG NGÀY {date_str}** 📊\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"⚡ **Dịch vụ & Phần cứng (DGX Spark GB10):**\n"
-        f"• AI Gateway (`:8090`): Online | Antigravity (`:8045`): Online (Balance)\n"
+        f"• AI Gateway (`:8090`): Online | Antigravity (`:8045`): Online (CacheFirst)\n"
         f"• vLLM (`:8004`): Online\n"
         f"{hw_line}\n\n"
         f"📈 **Sản lượng Token & Requests:**\n"
@@ -456,7 +561,7 @@ def check_openwebui_updates() -> None:
 
 
 def check_swap_pressure() -> None:
-    """Monitors Swap utilization and sends critical alerts when exceeding safe threshold (25% or 8GB)."""
+    """Monitors memory pressure and triggers Backpressure only when RAM is actually low."""
     try:
         with open("/proc/meminfo") as f:
             mem_data = {}
@@ -477,9 +582,12 @@ def check_swap_pressure() -> None:
             swap_pct = (swap_used_kb / swap_tot_kb) * 100
             swap_used_gb = swap_used_kb / 1024 / 1024
 
-        under_pressure = (swap_pct >= 25.0) or (avail_gb < 6.0 and avail_gb > 0)
+        # Real pressure occurs when RAM is critically low (< 6GB) OR both Swap is high (>= 35%) and RAM is constrained (< 10GB).
+        # Idle cold memory swapped out to disk with > 10GB available RAM is healthy on Linux unified memory.
+        under_pressure = (avail_gb < 6.0 and avail_gb > 0) or (swap_pct >= 35.0 and avail_gb < 10.0)
+
+        redis_url = os.getenv("REDIS_URL", "redis://litellm-redis:6379/1")
         if under_pressure:
-            redis_url = os.getenv("REDIS_URL", "redis://litellm-redis:6379/1")
             try:
                 import redis
                 r = redis.Redis.from_url(redis_url, socket_timeout=2)
@@ -495,7 +603,7 @@ def check_swap_pressure() -> None:
                 title = f"CẢNH BÁO ÁP LỰC BỘ NHỚ: RAM {avail_gb:.1f}G, SWAP {swap_used_gb:.1f}G/{swap_tot_gb:.0f}G ({swap_pct:.0f}%)"
                 body = (
                     f"⚠️ *DGX Spark đang chịu áp lực bộ nhớ cao!*\n"
-                    f"• RAM khả dụng: `{avail_gb:.1f} GiB` (Ngưỡng an toàn >= 6.0 GiB)\n"
+                    f"• RAM khả dụng: `{avail_gb:.1f} GiB` (Ngưỡng an toàn >= 10.0 GiB)\n"
                     f"• Swap tiêu thụ: `{swap_used_gb:.1f} GiB / {swap_tot_gb:.0f} GiB` (`{swap_pct:.0f}%`)\n"
                     f"🛑 *Cơ chế Backpressure đã tự động tạm hoãn nhận tài liệu mới vào queue trong 5 phút.*\n"
                     f"💡 *Gợi ý: Dùng lệnh `/memory` trên Telegram để kiểm tra tiến trình.*"
@@ -509,6 +617,16 @@ def check_swap_pressure() -> None:
                     }
                 ]
                 notify_chatops(title, body, actions=actions, severity="WARNING")
+        else:
+            # If system is healthy, clear any existing paused flag so ingestion resumes immediately
+            try:
+                import redis
+                r = redis.Redis.from_url(redis_url, socket_timeout=2)
+                if r.exists("rag:ingestion:paused"):
+                    r.delete("rag:ingestion:paused")
+                    print(f"[BACKPRESSURE] System healthy (RAM: {avail_gb:.1f}GB, Swap: {swap_used_gb:.1f}GB). Relieved rag:ingestion:paused.", flush=True)
+            except Exception:
+                pass
     except Exception as e:
         print(f"Error checking swap pressure: {e}", flush=True)
 
