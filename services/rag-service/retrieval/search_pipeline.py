@@ -20,6 +20,7 @@ from retrieval.query_rewriter import rewrite_query
 from retrieval.query_tracer import QueryTracer
 from retrieval.reranker import get_reranker
 from retrieval.semantic_cache import SemanticCache
+from retrieval.tier0_cache import Tier0ExactCache, compute_sha256_cache_key
 
 from core.ai_gateway_client import get_ai_gateway_client, AIGatewayClient
 
@@ -88,12 +89,24 @@ _semantic_cache = LazyInit(lambda: SemanticCache(
     ttl_seconds=get_settings().SEMANTIC_CACHE_TTL_SECONDS,
     redis_url=get_settings().REDIS_URL if get_settings().SEMANTIC_CACHE_REDIS_ENABLED else None,
 ))
+_tier0_cache = LazyInit(lambda: Tier0ExactCache(
+    ttl_seconds=get_settings().SEMANTIC_CACHE_TTL_SECONDS,
+    redis_url=get_settings().REDIS_URL if get_settings().SEMANTIC_CACHE_REDIS_ENABLED else None,
+))
 _hyde_gen = LazyInit(lambda: HyDEGenerator())
 _embedding_model = LazyInit(lambda: BGE_M3_HybridEmbedding())
 
 
 def get_embedding_model() -> BGE_M3_HybridEmbedding:
     return _embedding_model.get()
+
+
+def get_tier0_cache() -> Tier0ExactCache:
+    return _tier0_cache.get()
+
+
+def get_semantic_cache() -> SemanticCache:
+    return _semantic_cache.get()
 
 
 _AGENTIC_PLAN_PROMPT = """Bạn là chuyên gia phân tích truy vấn pháp luật Việt Nam. Phân tích câu hỏi sau và xác định các nội dung cần tra cứu.
@@ -283,6 +296,7 @@ class SearchPipeline:
                     "cached": True,
                     "trace": ctx.tracer.finalize(cache_hit=True, result_count=len(ctx.top_results)),
                     "query_intent": ctx.intent.value if ctx.intent else "GENERAL",
+                    "search_grounding_triggered": ctx.search_grounding_triggered,
                     "hops": ctx.hops,
                     "sub_queries": ctx.sub_queries,
                     "reasoning": ctx.reasoning,
@@ -316,7 +330,19 @@ class SearchPipeline:
 
             # Cache final results
             if ctx.use_cache and ctx.top_results:
-                _semantic_cache.get().set(ctx.search_query or ctx.raw_query, ctx.query_vector_np, ctx.top_results, filter_key=ctx.cache_filter_key)
+                _semantic_cache.get().set(
+                    ctx.search_query or ctx.raw_query,
+                    ctx.query_vector_np,
+                    ctx.top_results,
+                    filter_key=ctx.cache_filter_key,
+                )
+                exact_key = compute_sha256_cache_key(
+                    ctx.raw_query,
+                    filter_expr=ctx.filter_expr,
+                    limit=ctx.limit,
+                    use_reranker=ctx.use_reranker,
+                )
+                _tier0_cache.get().set(exact_key, ctx.top_results)
 
             # HITL Sampling
             if self._sampler_hook:
@@ -358,6 +384,24 @@ class SearchPipeline:
         ctx.filter_expr = " and ".join(filters) if filters else None
         ctx.cache_filter_key = ctx.filter_expr or ""
 
+        # Tier 0 Exact Query Cache Check (< 1 ms, pre-embedding)
+        if ctx.use_cache:
+            ctx.tracer.start_step("tier0_cache_check")
+            exact_key = compute_sha256_cache_key(
+                ctx.raw_query,
+                filter_expr=ctx.filter_expr,
+                limit=ctx.limit,
+                use_reranker=ctx.use_reranker,
+            )
+            cached_results = _tier0_cache.get().get(exact_key)
+            if cached_results:
+                SEMANTIC_CACHE_HITS.inc()
+                ctx.top_results = cached_results
+                ctx.cached_hit = True
+                ctx.tracer.end_step(result="exact_hit", tier=0)
+                return True
+            ctx.tracer.end_step(result="miss")
+
         # Initial embedding for cache lookup
         ctx.tracer.start_step("embed")
         loop = asyncio.get_running_loop()
@@ -373,6 +417,13 @@ class SearchPipeline:
             cached = _semantic_cache.get().get(ctx.raw_query, ctx.query_vector_np, filter_key=ctx.cache_filter_key)
             if cached:
                 SEMANTIC_CACHE_HITS.inc()
+                exact_key = compute_sha256_cache_key(
+                    ctx.raw_query,
+                    filter_expr=ctx.filter_expr,
+                    limit=ctx.limit,
+                    use_reranker=ctx.use_reranker,
+                )
+                _tier0_cache.get().set(exact_key, cached)
                 ctx.tracer.end_step(result="hit")
                 ctx.top_results = cached
                 ctx.cached_hit = True

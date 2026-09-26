@@ -1,10 +1,10 @@
+import logging
+import os
+import threading
+import warnings
 from FlagEmbedding import BGEM3FlagModel
 import numpy as np
 import torch
-import logging
-import warnings
-import contextlib
-from core.vram_accelerator import vram_accelerate
 
 # Suppress verbose XLMRobertaTokenizerFast HuggingFace warnings
 warnings.filterwarnings('ignore', category=UserWarning, message='.*XLMRobertaTokenizerFast.*')
@@ -14,23 +14,34 @@ logger = logging.getLogger(__name__)
 
 class BGE_M3_HybridEmbedding:
     def __init__(self):
-        import os
         self.force_cpu = os.getenv("FORCE_CPU_EMBEDDING") == "1"
-        self.device = 'cpu'
-        logger.info(f"Initializing BAAI/bge-m3 Hybrid (Dense + Native Sparse) on {self.device} (Hybrid VRAM mode)...")
+        self.device = "cuda:0" if (torch.cuda.is_available() and not self.force_cpu) else "cpu"
+        self.use_fp16 = (self.device != "cpu")
+        logger.info(
+            f"Initializing BAAI/bge-m3 Hybrid (Dense + Native Sparse) on {self.device} (FP16={self.use_fp16})..."
+        )
         self.model = BGEM3FlagModel(
             'BAAI/bge-m3',
-            use_fp16=False,
+            use_fp16=self.use_fp16,
             devices=self.device
         )
         self.dim = 1024
+        self._lock = threading.Lock()
 
-    def encode(self, texts: list[str], batch_size=16) -> list[dict]:
-        """Provides backward compatible list format for downstream components if needed"""
+    def encode(self, texts: list[str], batch_size: int = 16) -> list[dict]:
+        """Provide backward compatible list format for downstream components.
+
+        Args:
+            texts: List of input strings or single string to encode.
+            batch_size: Inference batch size.
+
+        Returns:
+            List of dicts each containing 'dense' (list[float]) and 'sparse' representations.
+        """
         if isinstance(texts, str):
             texts = [texts]
 
-        with vram_accelerate(self.model, min_vram_gb=4.0) if not self.force_cpu else contextlib.nullcontext():
+        with self._lock:
             embeddings = self.model.encode(
                 texts,
                 batch_size=batch_size,
@@ -56,15 +67,23 @@ class BGE_M3_HybridEmbedding:
     _DOC_PREFIX = "Represent this Vietnamese legal document for retrieval: "
     _QUERY_PREFIX = "Represent this sentence for searching Vietnamese legal documents: "
 
-    def embed_documents(self, texts: list[str], batch_size=16) -> dict:
-        """Returns the dictionary format suitable for batch collection operations"""
+    def embed_documents(self, texts: list[str], batch_size: int = 16) -> dict:
+        """Embed document texts with Vietnamese legal domain instruction prefix.
+
+        Args:
+            texts: List of strings or single string to encode.
+            batch_size: Inference batch size.
+
+        Returns:
+            Dict containing 'dense' and 'sparse' batch representations.
+        """
         if isinstance(texts, str):
             texts = [texts]
 
         # [P1-4] Add instruction prefix for better domain-specific embeddings
         prefixed = [self._DOC_PREFIX + t for t in texts]
 
-        with vram_accelerate(self.model, min_vram_gb=4.0) if not self.force_cpu else contextlib.nullcontext():
+        with self._lock:
             embeddings = self.model.encode(
                 prefixed,
                 batch_size=batch_size,
@@ -80,11 +99,18 @@ class BGE_M3_HybridEmbedding:
         }
 
     def embed_query(self, query: str) -> dict:
-        """Embed a single query returning dict format"""
+        """Embed a single query returning dict format with domain instruction prefix.
+
+        Args:
+            query: Query string to embed.
+
+        Returns:
+            Dict containing 'dense' (list[float]) and 'sparse' (dict[int, float]).
+        """
         # [P1-4] Add instruction prefix for query
         prefixed = self._QUERY_PREFIX + query
 
-        with vram_accelerate(self.model, min_vram_gb=4.0) if not self.force_cpu else contextlib.nullcontext():
+        with self._lock:
             embeddings = self.model.encode(
                 [prefixed],
                 batch_size=1,

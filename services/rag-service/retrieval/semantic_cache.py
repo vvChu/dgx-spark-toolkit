@@ -48,8 +48,9 @@ class SemanticCache:
         if redis_url:
             try:
                 import redis
-                base_url = redis_url.rsplit("/", 1)[0] if "/" in redis_url.rsplit(":", 1)[-1] else redis_url
-                self._redis = redis.Redis.from_url(f"{base_url}/3", decode_responses=False)
+                from retrieval.tier0_cache import format_redis_db3_url
+                db3_url = format_redis_db3_url(redis_url)
+                self._redis = redis.Redis.from_url(db3_url, decode_responses=False)
                 self._redis.ping()
                 logger.info("SemanticCache L2 (Redis DB 3) connected.")
             except Exception as e:
@@ -224,6 +225,22 @@ class SemanticCache:
             except Exception as e:
                 logger.debug("L2 cache write failed: %s", e)
 
+    def clear(self):
+        """Clear L1 in-memory entries and L2 Redis semantic cache entries."""
+        with self._lock:
+            self._keys.clear()
+            self._filter_keys.clear()
+            self._embeddings = None
+            self._norms = None
+            self._results.clear()
+            self._timestamps.clear()
+            self._hyde_cache.clear()
+        if self._redis:
+            try:
+                self._redis.delete(self._redis_key)
+            except Exception as e:
+                logger.debug("Failed to clear Redis semantic cache: %s", e)
+
 
 class InMemorySemanticCache(SemanticCache):
     """In-memory test adapter for SemanticCache."""
@@ -244,3 +261,7 @@ class InMemorySemanticCache(SemanticCache):
     def set(self, query: str, query_embedding: np.ndarray, results, filter_key: str = "", skip_redis: bool = False):
         key = f"{query.strip()}:{filter_key}"
         self._store[key] = results
+
+    def clear(self):
+        super().clear()
+        self._store.clear()
