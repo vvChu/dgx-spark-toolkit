@@ -1628,3 +1628,189 @@ def test_message_deps_and_upgrade_deps():
     asyncio.run(_test())
 
 
+def test_command_registry_antigravity_reenable():
+    """Verify antigravity.account.reenable is registered in commands.yaml with param validation."""
+    commands_file = Path("scripts/chatops_commands.yaml")
+    with open(commands_file, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    cmds = {c["id"]: c for c in data.get("commands", [])}
+    assert "antigravity.account.reenable" in cmds
+    cmd = cmds["antigravity.account.reenable"]
+    assert cmd["slash"] == "/reenable_account"
+    assert cmd["risk_tier"] == "SAFE_OPS"
+    assert cmd["runner"] == "internal"
+    regex = re.compile(cmd["param_rules"]["account_id"])
+    assert regex.match("acc_123")
+    assert regex.match("user.name@example.com")
+    assert not regex.match("acc;rm -rf /")
+
+
+def test_reenable_antigravity_account_success():
+    """Verify reenable_antigravity_account succeeds when probe returns 200 and enable returns 200."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_probe_resp = MagicMock()
+        mock_probe_resp.status_code = 200
+
+        mock_enable_resp = MagicMock()
+        mock_enable_resp.status_code = 200
+
+        mock_client.post.side_effect = [mock_probe_resp, mock_enable_resp]
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("acc_test_1", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is True
+            assert mock_client.post.call_count == 2
+            # 1st call is probe, 2nd call is enable
+            assert "/api/accounts/acc_test_1/probe" in mock_client.post.call_args_list[0][0][0]
+            assert "/api/accounts/acc_test_1/enable" in mock_client.post.call_args_list[1][0][0]
+
+            mock_edit.assert_called_once()
+            edit_text = mock_edit.call_args[0][2]
+            assert "XÁC THỰC THÀNH CÔNG" in edit_text
+            assert "acc_test_1" in edit_text
+            assert "Đã kích hoạt lại thành công" in edit_text
+
+            mock_audit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "SUCCESS"
+
+    asyncio.run(_test())
+
+
+def test_reenable_antigravity_account_probe_rejected():
+    """Verify reenable_antigravity_account rejects and does NOT call enable when probe fails (e.g. 403 Challenge)."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_probe_resp = MagicMock()
+        mock_probe_resp.status_code = 403  # Challenge active
+
+        mock_client.post.return_value = mock_probe_resp
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("acc_blocked_403", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is False
+            # Only probe should be called, enable must NEVER be called
+            assert mock_client.post.call_count == 1
+            assert "/api/accounts/acc_blocked_403/probe" in mock_client.post.call_args_list[0][0][0]
+
+            mock_edit.assert_called_once()
+            edit_text = mock_edit.call_args[0][2]
+            assert "HEALTH PROBE THẤT BẠI" in edit_text
+            assert "Giữ nguyên trạng thái ngắt kết nối" in edit_text
+            assert "acc_blocked_403" in edit_text
+
+            mock_audit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "PROBE_FAILED"
+
+    asyncio.run(_test())
+
+
+def test_reenable_antigravity_account_probe_pass_enable_fail():
+    """Verify reenable_antigravity_account reports error if probe passes but enable endpoint returns 500."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_probe_resp = MagicMock()
+        mock_probe_resp.status_code = 200
+
+        mock_enable_resp = MagicMock()
+        mock_enable_resp.status_code = 500
+
+        mock_client.post.side_effect = [mock_probe_resp, mock_enable_resp]
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("acc_test_fail", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is False
+            assert mock_client.post.call_count == 2
+            mock_edit.assert_called_once()
+            edit_text = mock_edit.call_args[0][2]
+            assert "PROBE THÀNH CÔNG NHƯNG BẬT LẠI THẤT BẠI" in edit_text
+
+            mock_audit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "ENABLE_FAILED"
+
+    asyncio.run(_test())
+
+
+def test_callback_act_antigravity_reenable():
+    """Verify act:antigravity_reenable:<account_id> callback triggers reenable_antigravity_account."""
+    async def _test():
+        cq_update = {
+            "callback_query": {
+                "id": "cq_reenable_1",
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "message": {"chat": {"id": daemon.ADMIN_USER_ID}, "message_id": 7701},
+                "data": "act:antigravity_reenable:acc_xyz_789",
+            }
+        }
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_ans, \
+             patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.reenable_antigravity_account", new_callable=AsyncMock) as mock_reenable:
+            mock_send.return_value = 7702
+            mock_reenable.return_value = True
+
+            await daemon.process_telegram_update(cq_update)
+
+            mock_ans.assert_called_once_with("cq_reenable_1", "🔍 Đang kiểm tra probe acc_xyz_789...")
+            mock_send.assert_called_once()
+            assert "HEALTH PROBE GATE" in mock_send.call_args[0][1]
+            mock_reenable.assert_called_once_with("acc_xyz_789", daemon.ADMIN_USER_ID, 7702, cq_id="cq_reenable_1", user_id=daemon.ADMIN_USER_ID)
+
+    asyncio.run(_test())
+
+
+def test_message_reenable_account():
+    """Verify /reenable_account and /reenable text messages trigger reenable_antigravity_account."""
+    async def _test():
+        # 1. Valid invocation
+        msg_valid = {
+            "message": {
+                "message_id": 8801,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/reenable_account acc_123",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.reenable_antigravity_account", new_callable=AsyncMock) as mock_reenable:
+            mock_send.return_value = 8802
+            mock_reenable.return_value = True
+
+            await daemon.process_telegram_update(msg_valid)
+
+            mock_send.assert_called_once()
+            assert "HEALTH PROBE GATE" in mock_send.call_args[0][1]
+            mock_reenable.assert_called_once_with("acc_123", daemon.ADMIN_USER_ID, 8802, user_id=daemon.ADMIN_USER_ID)
+
+        # 2. Missing argument
+        msg_no_arg = {
+            "message": {
+                "message_id": 8803,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/reenable",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
+            await daemon.process_telegram_update(msg_no_arg)
+            mock_send.assert_called_once()
+            assert "Cú pháp: `/reenable_account <account_id>`" in mock_send.call_args[0][1]
+
+    asyncio.run(_test())

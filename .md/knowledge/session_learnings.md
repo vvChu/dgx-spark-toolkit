@@ -19,49 +19,50 @@
 - `RULE-1.10 (Audit Chain Continuity & Hermetic Tests)`: Audit trail băm nối tiếp (Chained SHA-256) đọc hash cuối từ disk lúc boot. Unit test nghiệp vụ mock ghi audit; test audit chuyển `AUDIT_FILE` sang `tmp_path` fixture.
 - `RULE-1.11 (Spoke Contribution Worktree)`: Đóng góp Spoke lên Hub khi branch có uncommitted changes: tạo isolated worktree (`git worktree add /tmp/... origin/main`). Sau merge vào Hub `main`, host repo checkout `main` để update packages.
 - `RULE-1.12 (Cold-Cache & Multi-Key Gate)`: Đo SLA RAG dùng Cold Cache (UUID prompt). Gateway pool test $\ge 3$ keys tránh 404/503. Khâu real-time (Rewrite, Timeline, Rerank) dùng chuỗi `claude-haiku-4` $\rightarrow$ `rag-core` GPU (SLA $< 2.0\text{s}$).
-- `RULE-1.13 (Warmup Budget & Shield Self-Healing)`: Nạp BGE-M3 (CPU ~60s) + BGE-Reranker (GPU ~34s) mất ~94s; `WARMUP_TIMEOUT_SECONDS` đặt $\ge 110s$ (dưới trần `start_period: 120s`). Dùng `asyncio.shield` để worker tiếp tục chạy ngầm và tự chuyển `ready` nếu vượt timeout.
-- `RULE-1.14 (LiteLLM Virtual Key API Pitfalls & Paywall Workaround)`: Quản trị Virtual Keys trên LiteLLM Proxy: (1) `POST /key/regenerate` bị chặn bởi Enterprise paywall (HTTP 500); xoay vòng key bắt buộc dùng `POST /key/delete` -> `POST /key/generate`. (2) `GET /key/list?return_full_object=true` lấy danh sách O(1), triệt tiêu bẫy N+1 query. (3) Tra cứu alias dùng `GET /key/list?key_alias=...&return_full_object=true` (endpoint `/key/info` chỉ nhận token hash). (4) Dùng `budget_duration="30d"` để reset chi tiêu định kỳ, cấm dùng `duration` (gây hủy key vĩnh viễn). (5) `POST /key/delete` bắt buộc nhận payload mảng `{"key_aliases": [...]}` hoặc `{"keys": [...]}` (tránh HTTP 422).
+- `RULE-1.13 (Warmup Budget & Shield Self-Healing)`: Nạp BGE-M3 (CPU ~60s) + BGE-Reranker (GPU ~34s) mất ~94s; `WARMUP_TIMEOUT_SECONDS` đặt $\ge 110s$ (dưới trần `start_period: 120s`). Dùng `asyncio.shield` để worker tiếp tục chạy ngầm tự chuyển `ready`.
+- `RULE-1.14 (LiteLLM Virtual Key API Pitfalls)`: Quản trị Virtual Keys: (1) `POST /key/regenerate` bị Enterprise paywall (500); xoay vòng dùng `POST /key/delete` -> `POST /key/generate`. (2) `GET /key/list?return_full_object=true` lấy danh sách O(1). (3) Tra cứu alias dùng `GET /key/list?key_alias=...&return_full_object=true`. (4) Dùng `budget_duration="30d"`, cấm `duration` (hủy key). (5) `POST /key/delete` nhận payload mảng `{"key_aliases": [...]}` hoặc `{"keys": [...]}`.
+- `RULE-1.15 (Account Pool Quorum Guard & Health Probe Gate)`: (1) LiteLLM dùng `rpm` & `tpm` (cấm `rpm_limit`), router `cooldown_time: 60-120s`. (2) Watchdog Quorum Guard: chỉ cô lập tài khoản khi `active_count > 2` và `failed_ratio < 0.5`; nếu $\ge 50\%$ lỗi do mạng/IP, phát cảnh báo hạ tầng `CRITICAL` ngăn sập hồ bơi. (3) Re-enable qua ChatOps bắt buộc qua Health Probe Gate (test HTTP 200 trước khi mở) chống spam request gây ban vĩnh viễn.
 
 ---
 
 ## Miền 2: Code Quality & Testing
 
-- `RULE-2.1 (Null Content in Thinking Models)`: Thinking models trả về `content = None` khi reasoning tokens chiếm hết quota `max_tokens`. Parser bắt buộc dùng `(msg.get("content") or "").strip()` và `max_tokens >= 256` tránh crash `NoneType`.
-- `RULE-2.2 (Spoke Cleanliness Guard)`: Thư mục `scripts/` khống chế $\le 15$ tệp hợp lệ. Script legacy/tạm thời lưu trữ vào `.md/archive/legacy_scripts/`.
-- `RULE-2.3 (Shift-Left Determinism)`: Trước khi commit hoặc release, bắt buộc thực thi bộ kiểm chuẩn `.venv/bin/python -m ccba_harness verify-patch` với 4 chốt chặn cục bộ (Cleanliness, Import Depth, Flake8, Gateway Live Endpoints).
-- `RULE-2.4 (Poison Budget Elimination in Gemini 3.x)`: `thinking_budget < 2048` khiến Gemini 3.x tắt hẳn luồng suy luận. Đặt `control_source = "gateway"` để gateway tự chuẩn hóa budget ($\ge 10001$ cho Pro, $\ge 16384$ cho Flash High).
-- `RULE-2.5 (Vector DB Parity Lock)`: Kiểm toán RAG bắt buộc chốt Parity: `set(exported_doc_ids) - set(indexed_doc_ids) == empty`. Sampling chỉ đo chất lượng chunk, không bảo đảm tính toàn vẹn danh mục.
-- `RULE-2.6 (Pre-Lock Validation Invariant)`: Timeout/config phải validate trước khi acquire mutex trong async worker. Bọc worker trong try-except giải phóng lock ngay nếu lỗi, triệt tiêu deadlock.
-- `RULE-2.7 (Vite ManualChunks & AnimatePresence Key)`: Tách vendor lớn bằng `manualChunks` hạ bundle < 300 kB. Child trong `<AnimatePresence mode="wait">` bắt buộc gán `key` riêng; fallback `<Suspense>` dùng `<div>` thuần kèm `role="status"`.
-- `RULE-2.8 (Vite Typecheck & Zombie Pruning)`: Cấu hình `"typecheck": "tsc --noEmit"` chạy trên cả CI và Local Gate. Định kỳ gỡ zombie dependencies thừa giảm phình `node_modules` (-50%) và triệt tiêu lỗ hổng bảo mật.
-- `RULE-2.9 (Dual-Requirement File Sync)`: Bổ sung thư viện mới cho service bắt buộc đồng bộ cả `requirements.txt` VÀ `requirements-ci.txt` tránh crash import trên runner GitHub Actions.
-- `RULE-2.10 (Fast-Path Chunker Online LLM Isolation)`: Fast-Path converter nạp tài liệu sạch tắt tự sửa bảng/tóm tắt LLM trong `DocumentChunker` (`TABLE_CORRECT_ENABLED = False`, `TABLE_SUMMARY_ENABLED = False`), hạ độ trễ từ 80s+ xuống < 1s.
-- `RULE-2.11 (Dynamic Catalog Sizing Invariant)`: Unit test kiểm thử kho tri thức hoặc catalog pháp luật sống cấm assert kích thước cố định (`assert len == 60`), bắt buộc dùng kiểm tra cận dưới (`assert len >= 60`) để tương thích khi dữ liệu mở rộng.
+- `RULE-2.1 (Null Content in Thinking Models)`: Thinking models trả về `content = None` khi reasoning tokens chiếm hết quota `max_tokens`. Parser dùng `(msg.get("content") or "").strip()` và `max_tokens >= 256` tránh crash `NoneType`.
+- `RULE-2.2 (Spoke Cleanliness Guard)`: Thư mục `scripts/` khống chế $\le 15$ tệp hợp lệ. Script legacy lưu vào `.md/archive/legacy_scripts/`.
+- `RULE-2.3 (Shift-Left Determinism)`: Trước commit/release, bắt buộc chạy `.venv/bin/python -m ccba_harness verify-patch` với 4 chốt chặn (Cleanliness, Import Depth, Flake8, Gateway Endpoints).
+- `RULE-2.4 (Poison Budget in Gemini 3.x)`: `thinking_budget < 2048` làm tắt luồng suy luận. Đặt `control_source = "gateway"` để gateway tự chuẩn hóa ($\ge 10001$ Pro, $\ge 16384$ Flash High).
+- `RULE-2.5 (Vector DB Parity Lock)`: Kiểm toán RAG bắt buộc chốt Parity: `set(exported_doc_ids) - set(indexed_doc_ids) == empty`.
+- `RULE-2.6 (Pre-Lock Validation)`: Timeout/config phải validate trước khi acquire mutex trong async worker. Bọc try-except giải phóng lock ngay nếu lỗi tránh deadlock.
+- `RULE-2.7 (Vite ManualChunks & AnimatePresence)`: Tách vendor lớn bằng `manualChunks` hạ bundle < 300 kB. Child trong `<AnimatePresence mode="wait">` bắt buộc gán `key` riêng.
+- `RULE-2.8 (Vite Typecheck & Zombie Pruning)`: Cấu hình `"typecheck": "tsc --noEmit"` trên CI và Local Gate. Định kỳ gỡ zombie dependencies giảm phình `node_modules` (-50%).
+- `RULE-2.9 (Dual-Requirement File Sync)`: Thêm thư viện mới bắt buộc đồng bộ cả `requirements.txt` và `requirements-ci.txt` tránh crash CI GitHub Actions.
+- `RULE-2.10 (Fast-Path Chunker Online LLM Isolation)`: Fast-Path nạp tài liệu sạch tắt sửa bảng/tóm tắt LLM (`TABLE_CORRECT_ENABLED = False`), hạ độ trễ từ 80s+ xuống < 1s.
+- `RULE-2.11 (Dynamic Catalog Sizing Invariant)`: Unit test kho tri thức cấm assert kích thước cố định (`assert len == 60`), bắt buộc dùng kiểm tra cận dưới (`assert len >= 60`).
 
 ---
 
 ## Miền 3: Legal & Data Standards
 
-- `RULE-3.1 (Verbatim Grounding & Provenance)`: Mọi knowledge bundle, văn bản pháp luật hoặc fixture dữ liệu phải gắn provenance mã băm SHA-256 đối chiếu công báo gốc, nghiêm cấm sinh giả định hoặc mock điều khoản.
-- `RULE-3.2 (Hard Cryptographic Ingestion Gate)`: Pipeline nạp văn bản (`ingest:queue` / Milvus) bắt buộc tích hợp chốt chặn mã băm SHA-256 (ADR-0059); từ chối và chặn đứng gói tài liệu `TAMPERED` hoặc thiếu nguồn pháp lý.
+- `RULE-3.1 (Verbatim Grounding & Provenance)`: Mọi knowledge bundle/văn bản pháp luật phải gắn mã băm SHA-256 đối chiếu công báo gốc, cấm sinh giả định/mock điều khoản.
+- `RULE-3.2 (Hard Cryptographic Ingestion Gate)`: Pipeline nạp văn bản (`ingest:queue` / Milvus) bắt buộc chặn mã băm SHA-256 (ADR-0059); chặn đứng gói `TAMPERED`.
 
 ---
 
 ## Miền 4: Workflows & Review
 
-- `RULE-4.1 (GitHub Actions Billing Fallback)`: Khi runner GitHub Actions chạm hạn mức (`billing spending limit`), đối chiếu annotation xác nhận và dùng Shift-Left Local Gate làm căn cứ nghiệm thu.
-- `RULE-4.2 (Copilot Review Verification)`: Mọi review từ bot/Copilot (`PRR_...`) phải được đối soát và giải trình tại `.md/knowledge/reports/walkthrough.md`.
-- `RULE-4.3 (GitHub PR Merge In-Progress Recovery)`: Khi `gh pr merge` lỗi `GraphQL: Merge already in progress`, chờ 10-20s rồi merge qua REST API: `gh api -X PUT repos/{owner}/{repo}/pulls/{number}/merge -f merge_method=squash`.
-- `RULE-4.4 (Idempotent Label Provisioning)`: Khâu claim issue gán nhãn `in-progress` phải idempotent: chạy `gh label create in-progress --force --color fbca04 2>/dev/null || true` trước khi gán.
+- `RULE-4.1 (GitHub Actions Billing Fallback)`: Khi GitHub Actions chạm hạn mức spending limit, đối chiếu annotation và dùng Shift-Left Local Gate làm căn cứ nghiệm thu.
+- `RULE-4.2 (Copilot Review Verification)`: Mọi review từ Copilot (`PRR_...`) phải đối soát và giải trình tại `.md/knowledge/reports/walkthrough.md`.
+- `RULE-4.3 (GitHub PR Merge In-Progress Recovery)`: Khi `gh pr merge` lỗi `Merge already in progress`, chờ 10-20s rồi merge REST API: `gh api -X PUT repos/{owner}/{repo}/pulls/{number}/merge -f merge_method=squash`.
+- `RULE-4.4 (Idempotent Label Provisioning)`: Khâu claim issue gán nhãn `in-progress` phải idempotent: chạy `gh label create in-progress --force --color fbca04 2>/dev/null || true`.
 
 ---
 
 ## Miền 5: Linux, Tooling & Environment
 
-- `RULE-5.1 (Python Executable Ambiguity)`: Trên Ubuntu/Linux, lệnh `python` không tồn tại mặc định. Mọi scripts/hooks phải gọi tường minh `python3` hoặc `.venv/bin/python`.
-- `RULE-5.2 (Spoke Virtual Key & Credential Isolation)`: (1) Masking khóa bí mật (`sk-...XXXX`) trên console/stdout của CLI runner tránh rò rỉ vào log/CI history. (2) Mọi tệp `.env` cấu hình Spoke bắt buộc gán quyền `os.chmod(path, 0o600)`. (3) Chuẩn hóa endpoint Tailscale (`normalize_gateway_url`) loại bỏ dư thừa `http(s)://` hoặc `/v1`.
+- `RULE-5.1 (Python Executable Ambiguity)`: Trên Ubuntu/Linux, lệnh `python` không tồn tại mặc định. Mọi script/hook phải gọi `python3` hoặc `.venv/bin/python`.
+- `RULE-5.2 (Spoke Virtual Key & Credential Isolation)`: (1) Masking khóa bí mật (`sk-...XXXX`) trên console CLI runner. (2) Mọi tệp `.env` Spoke bắt buộc gán quyền `0o600`. (3) Chuẩn hóa endpoint Tailscale (`normalize_gateway_url`) loại bỏ dư thừa `/v1`.
 - `RULE-5.3 (Headless Tauri GUI Daemon)`: App Tauri systemd chạy qua `xvfb-run -a <binary> --minimized` cấp virtual display RAM, bật `loginctl enable-linger <user>` để daemon chạy 24/7 sau reboot.
-- `RULE-5.4 (PR Release Sync Reconciliation)`: Chu trình sau squash-merge: checkout `master` $\rightarrow$ `git pull origin master` (nếu phân kỳ: `git reset --hard origin/master`) $\rightarrow$ `git branch -D <branch>` $\rightarrow$ `git fetch --prune`.
-- `RULE-5.5 (Headless Watchdog Metric Aggregation)`: Watchdog container đọc metrics SoC Temp, RAM, NVMe trực tiếp từ `/proc/meminfo`, `shutil.disk_usage('/')`, `/sys/class/thermal` không cần root/driver; thu thập daemon host qua IP Tailscale.
-- `RULE-5.6 (Blackwell GB10 Unified Memory SMI Query)`: GPU Grace Blackwell GB10 (128GB Unified Memory), `nvidia-smi` bộ nhớ trả về `[N/A]`. Script bắt buộc truy vấn `--query-compute-apps=process_name,used_memory`, cộng dồn tiến trình và gán nhãn `128 GB Unified Memory`.
-- `RULE-5.7 (WAL-Safe SQLite Container Disaster Recovery)`: Nâng cấp container SQLite WAL (Open WebUI) gọi `sqlite3.backup()` xuất snapshot trước khi tarball. Rollback dùng `alpine:latest` mount volume xóa `-wal`/`-shm` cũ và phục hồi snapshot.
+- `RULE-5.4 (PR Release Sync Reconciliation)`: Sau squash-merge: `git checkout master` $\rightarrow$ `git pull origin master` (phân kỳ: `git reset --hard origin/master`) $\rightarrow$ `git branch -D <branch>`.
+- `RULE-5.5 (Headless Watchdog Metric Aggregation)`: Watchdog container đọc metrics SoC Temp, RAM, NVMe trực tiếp từ `/proc/meminfo`, `shutil.disk_usage('/')`, `/sys/class/thermal` không cần root.
+- `RULE-5.6 (Blackwell GB10 Unified Memory SMI Query)`: GPU GB10 (128GB Unified Memory), `nvidia-smi` trả về `[N/A]`. Script truy vấn `--query-compute-apps=process_name,used_memory`, cộng dồn tiến trình gán nhãn `128 GB Unified Memory`.
+- `RULE-5.7 (WAL-Safe SQLite Disaster Recovery)`: Nâng cấp container SQLite WAL gọi `sqlite3.backup()` xuất snapshot trước khi tarball. Rollback xóa `-wal`/`-shm` cũ và phục hồi snapshot.
