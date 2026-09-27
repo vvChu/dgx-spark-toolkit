@@ -20,6 +20,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-spark-secure-key-2026")
 GATEWAY_PROXY_URL = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045")
 GATEWAY_PROXY_KEY = os.environ.get("GATEWAY_PROXY_KEY", "")
+GATEWAY_ADMIN_PASSWORD = os.environ.get("GATEWAY_ADMIN_PASSWORD") or GATEWAY_PROXY_KEY
 
 # Cooldown for incident alerts (30 minutes per alert_type)
 COOLDOWN_MINUTES = 30
@@ -254,10 +255,11 @@ def extract_validation_url(account_data: Dict[str, Any]) -> Optional[str]:
 
 def check_quota_pool() -> None:
     """Monitors Antigravity Tools account pool health and detects checkpoints."""
-    if not GATEWAY_PROXY_KEY:
+    auth_key = GATEWAY_ADMIN_PASSWORD or GATEWAY_PROXY_KEY
+    if not auth_key:
         return
     base_url = get_proxy_base_url()
-    headers = {"Authorization": f"Bearer {GATEWAY_PROXY_KEY}"}
+    headers = {"Authorization": f"Bearer {auth_key}"}
     try:
         res = requests.get(f"{base_url}/api/accounts", headers=headers, timeout=5)
         if res.status_code != 200:
@@ -452,10 +454,87 @@ def get_top_models(base_url: str, headers: Dict[str, str]) -> str:
     return "• Top Models: Chưa có dữ liệu"
 
 
+def get_gateway_telemetry_digest() -> str:
+    """Retrieve 24h AI Gateway usage metrics from LiteLLM PostgreSQL."""
+    try:
+        raw_output = ""
+        top_output = ""
+        try:
+            import docker
+            client = docker.from_env()
+            container = client.containers.get("litellm-postgres")
+            cmd = (
+                'psql -U litellm -d litellm --csv -c "'
+                'SELECT COUNT(*) as reqs, COALESCE(SUM(total_tokens), 0) as tokens, '
+                'ROUND(AVG(EXTRACT(EPOCH FROM (\\"endTime\\" - \\"startTime\\")))::numeric, 2) as avg_lat '
+                'FROM \\"LiteLLM_SpendLogs\\" '
+                'WHERE \\"startTime\\" >= NOW() - INTERVAL \'24 hours\';"'
+            )
+            res = container.exec_run(cmd)
+            if res.exit_code == 0:
+                raw_output = res.output.decode("utf-8")
+            cmd_top = (
+                'psql -U litellm -d litellm --csv -c "'
+                'SELECT regexp_replace(model, \'^(openai|gemini)/\', \'\') as clean_model, '
+                'COUNT(*) as cnt, COALESCE(SUM(total_tokens), 0) as tok '
+                'FROM \\"LiteLLM_SpendLogs\\" '
+                'WHERE \\"startTime\\" >= NOW() - INTERVAL \'24 hours\' '
+                'GROUP BY clean_model ORDER BY cnt DESC LIMIT 3;"'
+            )
+            res_top = container.exec_run(cmd_top)
+            if res_top.exit_code == 0:
+                top_output = res_top.output.decode("utf-8")
+        except Exception:
+            import subprocess
+            cmd = [
+                "docker", "exec", "-i", "litellm-postgres",
+                "psql", "-U", "litellm", "-d", "litellm", "--csv", "-c",
+                'SELECT COUNT(*) as reqs, COALESCE(SUM(total_tokens), 0) as tokens, ROUND(AVG(EXTRACT(EPOCH FROM ("endTime" - "startTime")))::numeric, 2) as avg_lat FROM "LiteLLM_SpendLogs" WHERE "startTime" >= NOW() - INTERVAL \'24 hours\';'
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode == 0:
+                raw_output = res.stdout
+            cmd_top = [
+                "docker", "exec", "-i", "litellm-postgres",
+                "psql", "-U", "litellm", "-d", "litellm", "--csv", "-c",
+                'SELECT regexp_replace(model, \'^(openai|gemini)/\', \'\') as clean_model, COUNT(*) as cnt, COALESCE(SUM(total_tokens), 0) as tok FROM "LiteLLM_SpendLogs" WHERE "startTime" >= NOW() - INTERVAL \'24 hours\' GROUP BY clean_model ORDER BY cnt DESC LIMIT 3;'
+            ]
+            res_top = subprocess.run(cmd_top, capture_output=True, text=True)
+            if res_top.returncode == 0:
+                top_output = res_top.stdout
+
+        lines = [line.strip() for line in raw_output.strip().splitlines() if line.strip()]
+        if len(lines) >= 2:
+            parts = lines[1].split(",")
+            reqs = int(parts[0]) if parts[0] else 0
+            tokens = int(parts[1]) if len(parts) > 1 and parts[1] else 0
+            avg_lat = parts[2] if len(parts) > 2 else "0.0"
+            tok_str = f"{tokens / 1000000:.2f}M" if tokens >= 1000000 else (f"{tokens / 1000:.1f}k" if tokens >= 1000 else str(tokens))
+
+            top_items = []
+            for t_line in [l.strip() for l in top_output.strip().splitlines() if l.strip()][1:]:
+                t_parts = t_line.split(",")
+                if len(t_parts) >= 3:
+                    m_name = t_parts[0].replace("openai/", "").replace("gemini/", "")
+                    m_tok = int(t_parts[2]) if t_parts[2] else 0
+                    m_tok_str = f"{m_tok / 1000000:.1f}M" if m_tok >= 1000000 else (f"{m_tok / 1000:.1f}k" if m_tok >= 1000 else str(m_tok))
+                    top_items.append(f"{m_name} ({t_parts[1]} reqs, {m_tok_str})")
+            top_str = " | ".join(top_items) if top_items else "Chưa có dữ liệu"
+
+            return (
+                f"• Tổng Gateway (24h): {reqs:,} requests | Tokens: {tok_str} | Đ/trễ TB: {avg_lat}s\n"
+                f"• Top Models Gateway: {top_str}"
+            )
+    except Exception:
+        pass
+    return "• AI Gateway: Chưa có dữ liệu"
+
+
 def build_daily_digest_message(date_str: str) -> str:
     """Constructs the daily summary report markdown."""
     base_url = get_proxy_base_url()
-    headers = {"Authorization": f"Bearer {GATEWAY_PROXY_KEY}"} if GATEWAY_PROXY_KEY else {}
+    auth_key = GATEWAY_ADMIN_PASSWORD or GATEWAY_PROXY_KEY
+    headers = {"Authorization": f"Bearer {auth_key}"} if auth_key else {}
 
     # 1. Hardware metrics
     hw_line = get_hardware_metrics()
@@ -484,7 +563,10 @@ def build_daily_digest_message(date_str: str) -> str:
     # 3. Top models
     top_models_line = get_top_models(base_url, headers)
 
-    # 4. Account pool
+    # 4. Gateway Telemetry (PostgreSQL)
+    gateway_line = get_gateway_telemetry_digest()
+
+    # 5. Account pool
     acc_line = "• Quota Pool: Đang kiểm tra..."
     try:
         res = requests.get(f"{base_url}/api/accounts", headers=headers, timeout=5)
@@ -511,25 +593,31 @@ def build_daily_digest_message(date_str: str) -> str:
         f"• vLLM (`:8004`): Online\n"
         f"{hw_line}\n\n"
         f"📈 **Sản lượng Token & Requests:**\n"
+        f"**[Cloud Proxy :8045]**\n"
         f"{stats_lines}\n"
-        f"{top_models_line}\n\n"
+        f"{top_models_line}\n"
+        f"**[AI Gateway :8090 - Toàn Hệ Thống]**\n"
+        f"{gateway_line}\n\n"
         f"👥 **Tài khoản & Quota:**\n"
         f"{acc_line}\n"
         f"━━━━━━━━━━━━━━━━━━━━"
     )
 
 
+VN_TZ = datetime.timezone(datetime.timedelta(hours=7))
+
+
 def check_and_send_daily_digest() -> None:
-    """Checks if current time is within 08:00-08:59 and sends daily digest once."""
+    """Checks if current time in VN (ICT) is within 08:00-08:59 and sends daily digest once."""
     global last_digest_date
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(VN_TZ)
     today_str = now.strftime("%Y-%m-%d")
 
     if now.hour == 8 and last_digest_date != today_str:
         msg = build_daily_digest_message(today_str)
         if send_telegram_raw(msg):
             last_digest_date = today_str
-            print(f"Sent daily digest for {today_str}", flush=True)
+            print(f"Sent daily digest for {today_str} (VN Time: {now.strftime('%H:%M:%S')})", flush=True)
 
 
 # Upstream Release Check Tracking

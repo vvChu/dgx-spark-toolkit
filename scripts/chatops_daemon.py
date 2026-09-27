@@ -630,7 +630,7 @@ async def probe_gateway_stats() -> str:
     """Queries Antigravity Tools API (Cloud) and LiteLLM Postgres (Local GPU) for unified stats."""
     lines = ["📈 *BÁO CÁO SẢN LƯỢNG AI GATEWAY* 📈\n"]
     base_url = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045").rstrip("/").removesuffix("/v1")
-    key = os.environ.get("GATEWAY_PROXY_KEY", "")
+    key = os.environ.get("GATEWAY_ADMIN_PASSWORD") or os.environ.get("GATEWAY_PROXY_KEY", "")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
 
     cloud_req = 0
@@ -722,7 +722,7 @@ async def probe_gateway_stats() -> str:
 async def probe_antigravity_status() -> str:
     """Queries Antigravity Tools API (:8045) for account pool health and blocked states."""
     base_url = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045").rstrip("/").removesuffix("/v1")
-    key = os.environ.get("GATEWAY_PROXY_KEY", "")
+    key = os.environ.get("GATEWAY_ADMIN_PASSWORD") or os.environ.get("GATEWAY_PROXY_KEY", "")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
 
     lines = ["🤖 *HỒ BƠI TÀI KHOẢN ANTIGRAVITY TOOLS* 🤖\n"]
@@ -796,7 +796,7 @@ async def reenable_antigravity_account(
 
     t0 = time.time()
     base_url = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045").rstrip("/").removesuffix("/v1")
-    key = os.environ.get("GATEWAY_PROXY_KEY", "")
+    key = os.environ.get("GATEWAY_ADMIN_PASSWORD") or os.environ.get("GATEWAY_PROXY_KEY", "")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
 
     client = get_http_client()
