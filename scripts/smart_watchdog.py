@@ -244,10 +244,11 @@ def extract_validation_url(account_data: Dict[str, Any]) -> Optional[str]:
         or (account_data.get("quota") or {}).get("forbidden_reason")
         or ""
     )
-    if "accounts.google.com/signin/continue" in str(raw):
-        m = re.search(r"https://accounts\.google\.com/signin/continue[^\s\"'\\]+", str(raw))
+    raw_str = str(raw).replace("\\u0026", "&")
+    if "accounts.google.com/signin/continue" in raw_str:
+        m = re.search(r"https://accounts\.google\.com/signin/continue[^\s\"']+", raw_str)
         if m:
-            return m.group(0).replace("\\u0026", "&")
+            return m.group(0).rstrip(".,;\"'")
     return None
 
 
@@ -297,7 +298,27 @@ def check_quota_pool() -> None:
                 active_count += 1
 
         now = time.time()
+        failed_count = len(current_blocked)
+        failed_ratio = (failed_count / total) if total > 0 else 0.0
 
+        # Quorum Guard:
+        # If failed_ratio >= 0.5 or active_count <= 2 (when total > 2), this is a mass/infrastructure failure
+        # rather than individual account corruption. Dispatch CRITICAL warning instead of isolating individual accounts.
+        if failed_count > 0 and (failed_ratio >= 0.5 or (total > 2 and active_count <= 2)):
+            last_crit = getattr(check_quota_pool, "last_quorum_alert", 0.0)
+            if now - last_crit >= 1800:
+                check_quota_pool.last_quorum_alert = now
+                title = "CẢNH BÁO NGUY CẤP: SỰ CỐ MẠNG / QUORUM GUARD KÍCH HOẠT"
+                body = (
+                    f"🚨 *Phát hiện sự cố hàng loạt trên Antigravity Pool ({failed_count}/{total} tài khoản bị lỗi, tỷ lệ lỗi {failed_ratio*100:.1f}%)!*\n\n"
+                    f"• **Trạng thái Pool**: Chỉ còn `{active_count}/{total}` tài khoản khả dụng.\n"
+                    f"• **Quorum Guard**: Đã tự động chặn cô lập tài khoản đơn lẻ để phòng chống Sập Dây Chuyền (Cascading Collapse).\n"
+                    f"• **Chẩn đoán**: Sự cố có khả năng bắt nguồn từ mạng diện rộng, lỗi IP, hoặc máy chủ Google chặn kết nối tạm thời."
+                )
+                notify_chatops(title, body, actions=[], severity="CRITICAL")
+            return
+
+        # Quorum Condition satisfied: active_count > 2 and failed_ratio < 0.5
         # 1. Alert for newly blocked accounts (cooldown: 2 hours per account)
         for email, info in current_blocked.items():
             last_alert = known_blocked_accounts.get(email, 0.0)
@@ -305,6 +326,7 @@ def check_quota_pool() -> None:
                 known_blocked_accounts[email] = now
                 val_url = info.get("validation_url")
                 raw_reason = info.get("reason", "")
+                acc_id = info.get("id")
 
                 if "Verify your account" in raw_reason:
                     reason_desc = "Yêu cầu xác minh danh tính người dùng (VALIDATION_REQUIRED 403)"
@@ -325,10 +347,20 @@ def check_quota_pool() -> None:
                     body += (
                         f"\n🔗 **Link xác thực Google (1-Click):**\n"
                         f"[👉 Bấm vào đây để mở khóa tài khoản]({val_url})\n\n"
-                        f"_Sau khi xác minh trên trình duyệt, hãy bật lại tài khoản trên giao diện._"
+                        f"_Sau khi xác minh trên trình duyệt, hãy bấm nút Bật Lại bên dưới._"
                     )
 
-                notify_chatops(title, body, actions=[], severity="WARNING")
+                actions = []
+                if acc_id:
+                    actions.append({
+                        "action_id": f"antigravity_reenable_{acc_id}",
+                        "label": "🔄 Bật Lại (Health Probe)",
+                        "command": "antigravity.account.reenable",
+                        "params": {"account_id": str(acc_id)},
+                        "callback_data": f"act:antigravity_reenable:{acc_id}",
+                    })
+
+                notify_chatops(title, body, actions=actions, severity="WARNING")
 
         # 2. Alert for newly recovered accounts
         for email in list(known_blocked_accounts.keys()):
@@ -340,14 +372,6 @@ def check_quota_pool() -> None:
                     f"• Hiện có `{active_count}/{total}` tài khoản sẵn sàng phục vụ."
                 )
                 notify_chatops(title, body, actions=[], severity="INFO")
-
-        # 3. Critical alert if available accounts drop to <= 2
-        if active_count <= 2 and total > 2:
-            send_telegram_alert(
-                f"CẢNH BÁO NGUY CẤP: Pool tài khoản Google cạn kiệt! "
-                f"Chỉ còn `{active_count}/{total}` tài khoản khả dụng trong hệ thống.",
-                "quota_pool_exhausted",
-            )
     except requests.RequestException as e:
         print(f"Error checking quota pool: {e}", flush=True)
 

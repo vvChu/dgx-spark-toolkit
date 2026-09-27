@@ -29,6 +29,15 @@ commands:
     service_lock: null
     runner: "internal"
 
+  - id: "antigravity.account.reenable"
+    slash: "/reenable_account"
+    description: "Kích hoạt lại tài khoản Google trong Antigravity Pool kèm Health Probe Gate"
+    risk_tier: "SAFE_OPS"
+    service_lock: null
+    runner: "internal"
+    param_rules:
+      account_id: "^[a-zA-Z0-9_.@-]+$"
+
   - id: "host.gpu"
     slash: "/gpu"
     description: "Truy vấn nhiệt độ, xung nhịp và bộ nhớ GPU Blackwell GB10"

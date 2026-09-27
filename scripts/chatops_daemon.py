@@ -783,6 +783,123 @@ async def probe_antigravity_status() -> str:
     return "\n".join(lines)
 
 
+async def reenable_antigravity_account(
+    account_id: str,
+    chat_id: int,
+    status_msg_id: int,
+    cq_id: Optional[str] = None,
+    user_id: int = ADMIN_USER_ID,
+) -> bool:
+    """Executes a Health Probe Gate before safely re-enabling an Antigravity account."""
+    if cq_id:
+        await answer_callback(cq_id, f"🔍 Đang kiểm tra probe {account_id}...")
+
+    t0 = time.time()
+    base_url = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045").rstrip("/").removesuffix("/v1")
+    key = os.environ.get("GATEWAY_PROXY_KEY", "")
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+
+    client = get_http_client()
+    probe_url = f"{base_url}/api/accounts/{account_id}/probe"
+    enable_url = f"{base_url}/api/accounts/{account_id}/enable"
+
+    try:
+        # Step 1: Health Probe Gate
+        probe_res = await client.post(probe_url, headers=headers, timeout=10.0)
+        is_probe_ok = (probe_res.status_code == 200)
+        probe_code = probe_res.status_code
+    except Exception as e:
+        is_probe_ok = False
+        probe_code = f"Lỗi kết nối ({e})"
+
+    duration_ms = int((time.time() - t0) * 1000)
+
+    if not is_probe_ok:
+        fail_msg = (
+            f"🔒 *HEALTH PROBE THẤT BẠI (CHALLENGE CHƯA GIẢI)*\n\n"
+            f"• **Tài khoản**: `{account_id}`\n"
+            f"• **Kết quả Probe**: HTTP `{probe_code}`\n"
+            f"• **Quyết định**: **Giữ nguyên trạng thái ngắt kết nối** để bảo vệ tài khoản khỏi bị Google vô hiệu hóa vĩnh viễn.\n\n"
+            f"👉 *Hướng dẫn*: Vui lòng hoàn thành xác minh qua liên kết trên trình duyệt trước khi thử lại."
+        )
+        if not await edit_telegram_msg(chat_id, status_msg_id, fail_msg, reply_markup=get_main_dashboard_markup()):
+            await send_telegram_msg(chat_id, fail_msg, reply_markup=get_main_dashboard_markup())
+        append_audit_log(
+            "antigravity_reenable",
+            "antigravity.account.reenable",
+            {"account_id": account_id, "probe": str(probe_code)},
+            user_id,
+            "PROBE_FAILED",
+            duration_ms,
+            1,
+            f"Probe rejected with {probe_code}",
+        )
+        return False
+
+    # Step 2: Probe Passed -> Enable Account
+    try:
+        enable_res = await client.post(enable_url, headers=headers, timeout=10.0)
+        duration_ms = int((time.time() - t0) * 1000)
+        if enable_res.status_code == 200:
+            success_msg = (
+                f"✅ *XÁC THỰC THÀNH CÔNG (HEALTH PROBE PASSED)*\n\n"
+                f"• **Tài khoản**: `{account_id}`\n"
+                f"• **Health Probe**: HTTP `200 OK` (Vượt qua thử thách danh tính)\n"
+                f"• **Trạng thái Pool**: 🟢 Đã kích hoạt lại thành công (Active)\n"
+                f"• **Thời gian**: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}"
+            )
+            if not await edit_telegram_msg(chat_id, status_msg_id, success_msg, reply_markup=get_main_dashboard_markup()):
+                await send_telegram_msg(chat_id, success_msg, reply_markup=get_main_dashboard_markup())
+            append_audit_log(
+                "antigravity_reenable",
+                "antigravity.account.reenable",
+                {"account_id": account_id, "probe": 200, "enable": 200},
+                user_id,
+                "SUCCESS",
+                duration_ms,
+                0,
+                "Account re-enabled after passing probe gate",
+            )
+            return True
+        else:
+            enable_err_msg = (
+                f"⚠️ *PROBE THÀNH CÔNG NHƯNG BẬT LẠI THẤT BẠI*\n\n"
+                f"• **Tài khoản**: `{account_id}`\n"
+                f"• **Probe**: HTTP `200 OK`\n"
+                f"• **Lỗi Enable**: HTTP `{enable_res.status_code}`\n"
+                f"• Vui lòng kiểm tra lại dịch vụ Antigravity Tools."
+            )
+            if not await edit_telegram_msg(chat_id, status_msg_id, enable_err_msg, reply_markup=get_main_dashboard_markup()):
+                await send_telegram_msg(chat_id, enable_err_msg, reply_markup=get_main_dashboard_markup())
+            append_audit_log(
+                "antigravity_reenable",
+                "antigravity.account.reenable",
+                {"account_id": account_id, "probe": 200, "enable": enable_res.status_code},
+                user_id,
+                "ENABLE_FAILED",
+                duration_ms,
+                1,
+                f"Enable returned HTTP {enable_res.status_code}",
+            )
+            return False
+    except Exception as e:
+        duration_ms = int((time.time() - t0) * 1000)
+        net_err_msg = f"❌ *LỖI KẾT NỐI KHI BẬT LẠI TÀI KHOẢN*: {e}"
+        if not await edit_telegram_msg(chat_id, status_msg_id, net_err_msg, reply_markup=get_main_dashboard_markup()):
+            await send_telegram_msg(chat_id, net_err_msg, reply_markup=get_main_dashboard_markup())
+        append_audit_log(
+            "antigravity_reenable",
+            "antigravity.account.reenable",
+            {"account_id": account_id, "error": str(e)},
+            user_id,
+            "ERROR",
+            duration_ms,
+            1,
+            str(e),
+        )
+        return False
+
+
 async def probe_blackwell_gpu() -> str:
     """Deep probe for NVIDIA GB10 with compute processes memory summation."""
     lines = ["🎮 *THÔNG SỐ GPU NVIDIA BLACKWELL GB10* 🎮\n"]
@@ -1455,6 +1572,9 @@ async def dispatch_command(
                 if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
                     await send_telegram_msg(chat_id, text, reply_markup=get_main_dashboard_markup())
                 append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed Antigravity pool status")
+            elif command_id == "antigravity.account.reenable":
+                acc_id = params.get("account_id", "")
+                return await reenable_antigravity_account(acc_id, chat_id, message_id, cq_id=cq_id, user_id=ADMIN_USER_ID)
             else:
                 unhandled = f"⚠️ Chưa xử lý runner internal cho lệnh `{command_id}`"
                 if not await edit_telegram_msg(chat_id, message_id, unhandled, reply_markup=get_main_dashboard_markup()):
@@ -1750,8 +1870,17 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             await edit_telegram_msg(chat_id, message_id, help_text, reply_markup=get_main_dashboard_markup())
             return
 
-        # 2. Dynamic Action Buttons (act:<nonce>)
-        if data.startswith("act:"):
+        # 2. Dynamic Action Buttons (act:<nonce> or act:antigravity_reenable:<account_id>)
+        if data.startswith("act:antigravity_reenable:"):
+            account_id = data.split("act:antigravity_reenable:", 1)[1].strip()
+            if not account_id or not re.match(r"^[a-zA-Z0-9_.@-]+$", account_id):
+                await answer_callback(cq_id, "❌ ID tài khoản không hợp lệ!", show_alert=True)
+                return
+            await answer_callback(cq_id, f"🔍 Đang kiểm tra probe {account_id}...")
+            status_msg_id = await send_telegram_msg(chat_id, f"⏳ *[HEALTH PROBE GATE]* Đang kiểm tra tài khoản `{account_id}`...\nVui lòng đợi...")
+            await reenable_antigravity_account(account_id, chat_id, status_msg_id or message_id, cq_id=cq_id, user_id=user_id)
+            return
+        elif data.startswith("act:"):
             nonce = data.split(":", 1)[1]
             entry = action_cache.pop(nonce, None)
             if not entry or time.time() > entry.get("expires", 0):
@@ -1859,6 +1988,21 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
             sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra hồ bơi tài khoản Antigravity...")
             if sent_id:
                 await dispatch_command("antigravity.status", {}, chat_id, sent_id)
+            return
+
+        # 4b2. /reenable_account <account_id>
+        if text.startswith("/reenable_account") or text.startswith("/reenable"):
+            parts = text.split(maxsplit=1)
+            if len(parts) < 2:
+                await send_telegram_msg(chat_id, "Cú pháp: `/reenable_account <account_id>` (Ví dụ: `/reenable_account acc_123`)")
+                return
+            acc_id = parts[1].strip()
+            if not re.match(r"^[a-zA-Z0-9_.@-]+$", acc_id):
+                await send_telegram_msg(chat_id, "❌ ID tài khoản không hợp lệ!")
+                return
+            sent_id = await send_telegram_msg(chat_id, f"⏳ *[HEALTH PROBE GATE]* Đang kiểm tra tài khoản `{acc_id}`...\nVui lòng đợi...")
+            if sent_id:
+                await reenable_antigravity_account(acc_id, chat_id, sent_id, user_id=user_id or ADMIN_USER_ID)
             return
 
         # 4b. /deps

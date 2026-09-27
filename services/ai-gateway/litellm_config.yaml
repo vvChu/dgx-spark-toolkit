@@ -1,7 +1,7 @@
 x-templates:
   ocr-tier4-base: &ocr-tier4-base
     model: gemini/gemini-2.5-flash
-    rpm: 5
+    rpm: 12
     tpm: 250000
     timeout: 120
 
@@ -334,6 +334,14 @@ model_list:
       model: openai/gemini-3-flash
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
+      drop_params: true
+      timeout: 120
+
+  - model_name: vertex_ai/gemini-2.5-flash
+    litellm_params:
+      model: vertex_ai/gemini-2.5-flash
+      vertex_project: os.environ/VERTEXAI_PROJECT
+      vertex_location: os.environ/VERTEXAI_LOCATION
       drop_params: true
       timeout: 120
 
