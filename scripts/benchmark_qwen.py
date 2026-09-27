@@ -42,7 +42,17 @@ def main() -> None:
         default="Viết một bài luận ngắn khoảng 300 chữ phân tích về tiềm năng của AI trong tương lai.",
         help="Custom prompt for benchmark",
     )
+    parser.add_argument(
+        "--allow-cache",
+        action="store_true",
+        help="Allow LiteLLM response caching (default: False, cache is bypassed to measure raw hardware throughput)",
+    )
     args = parser.parse_args()
+
+    # Append nonce to bypass response caching unless explicitly allowed
+    prompt = args.prompt
+    if not args.allow_cache:
+        prompt = f"{args.prompt} [Benchmark Nonce: {int(time.time() * 1000)}]"
 
     if args.mode == "gateway":
         url = GATEWAY_URL
@@ -50,7 +60,10 @@ def main() -> None:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {GATEWAY_API_KEY}",
         }
-        mode_label = f"AI Gateway (:8090) [Telemetry Logged to PostgreSQL]"
+        if not args.allow_cache:
+            headers["Cache-Control"] = "no-cache"
+        cache_status = "Allowed" if args.allow_cache else "Bypassed (Live Nonce)"
+        mode_label = f"AI Gateway (:8090) [Telemetry Logged to PostgreSQL | Cache: {cache_status}]"
     else:
         url = DIRECT_URL
         headers = {"Content-Type": "application/json"}
@@ -58,7 +71,7 @@ def main() -> None:
 
     data = {
         "model": args.model,
-        "messages": [{"role": "user", "content": args.prompt}],
+        "messages": [{"role": "user", "content": prompt}],
         "max_tokens": args.max_tokens,
         "temperature": 0.7,
     }

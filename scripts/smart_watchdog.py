@@ -604,17 +604,20 @@ def build_daily_digest_message(date_str: str) -> str:
     )
 
 
+VN_TZ = datetime.timezone(datetime.timedelta(hours=7))
+
+
 def check_and_send_daily_digest() -> None:
-    """Checks if current time is within 08:00-08:59 and sends daily digest once."""
+    """Checks if current time in VN (ICT) is within 08:00-08:59 and sends daily digest once."""
     global last_digest_date
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(VN_TZ)
     today_str = now.strftime("%Y-%m-%d")
 
     if now.hour == 8 and last_digest_date != today_str:
         msg = build_daily_digest_message(today_str)
         if send_telegram_raw(msg):
             last_digest_date = today_str
-            print(f"Sent daily digest for {today_str}", flush=True)
+            print(f"Sent daily digest for {today_str} (VN Time: {now.strftime('%H:%M:%S')})", flush=True)
 
 
 # Upstream Release Check Tracking

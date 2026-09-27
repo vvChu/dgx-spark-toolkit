@@ -117,6 +117,39 @@ def prune_logs(retention_days: int, dry_run: bool = False) -> int:
     return candidates_count
 
 
+def prune_health_checks(retention_days: int = 7, dry_run: bool = False) -> int:
+    """Delete old health check records from LiteLLM_HealthCheckTable."""
+    count_sql = f"""
+        SELECT COUNT(*) FROM "LiteLLM_HealthCheckTable"
+        WHERE checked_at < NOW() - INTERVAL '{retention_days} days';
+    """
+    try:
+        _, rows = execute_sql(count_sql)
+        candidates_count = int(rows[0][0]) if rows and rows[0] else 0
+    except Exception as exc:
+        log(f"Warning: Could not query LiteLLM_HealthCheckTable: {exc}")
+        return 0
+
+    if dry_run:
+        log(f"[DRY-RUN] Found {candidates_count:,} health check records older than {retention_days} days to prune.")
+        return candidates_count
+
+    if candidates_count == 0:
+        log(f"No health check records older than {retention_days} days found. Nothing to delete.")
+        return 0
+
+    log(f"Deleting {candidates_count:,} health check records older than {retention_days} days...")
+    t0 = time.time()
+    delete_sql = f"""
+        DELETE FROM "LiteLLM_HealthCheckTable"
+        WHERE checked_at < NOW() - INTERVAL '{retention_days} days';
+    """
+    execute_sql(delete_sql)
+    elapsed = time.time() - t0
+    log(f"Successfully deleted {candidates_count:,} health check rows in {elapsed:.2f}s.")
+    return candidates_count
+
+
 def vacuum_table(table_name: str = "LiteLLM_SpendLogs", full: bool = False) -> None:
     """Run VACUUM on specified table."""
     mode = "VACUUM FULL" if full else "VACUUM ANALYZE"
@@ -136,7 +169,13 @@ def main() -> None:
         "--retention-days",
         type=int,
         default=60,
-        help="Number of days of detailed logs to retain (default: 60)",
+        help="Number of days of detailed spend logs to retain (default: 60)",
+    )
+    parser.add_argument(
+        "--health-retention-days",
+        type=int,
+        default=7,
+        help="Number of days of health check logs to retain (default: 7)",
     )
     parser.add_argument(
         "--vacuum",
@@ -156,21 +195,29 @@ def main() -> None:
     args = parser.parse_args()
 
     log("=" * 60)
-    log(f"Starting LiteLLM Database Maintenance (Retention: {args.retention_days} days)")
+    log(f"Starting LiteLLM Database Maintenance (Spend: {args.retention_days}d, Health: {args.health_retention_days}d)")
 
-    size_before = get_table_size("LiteLLM_SpendLogs")
-    log(f"Current 'LiteLLM_SpendLogs' table size: {size_before}")
+    size_spend_before = get_table_size("LiteLLM_SpendLogs")
+    size_hc_before = get_table_size("LiteLLM_HealthCheckTable")
+    log(f"Current 'LiteLLM_SpendLogs' size: {size_spend_before}")
+    log(f"Current 'LiteLLM_HealthCheckTable' size: {size_hc_before}")
 
-    deleted = prune_logs(retention_days=args.retention_days, dry_run=args.dry_run)
+    deleted_spend = prune_logs(retention_days=args.retention_days, dry_run=args.dry_run)
+    deleted_hc = prune_health_checks(retention_days=args.health_retention_days, dry_run=args.dry_run)
 
     if not args.dry_run:
+        should_vacuum = args.vacuum or (deleted_spend > 0 or deleted_hc > 0)
         if args.vacuum_full:
             vacuum_table("LiteLLM_SpendLogs", full=True)
-        elif args.vacuum or deleted > 0:
+            vacuum_table("LiteLLM_HealthCheckTable", full=True)
+        elif should_vacuum:
             vacuum_table("LiteLLM_SpendLogs", full=False)
+            vacuum_table("LiteLLM_HealthCheckTable", full=False)
 
-        size_after = get_table_size("LiteLLM_SpendLogs")
-        log(f"Table size after maintenance: {size_after}")
+        size_spend_after = get_table_size("LiteLLM_SpendLogs")
+        size_hc_after = get_table_size("LiteLLM_HealthCheckTable")
+        log(f"'LiteLLM_SpendLogs' size after maintenance: {size_spend_after}")
+        log(f"'LiteLLM_HealthCheckTable' size after maintenance: {size_hc_after}")
 
     log("Maintenance task completed successfully.")
     log("=" * 60)

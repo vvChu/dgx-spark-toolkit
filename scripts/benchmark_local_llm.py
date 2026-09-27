@@ -24,7 +24,7 @@ PROMPT = (
 )
 
 
-async def fetch_completion(client: AsyncOpenAI, model: str, req_id: int) -> Dict[str, Any]:
+async def fetch_completion(client: AsyncOpenAI, model: str, req_id: int, prompt: str = PROMPT) -> Dict[str, Any]:
     """Execute a single streaming chat completion request and measure TTFT and TPS."""
     start_time = time.time()
     first_token_time: Optional[float] = None
@@ -33,7 +33,7 @@ async def fetch_completion(client: AsyncOpenAI, model: str, req_id: int) -> Dict
     try:
         response = await client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": PROMPT}],
+            messages=[{"role": "user", "content": prompt}],
             stream=True,
             max_tokens=512,
             temperature=0.7,
@@ -67,12 +67,12 @@ async def fetch_completion(client: AsyncOpenAI, model: str, req_id: int) -> Dict
         }
 
 
-async def run_benchmark(client: AsyncOpenAI, model: str, concurrency: int) -> None:
+async def run_benchmark(client: AsyncOpenAI, model: str, concurrency: int, prompt: str = PROMPT) -> None:
     """Run concurrent benchmark requests and print aggregated statistics."""
     print(f"\n--- Bắt đầu Benchmark với Concurrency = {concurrency} ---")
     start_time = time.time()
 
-    tasks = [fetch_completion(client, model, i) for i in range(concurrency)]
+    tasks = [fetch_completion(client, model, i, prompt=prompt) for i in range(concurrency)]
     results = await asyncio.gather(*tasks)
 
     end_time = time.time()
@@ -121,12 +121,18 @@ async def async_main() -> None:
         default=[1, 4],
         help="Concurrency levels to test sequentially (default: 1 4)",
     )
+    parser.add_argument(
+        "--allow-cache",
+        action="store_true",
+        help="Allow LiteLLM response caching (default: False, cache is bypassed to measure raw throughput)",
+    )
     args = parser.parse_args()
 
     if args.mode == "gateway":
         base_url = DEFAULT_GATEWAY_URL
         api_key = DEFAULT_GATEWAY_KEY
-        mode_label = f"AI Gateway (:8090) [Telemetry Logged to PostgreSQL]"
+        cache_status = "Allowed" if args.allow_cache else "Bypassed (Live Nonce)"
+        mode_label = f"AI Gateway (:8090) [Telemetry Logged to PostgreSQL | Cache: {cache_status}]"
     else:
         base_url = DEFAULT_DIRECT_URL
         api_key = "sk-unused"
@@ -138,7 +144,10 @@ async def async_main() -> None:
     client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
     for c in args.concurrency:
-        await run_benchmark(client, args.model, c)
+        prompt = PROMPT
+        if not args.allow_cache:
+            prompt = f"{PROMPT} [Benchmark Nonce: {int(time.time() * 1000)}]"
+        await run_benchmark(client, args.model, c, prompt=prompt)
         await asyncio.sleep(1)
 
 
