@@ -598,6 +598,7 @@ services:
       - CHATOPS_GATEWAY_URL=http://172.21.0.1:8095
       - GATEWAY_PROXY_URL=${GATEWAY_PROXY_URL}
       - GATEWAY_PROXY_KEY=${GATEWAY_PROXY_KEY}
+      - GATEWAY_ADMIN_PASSWORD=${GATEWAY_ADMIN_PASSWORD}
       - REDIS_URL=${REDIS_CACHE_URL}
     command: >
       sh -c "pip install requests docker redis && python /app/smart_watchdog.py"
