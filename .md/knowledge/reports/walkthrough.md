@@ -1,37 +1,36 @@
-# Walkthrough — Issue #66: Automated Virtual Key Provisioning & Quota Management for LiteLLM Gateway Spokes
+# Walkthrough — PR #74: Account Pool Quorum Guard, Health Probe Gate & LiteLLM Rate Limits
 
-> **PR:** [#73 feat(gateway): automated virtual key provisioning and quota management for spokes (#66)](https://github.com/vvChu/dgx-spark-toolkit/pull/73)  
-> **Merged Branch:** `feat/issue-66-gateway-virtual-keys` $\rightarrow$ `master`  
-> **Issue:** [#66 Automated Virtual Key Provisioning & Quota Management for LiteLLM Gateway Spokes](https://github.com/vvChu/dgx-spark-toolkit/issues/66)  
-> **Parent Map:** [#69 Wayfinder Map: Khai Thác Toàn Diện Mô Hình Kiến Trúc 4-Hubs × Federated Spokes](https://github.com/vvChu/dgx-spark-toolkit/issues/69)  
-> **Verification Status:** ✅ 100% PASS (58/58 Tests in 5.05s, 0 Flake8 Errors, Dual-Gate CI All Green)  
-> **Production Readiness:** 🟢 SQUASH MERGED TO MASTER
+> **PR:** [#74 feat(security): Account Pool Quorum Guard, Health Probe Gate, and LiteLLM RPM Limits](https://github.com/vvChu/dgx-spark-toolkit/pull/74)  
+> **Head Branch:** `feat/account-protection-quorum-guard-health-probe` $\rightarrow$ `master`  
+> **Verification Status:** ✅ 100% PASS (68/68 Tests in 4.75s, 0 Flake8 Errors, Dual-Gate CI 4/4 All Green)  
+> **Production Readiness:** 🟢 READY FOR RELEASE / SQUASH MERGE
 
 ---
 
 ## 1. Tổng Quan Kết Quả Đạt Được
 
-Triển khai hoàn chỉnh công cụ CLI và module quản trị Virtual Keys chuẩn mực cho AI Gateway LiteLLM Proxy v1.83.3 trên DGX Spark theo mô hình **4-Hubs × Federated Spokes**:
+Triển khai hoàn chỉnh cơ chế bảo vệ tài khoản Google và tối ưu hồ bơi Antigravity Tools (`:8045`) theo kiến trúc 3 lớp phòng vệ:
 
-1. **Công Cụ Quản Trị `scripts/manage_virtual_keys.py`**:
-   - Tách biệt lớp nghiệp vụ `VirtualKeyManager` khỏi CLI runner, sẵn sàng tích hợp với Telegram ChatOps Daemon.
-   - Tuân thủ **Global Rule 5**: KISS, toàn bộ các hàm $\le 50$ dòng, đa tiêu chí sắp xếp tất định.
-   - Hỗ trợ đầy đủ các subcommands: `list`, `generate`, `info`, `update-budget`, `revoke`, `provision-spokes`.
-   - **Tối ưu hóa $O(1)$**: Sử dụng `GET /key/list?return_full_object=true` thay vì lặp N+1 calls `/key/info`.
-   - **Bảo mật Secret**: Che giấu khóa bí mật dạng `sk-...XXXX` trên console STDOUT; tệp cấu hình `.env` cho spokes tự động cấp quyền `chmod 0600`.
-   - **An toàn Mô hình & Paywall**: Cảnh báo đối soát model tồn tại qua `GET /v1/models`; chu trình xoay vòng khóa an toàn `POST /key/delete` $\rightarrow$ `POST /key/generate` (tránh lỗi Enterprise paywall trên `/key/regenerate`).
+1. **Chuẩn Hóa Rate Limiting & Fallback trên AI Gateway (`services/ai-gateway/litellm_config.yaml`)**:
+   - Sử dụng đúng cú pháp `rpm: 12` và `tpm: 250000` trong `litellm_params` của deployment templates.
+   - Duy trì `cooldown_time: 60` an toàn ở cấp Router (chống rủi ro sập gateway toàn cục khi có lỗi mạng tạm thời).
+   - Tích hợp model dự phòng cấp doanh nghiệp `vertex_ai/gemini-2.5-flash` tự động nạp từ biến môi trường `VERTEXAI_PROJECT` và `VERTEXAI_LOCATION`.
 
-2. **Cấp Phát Bộ 5 Virtual Keys Cho Spokes & Kỹ Sư**:
-   - `spoke-bim-planner`: $50/tháng (5 models: `qwen-3.5-35b`, `embedding-default`, `gpt-oss-120b-medium`, `gemini-3.8-flash`, `rag-core`)
-   - `spoke-idop`: $30/tháng (3 models: `qwen-3.5-35b`, `embedding-default`, `gemini-3.8-flash`)
-   - `spoke-legal`: $30/tháng (4 models: `qwen-3.5-35b`, `embedding-default`, `gemini-3.8-flash`, `rag-core`)
-   - `dev-tta`: $20/tháng (toàn quyền models)
-   - `dev-tat`: $20/tháng (toàn quyền models)
-   - Tự động xuất 5 tệp cấu hình `.env` trong `.md/scratch/spokes_env/` trỏ tới Tailscale IP (`http://100.83.192.30:8090/v1`) với quyền `0600`.
+2. **Nâng Cấp Smart Watchdog với Quorum Guard (`scripts/smart_watchdog.py`)**:
+   - Bổ sung Quorum Guard trong `check_quota_pool()`:
+     - Khi `failed_ratio >= 0.5` hoặc `active_count <= 2` (với `total > 2`): Phát cảnh báo `CRITICAL` về hạ tầng mạng/IP máy chủ, tự động ngừng cô lập tài khoản con để tránh làm sập sạch hồ bơi tài khoản.
+     - Khi hồ bơi ổn định (`active_count > 2` và `failed_ratio < 0.5`): Tạo action button đính kèm payload `act:antigravity_reenable:<account_id>` gửi lên Telegram ChatOps.
 
-3. **Bộ Kiểm Thử Độc Lập & Đồng Bộ Test Suite**:
-   - Bổ sung 16 unit tests trong `tests/test_manage_virtual_keys.py` bao phủ tất cả các ca thành công, lỗi tham số, lỗi trùng lặp alias, xử lý token hash, quyền tệp, và thiếu master key.
-   - Đồng bộ hóa `tests/test_chatops.py` cho giao diện bàn phím 12 nút bấm (6 hàng × 2 nút) bao gồm `menu:antigravity`.
+3. **Tích Hợp Health Probe Gate & Interactive Action trên Telegram ChatOps (`scripts/chatops_daemon.py`)**:
+   - Đăng ký lệnh `antigravity.account.enable` và command `/reenable_account <account_id>`.
+   - Xử lý callback `act:antigravity_reenable:<account_id>` với **Health Probe Gate 2 bước**:
+     1. Gửi request probe ẩn nhẹ (`gemini-2.5-flash` ping) trực tiếp tới tài khoản trên Antigravity Tools `:8045`.
+     2. Nếu Probe trả về `HTTP 200 OK` $\to$ Kích hoạt lại tài khoản và báo Telegram.
+     3. Nếu Probe trả về `403 Challenge` $\to$ Giữ nguyên trạng thái khóa và cảnh báo Admin hoàn tất xác minh trước, ngăn chặn nguy cơ Google khóa vĩnh viễn tài khoản.
+
+4. **Đúc Rút Quy Tắc `RULE-1.15` Trong Session Learnings (`.md/knowledge/session_learnings.md`)**:
+   - Ghi nhận đầy đủ quy chuẩn Quorum Guard & Health Probe Gate.
+   - Tối ưu hóa văn phong giữ dung lượng tệp ở mức **9,304 bytes** ($\le 10.0\text{ KB}$).
 
 ---
 
@@ -39,29 +38,20 @@ Triển khai hoàn chỉnh công cụ CLI và module quản trị Virtual Keys c
 
 ### A. Kiểm Thử Cục Bộ (Shift-Left Gate)
 ```bash
-$ .venv/bin/pytest tests/test_manage_virtual_keys.py tests/test_chatops.py -v
-============================== 58 passed in 5.05s ==============================
+$ .venv/bin/pytest tests/ -v
+============================== 68 passed in 4.75s ==============================
 
-$ flake8 scripts/manage_virtual_keys.py tests/test_manage_virtual_keys.py
+$ flake8 scripts/smart_watchdog.py scripts/chatops_daemon.py tests/test_smart_watchdog.py tests/test_chatops.py --config=services/rag-service/.flake8
 # Exit code 0, 0 linter errors
 ```
 
-### B. Dual-Gate CI trên GitHub Actions (PR #73)
-- `CI/Backend Tests (pull_request)`: **✓ PASS** (56s)
-- `CI/Frontend Build (pull_request)`: **✓ PASS** (27s)
-- `CI/Python Lint (pull_request)`: **✓ PASS** (12s)
-- `CI/Security Audit (pull_request)`: **✓ PASS** (33s)
+### B. Dual-Gate CI trên GitHub Actions (PR #74)
+- `CI/Backend Tests (pull_request)`: **✓ PASS** (47s)
+- `CI/Frontend Build (pull_request)`: **✓ PASS** (26s)
+- `CI/Python Lint (pull_request)`: **✓ PASS** (13s)
+- `CI/Security Audit (pull_request)`: **✓ PASS** (45s)
 
-### C. Live Verification trên DGX Spark LiteLLM Proxy (:8090)
-```bash
-$ .venv/bin/python scripts/manage_virtual_keys.py list
-+-------------------+------------+-------------------+----------+----------+--------+
-| Key Alias         | Masked Key | Spend / Budget    | Duration | Models   | Status |
-+-------------------+------------+-------------------+----------+----------+--------+
-| dev-tat           | sk-...kESg | $0.00 / $20.00    | 30d      | all      | Active |
-| dev-tta           | sk-..._2xQ | $0.00 / $20.00    | 30d      | all      | Active |
-| spoke-bim-planner | sk-...wF6A | $0.00 / $50.00    | 30d      | 5 models | Active |
-| spoke-idop        | sk-...m4rg | $0.00 / $30.00    | 30d      | 3 models | Active |
-| spoke-legal       | sk-...dzTQ | $0.00 / $30.00    | 30d      | 4 models | Active |
-+-------------------+------------+-------------------+----------+----------+--------+
-```
+---
+
+## 3. Bước Kế Tiếp
+Kích hoạt lệnh `/ccba-release-feature` để kiểm tra hermetic pre-release gate, thực hiện squash merge PR #74 vào nhánh `master` và hoàn tất chu trình.
