@@ -97,7 +97,7 @@ def verify_integrity(project_root: Path) -> Tuple[bool, List[str]]:
     env_vars = load_env_file(project_root / ".env")
     
     model_dir = os.getenv("LOCAL_PRIMARY_LLM_DIR") or env_vars.get(
-        "LOCAL_PRIMARY_LLM_DIR", "/home/vvc/models/Qwen3.5-35B-A3B-FP8"  # ccba:allow-machine-path
+        "LOCAL_PRIMARY_LLM_DIR", "/home/vvc/models/Qwen3.6-35B-A3B-FP8"  # ccba:allow-machine-path
     )
     served_name = os.getenv("LOCAL_PRIMARY_SERVED_NAME") or env_vars.get(
         "LOCAL_PRIMARY_SERVED_NAME", "qwen-local-primary"
@@ -136,7 +136,7 @@ def verify_integrity(project_root: Path) -> Tuple[bool, List[str]]:
         is_valid = False
 
     # Check for legacy misleading aliases
-    misleading_aliases = ["Qwen-3.6-35B-NVFP4", "qwen3.6-35b"]
+    misleading_aliases = ["Qwen-3.6-35B-NVFP4"]
     found_misleading = [a for a in misleading_aliases if a in gateway_models]
     if found_misleading:
         logs.append(f"⚠️ Warning: Misleading legacy alias found on Gateway: {found_misleading}")
