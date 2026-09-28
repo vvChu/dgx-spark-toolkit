@@ -1654,8 +1654,34 @@ def test_command_registry_antigravity_reenable():
     assert not regex.match("acc;rm -rf /")
 
 
+def test_reenable_quota_probe_allows_toggle_predicate():
+    """Verify quota_probe_allows_toggle strictly enforces boolean false across flat and nested schemas."""
+    # 1. Flat clean quota
+    assert daemon.quota_probe_allows_toggle({"is_forbidden": False, "models": []}) is True
+    # 2. Flat forbidden quota
+    assert daemon.quota_probe_allows_toggle({"is_forbidden": True, "forbidden_reason": "EXHAUSTED"}) is False
+    # 3. Nested clean quota
+    assert daemon.quota_probe_allows_toggle({"quota": {"is_forbidden": False}}) is True
+    # 4. Nested forbidden quota
+    assert daemon.quota_probe_allows_toggle({"quota": {"is_forbidden": True}}) is False
+    # 5. Conflicting root False + nested True -> Must reject (False)
+    assert daemon.quota_probe_allows_toggle({"is_forbidden": False, "quota": {"is_forbidden": True}}) is False
+    # 6. Empty dict -> Must reject (False)
+    assert daemon.quota_probe_allows_toggle({}) is False
+    # 7. Missing is_forbidden key -> Must reject (False)
+    assert daemon.quota_probe_allows_toggle({"models": ["gemini-2.5-flash"]}) is False
+    # 8. Non-bool values -> Must reject (False)
+    assert daemon.quota_probe_allows_toggle({"is_forbidden": 1}) is False
+    assert daemon.quota_probe_allows_toggle({"is_forbidden": "false"}) is False
+    assert daemon.quota_probe_allows_toggle({"is_forbidden": "true"}) is False
+    # 9. Non-dict payloads -> Must reject (False)
+    assert daemon.quota_probe_allows_toggle(None) is False
+    assert daemon.quota_probe_allows_toggle("invalid json payload") is False
+    assert daemon.quota_probe_allows_toggle(["is_forbidden", False]) is False
+
+
 def test_reenable_antigravity_account_success():
-    """Verify reenable_antigravity_account succeeds when pre-check clean, quota probe 200 clean, and toggle-proxy returns 200."""
+    """Verify reenable_antigravity_account succeeds with flat QuotaData schema."""
     async def _test():
         mock_client = AsyncMock()
         # Stage 1: GET /api/accounts
@@ -1665,11 +1691,13 @@ def test_reenable_antigravity_account_success():
             "accounts": [{"id": "acc_test_1", "email": "test@example.com", "proxy_disabled": True}]
         }
 
-        # Stage 2: GET /api/accounts/acc_test_1/quota
+        # Stage 2: GET /api/accounts/acc_test_1/quota (flat QuotaData schema)
         mock_quota_resp = MagicMock()
         mock_quota_resp.status_code = 200
         mock_quota_resp.json.return_value = {
-            "quota": {"is_forbidden": False, "models": []}
+            "is_forbidden": False,
+            "models": [],
+            "last_updated": 1727540000,
         }
 
         mock_client.get.side_effect = [mock_accs_resp, mock_quota_resp]
@@ -1748,8 +1776,133 @@ def test_reenable_antigravity_account_pre_check_rejected():
     asyncio.run(_test())
 
 
+def test_reenable_antigravity_account_pre_check_fail_closed_on_network_error():
+    """Verify reenable_antigravity_account fails closed without probing quota if GET /api/accounts fails."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 500
+        mock_client.get.return_value = mock_accs_resp
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("acc_any", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is False
+            assert mock_client.get.call_count == 1
+            assert mock_client.post.call_count == 0
+
+            mock_edit.assert_called_once()
+            edit_text = mock_edit.call_args[0][2]
+            assert "LỖI KẾT NỐI LOCAL API" in edit_text
+
+            mock_audit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "PRE_CHECK_REJECTED"
+
+    asyncio.run(_test())
+
+
+def test_reenable_antigravity_account_pre_check_fail_closed_on_account_not_found():
+    """Verify reenable_antigravity_account fails closed if target account ID not found in list."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 200
+        mock_accs_resp.json.return_value = {"accounts": [{"id": "other_acc", "email": "other@example.com"}]}
+        mock_client.get.return_value = mock_accs_resp
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("non_existent", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is False
+            assert mock_client.get.call_count == 1
+            assert mock_client.post.call_count == 0
+
+            mock_edit.assert_called_once()
+            edit_text = mock_edit.call_args[0][2]
+            assert "TÀI KHOẢN KHÔNG TỒN TẠI" in edit_text
+
+            mock_audit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "PRE_CHECK_REJECTED"
+
+    asyncio.run(_test())
+
+
+def test_reenable_antigravity_account_pre_check_rejected_on_disabled_flag():
+    """Verify reenable_antigravity_account rejects disabled accounts at Stage 1."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 200
+        mock_accs_resp.json.return_value = {
+            "accounts": [{"id": "acc_disabled", "email": "dis@example.com", "disabled": True}]
+        }
+        mock_client.get.return_value = mock_accs_resp
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("acc_disabled", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is False
+            assert mock_client.get.call_count == 1
+            assert mock_client.post.call_count == 0
+
+            mock_edit.assert_called_once()
+            edit_text = mock_edit.call_args[0][2]
+            assert "TÀI KHOẢN ĐÃ BỊ VÔ HIỆU HÓA" in edit_text or "TỪ CHỐI HEALTH PROBE" in edit_text
+
+            mock_audit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "PRE_CHECK_REJECTED"
+
+    asyncio.run(_test())
+
+
+def test_reenable_antigravity_account_pre_check_rejected_on_unauthorized_client_reason():
+    """Verify reenable_antigravity_account rejects accounts with unauthorized_client challenge reason."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 200
+        mock_accs_resp.json.return_value = {
+            "accounts": [
+                {
+                    "id": "acc_unauth",
+                    "email": "unauth@example.com",
+                    "disabled_reason": "OAuth2 challenge: unauthorized_client",
+                }
+            ]
+        }
+        mock_client.get.return_value = mock_accs_resp
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("acc_unauth", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is False
+            assert mock_client.get.call_count == 1
+            assert mock_client.post.call_count == 0
+
+            mock_audit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "PRE_CHECK_REJECTED"
+
+    asyncio.run(_test())
+
+
 def test_reenable_antigravity_account_probe_rejected():
-    """Verify reenable_antigravity_account rejects and does NOT call toggle-proxy when quota probe detects is_forbidden."""
+    """Verify reenable_antigravity_account rejects and does NOT call toggle-proxy when nested quota probe detects is_forbidden."""
     async def _test():
         mock_client = AsyncMock()
         mock_accs_resp = MagicMock()
@@ -1789,6 +1942,77 @@ def test_reenable_antigravity_account_probe_rejected():
     asyncio.run(_test())
 
 
+def test_reenable_antigravity_account_flat_probe_rejected():
+    """Verify reenable_antigravity_account rejects flat QuotaData schema with is_forbidden: true."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 200
+        mock_accs_resp.json.return_value = {
+            "accounts": [{"id": "acc_flat_403", "email": "flat403@example.com"}]
+        }
+
+        mock_quota_resp = MagicMock()
+        mock_quota_resp.status_code = 200
+        mock_quota_resp.json.return_value = {
+            "is_forbidden": True,
+            "forbidden_reason": "RESOURCE_EXHAUSTED",
+            "models": [],
+        }
+
+        mock_client.get.side_effect = [mock_accs_resp, mock_quota_resp]
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("acc_flat_403", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is False
+            assert mock_client.get.call_count == 2
+            assert mock_client.post.call_count == 0
+
+            mock_edit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "PROBE_FAILED"
+
+    asyncio.run(_test())
+
+
+def test_reenable_probe_fail_closed_on_malformed_or_empty_json():
+    """Verify reenable_antigravity_account rejects when quota returns empty dict or malformed payload."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 200
+        mock_accs_resp.json.return_value = {
+            "accounts": [{"id": "acc_empty_quota", "email": "empty@example.com"}]
+        }
+
+        mock_quota_resp = MagicMock()
+        mock_quota_resp.status_code = 200
+        # Empty dict or missing is_forbidden key
+        mock_quota_resp.json.return_value = {}
+
+        mock_client.get.side_effect = [mock_accs_resp, mock_quota_resp]
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("acc_empty_quota", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is False
+            assert mock_client.get.call_count == 2
+            assert mock_client.post.call_count == 0
+
+            mock_edit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "PROBE_FAILED"
+
+    asyncio.run(_test())
+
+
 def test_reenable_antigravity_account_probe_pass_enable_fail():
     """Verify reenable_antigravity_account reports error if probe passes but toggle-proxy endpoint returns 500."""
     async def _test():
@@ -1801,7 +2025,7 @@ def test_reenable_antigravity_account_probe_pass_enable_fail():
 
         mock_quota_resp = MagicMock()
         mock_quota_resp.status_code = 200
-        mock_quota_resp.json.return_value = {"quota": {"is_forbidden": False}}
+        mock_quota_resp.json.return_value = {"is_forbidden": False, "models": []}
 
         mock_client.get.side_effect = [mock_accs_resp, mock_quota_resp]
 
