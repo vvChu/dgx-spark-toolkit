@@ -73,3 +73,5 @@
 - `RULE-5.5 (Headless Watchdog Metric Aggregation)`: Watchdog container đọc metrics SoC Temp, RAM, NVMe trực tiếp từ `/proc/meminfo`, `shutil.disk_usage('/')`, `/sys/class/thermal` không cần root.
 - `RULE-5.6 (Blackwell GB10 Unified Memory SMI Query)`: GPU GB10 (128GB Unified Memory), `nvidia-smi` trả `[N/A]`. Truy vấn qua `--query-compute-apps=process_name,used_memory` rồi cộng dồn tiến trình.
 - `RULE-5.7 (WAL-Safe SQLite Disaster Recovery)`: Nâng cấp container SQLite WAL gọi `sqlite3.backup()` xuất snapshot trước khi tarball. Rollback xóa `-wal`/`-shm` cũ và phục hồi snapshot.
+- `RULE-5.8 (Reasoning Model Thinking Token Management)`: Khi nâng cấp hoặc triển khai các mô hình có chế độ suy luận mặc định (như Qwen 3.6 với `--reasoning-parser qwen3`), các tác vụ trích xuất JSON (`extract_json`), HyDE generation (`max_tokens=512`), và tác vụ nền nội bộ Open WebUI (`TASK_MODEL`) BẮT BUỘC phải vô hiệu hóa thinking (`enable_thinking: False` hoặc route qua role-based alias `local-instruct`). Tránh hiện tượng cạn kiệt token (`finish_reason: length`) và tăng tốc độ xử lý hơn 13x.
+
