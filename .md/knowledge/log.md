@@ -4,6 +4,21 @@ Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật 
 
 ---
 
+## [2026-09-28] [feat/llm-upgrade] | Nâng Cấp Qwen 3.6 35B FP8 & Tối Ưu Hệ Sinh Thái Đa Dịch Vụ (PR #76 Merged)
+
+- **Nhiệm vụ**: Nâng cấp Local Primary LLM từ `Qwen/Qwen3.5-35B-A3B-FP8` lên `Qwen/Qwen3.6-35B-A3B-FP8` trên NVIDIA DGX Spark (Blackwell GB10 128GB Unified Memory), kích hoạt Thinking Preservation với `--reasoning-parser qwen3`, đối soát phản biện cùng Grok 4.7 xhigh, và tối ưu hóa toàn diện hệ sinh thái (AI Gateway, Open WebUI, RAG Service, HyDE).
+- **Thành phần**:
+  - `Model Upgrade`: Tải và phục vụ `Qwen/Qwen3.6-35B-A3B-FP8` (34.92 GiB, 42 shards) qua vLLM 0.26.0; bổ sung volume mount cache Inductor AOT (`~/.cache/vllm`) và `--reasoning-parser qwen3`.
+  - `AI Gateway`: Bổ sung 2 role-based aliases `local-instruct` (ép `enable_thinking: False`) và `local-coder`. Tăng tốc bóc tách JSON từ 5.6s xuống **0.398s (13.5x speedup)**.
+  - `Open WebUI`: Cấu hình `TASK_MODEL: local-instruct`, giúp các tác vụ nền nội bộ (tự tạo tiêu đề chat, tóm tắt) hoàn tất trong < 0.4s.
+  - `RAG Service & HyDE`: Mặc định tắt thinking trong `extract_json()` và `HyDEGenerator` (`max_tokens=512`), ngăn chặn triệt để hiện tượng cạn kiệt token (`finish_reason: length`) và sinh thành công 1,308 ký tự tài liệu giả định.
+  - `Docs & Knowledge`: Ghi nhận `RULE-5.8` trong `session_learnings.md` (giữ ngân sách $\le 10.0$ KB), lưu biên bản phản biện Grok tại `.md/peer_exchange/grok_cross_review_qwen36.md`, và cập nhật báo cáo phát hành tại `.md/knowledge/reports/walkthrough.md`.
+- **Xác thực**:
+  - Model Throughput: 54.46 tokens/s (Concurrency 1), 137.35 tokens/s (Concurrency 4).
+  - Test suite: 527/527 unit tests passed in 13.1s; flake8: 0 errors; secret scanner: 0 leaks.
+  - GitHub Actions Dual-Gate CI: 4/4 checks (Backend Tests, Frontend Build, Python Lint, Security Audit) 100% Green.
+  - Release: Squash & Merge thành công PR #76 (commit `f92ecb2`), dọn sạch branch cục bộ và remote.
+
 ## [2026-09-28] [refactor/ai-native] | Hoàn tất Tái Cấu Trúc AI-Native Codebase (ADR-0005) & Nghiệm Thu Đối Soát Grok
 
 - **Nhiệm vụ**: Thực hiện tái cấu trúc hệ thống `dgx-spark-toolkit` sang kiến trúc AI-Native Codebase theo chuẩn Deep Seams, thiết lập Scoped Progressive Disclosure, phân vùng cách ly Redis DB 3 cho Table Cache, xây dựng Fast MCP Server, ban hành ADR-0005 và nghiệm thu đối soát chéo 2 chiều cùng Grok 4.7 xhigh.

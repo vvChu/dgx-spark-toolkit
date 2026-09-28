@@ -16,21 +16,21 @@
 - `RULE-1.7 (Zero Quota Circuit Breaker)`: `lock_on_zero_quota: true` trong `gui_config.json` khóa tài khoản cạn quota đến `reset_time` tuần thay vì lùi ngắn hạn (60s-300s), chặn retry 429 vô ích.
 - `RULE-1.8 (Prompt Caching & Compression)`: Chế độ `Balance` (KV Cache $\ge 85\%$) cấm nén L2/L3 (Caveman) vì lệch prefix hash; chỉ dùng `compression_level: "low"` (RTK) bảo toàn prefix cache hit.
 - `RULE-1.9 (Dynamic Version Gate)`: Nâng cấp container dùng `packaging.version.parse`. Gợi ý khi `latest > current`; `current == latest` báo đã ở bản mới nhất kèm `reinstall`.
-- `RULE-1.10 (Audit Chain Continuity & Hermetic Tests)`: Audit trail băm nối tiếp (Chained SHA-256) đọc hash cuối từ disk lúc boot. Unit test nghiệp vụ mock ghi audit; test audit chuyển `AUDIT_FILE` sang `tmp_path` fixture.
-- `RULE-1.11 (Spoke Contribution Worktree)`: Đóng góp Spoke lên Hub khi branch có uncommitted changes: dùng worktree cô lập (`git worktree add /tmp/... origin/main`), merge xong checkout `main` để update packages.
-- `RULE-1.12 (Cold-Cache & Multi-Key Gate)`: Đo SLA RAG dùng Cold Cache. Gateway pool test $\ge 3$ keys. Khâu real-time (Rewrite, Timeline, Rerank) dùng chuỗi `claude-haiku-4` $\rightarrow$ `rag-core` GPU (SLA $< 2.0\text{s}$).
-- `RULE-1.13 (Warmup Budget & Shield Self-Healing)`: Nạp BGE-M3/Reranker mất ~94s; đặt `WARMUP_TIMEOUT_SECONDS` $\ge 110s$ (trần 120s). Dùng `asyncio.shield` để worker chạy ngầm tự chuyển `ready`.
-- `RULE-1.14 (LiteLLM Virtual Key API Pitfalls)`: Quản trị Virtual Keys: (1) Tránh regenerate (500), dùng delete -> generate. (2) Lấy danh sách O(1) qua `return_full_object=true`. (3) Tra cứu qua `key_alias`. (4) Dùng `budget_duration="30d"` (cấm `duration`). (5) Delete nhận payload mảng `key_aliases`.
-- `RULE-1.15 (Account Pool Quorum Guard & Health Probe Gate)`: (1) Dùng `rpm`/`tpm` (cấm `rpm_limit`), cooldown: 60-120s. (2) Quorum Guard cô lập tài khoản khi `active_count > 2` và `failed_ratio < 0.5`. (3) Re-enable qua ChatOps bắt buộc qua Health Probe Gate (test HTTP 200) chống spam.
-- `RULE-1.16 (Deep Seams Facade Pattern)`: Khi phân tách module lớn (>500-900 dòng) theo Deep Seams (John Ousterhout), tệp gốc biến thành Facade mỏng re-export 100% symbols bảo đảm zero-regression và 100% test pass.
-- `RULE-1.17 (Redis DB Partitioning Invariant)`: Redis DB split: DB 0 LiteLLM, DB 1 `ingest:queue`, DB 2 Context Lake, DB 3 Semantic Cache L2 & Table Cache, DB 4 HITL. Table cache bắt buộc bọc `format_redis_db3_url(raw_url)` chặn ghi nhầm vào DB 1.
-- `RULE-1.18 (Zero-VRAM Fast MCP Bridge)`: MCP Server cho AI Agents kết nối daemon RAG (:8005) qua Lightweight HTTP Bridge, khởi động ~0.3s, 0 MB VRAM phụ, loại bỏ cold warmup 94s (Pitfall #14).
+- `RULE-1.10 (Audit Chain Continuity)`: Chained SHA-256 đọc hash cuối từ disk lúc boot. Unit test nghiệp vụ mock audit; test audit chuyển `AUDIT_FILE` sang `tmp_path` fixture.
+- `RULE-1.11 (Spoke Contribution Worktree)`: Đóng góp Spoke lên Hub khi branch có thay đổi: dùng worktree cô lập (`git worktree add /tmp/... origin/main`), merge xong checkout `main` để update.
+- `RULE-1.12 (Cold-Cache & Multi-Key Gate)`: Đo SLA RAG dùng Cold Cache. Gateway pool test $\ge 3$ keys. Tác vụ real-time dùng chuỗi `claude-haiku-4` $\rightarrow$ `rag-core` GPU (SLA $< 2.0\text{s}$).
+- `RULE-1.13 (Warmup Budget)`: Nạp BGE-M3/Reranker mất ~94s; đặt `WARMUP_TIMEOUT_SECONDS` $\ge 110s$. Dùng `asyncio.shield` để worker chạy ngầm tự chuyển `ready`.
+- `RULE-1.14 (LiteLLM Virtual Key API)`: Quản trị Virtual Keys: (1) Tránh regenerate (500), dùng delete -> generate. (2) Lấy O(1) qua `return_full_object=true`. (3) Dùng `budget_duration="30d"` (cấm `duration`). (4) Delete nhận mảng `key_aliases`.
+- `RULE-1.15 (Account Pool Quorum Guard & Health Probe)`: (1) Dùng `rpm`/`tpm`, cooldown: 60-120s. (2) Quorum Guard dừng cô lập khi `active_count <= 2` hoặc `failed_ratio >= 0.5`. (3) Re-enable qua ChatOps bắt buộc qua Health Probe Gate (HTTP 200).
+- `RULE-1.16 (Deep Seams Facade Pattern)`: Khi tách module lớn (>500 dòng), tệp gốc biến thành Facade mỏng re-export 100% symbols bảo đảm zero-regression và 100% test pass.
+- `RULE-1.17 (Redis DB Partitioning)`: Redis split: DB 0 LiteLLM, DB 1 `ingest:queue`, DB 2 Context Lake, DB 3 Semantic/Table Cache, DB 4 HITL. Table cache bắt buộc bọc `format_redis_db3_url(raw_url)` chặn ghi nhầm vào DB 1.
+- `RULE-1.18 (Zero-VRAM Fast MCP Bridge)`: MCP Server kết nối daemon RAG (:8005) qua Lightweight HTTP Bridge, khởi động ~0.3s, 0 MB VRAM phụ, loại bỏ cold warmup 94s (Pitfall #14).
 
 ---
 
 ## Miền 2: Code Quality & Testing
 
-- `RULE-2.1 (Null Content in Thinking Models)`: Thinking models trả `content = None` khi reasoning chiếm hết quota. Parser dùng `(msg.get("content") or "").strip()` và `max_tokens >= 256` tránh lỗi `NoneType`.
+- `RULE-2.1 (Null Content in Thinking Models)`: Thinking models trả `content = None` khi reasoning hết quota. Parser dùng `(msg.get("content") or "").strip()` và `max_tokens >= 256` tránh lỗi `NoneType`.
 - `RULE-2.2 (Spoke Cleanliness Guard)`: Thư mục `scripts/` khống chế $\le 15$ tệp hợp lệ. Script legacy lưu vào `.md/archive/legacy_scripts/`.
 - `RULE-2.3 (Shift-Left Determinism)`: Trước commit/release, bắt buộc chạy `.venv/bin/python -m ccba_harness verify-patch` với 4 chốt chặn (Cleanliness, Import Depth, Flake8, Gateway Endpoints).
 - `RULE-2.4 (Poison Budget in Gemini 3.x)`: `thinking_budget < 2048` làm tắt luồng suy luận. Đặt `control_source = "gateway"` để gateway tự chuẩn hóa ($\ge 10001$ Pro, $\ge 16384$ Flash High).
@@ -42,7 +42,7 @@
 - `RULE-2.10 (Fast-Path Chunker Online LLM Isolation)`: Fast-Path nạp tài liệu sạch tắt sửa bảng/tóm tắt LLM (`TABLE_CORRECT_ENABLED = False`), hạ độ trễ từ 80s+ xuống < 1s.
 - `RULE-2.11 (Dynamic Catalog Sizing Invariant)`: Unit test kho tri thức cấm assert kích thước cố định (`assert len == 60`), bắt buộc dùng kiểm tra cận dưới (`assert len >= 60`).
 - `RULE-2.12 (KISS Function Size Limit)`: Mọi hàm trong pipeline xử lý chính bắt buộc $\le 50$ dòng. Phân tách thành sub-functions nội bộ có tên mô tả rõ ràng để AI Coding Agents dễ đọc và giảm attention drift.
-- `RULE-2.13 (URL-Encoded Path Identifiers in Legal APIs)`: Khi endpoint REST/MCP nhận mã văn bản qua path (`/graph/neighbors/{node_id}`), số hiệu pháp lý có dấu `/` (e.g. `15/2021/TT-BXD`) bắt buộc mã hóa `quote(so_hieu, safe="")` tránh lỗi 404.
+- `RULE-2.13 (URL-Encoded Path Identifiers)`: Endpoint REST/MCP nhận mã văn bản qua path (`/graph/neighbors/{node_id}`), số hiệu pháp lý có dấu `/` bắt buộc mã hóa `quote(so_hieu, safe="")` tránh 404.
 
 ---
 
@@ -59,7 +59,7 @@
 - `RULE-4.2 (Copilot Review Verification)`: Mọi review từ Copilot (`PRR_...`) phải đối soát và giải trình tại `walkthrough.md`.
 - `RULE-4.3 (GitHub PR Merge In-Progress Recovery)`: Khi `gh pr merge` lỗi `Merge already in progress`, chờ 10-20s rồi merge qua REST API với `merge_method=squash`.
 - `RULE-4.4 (Idempotent Label Provisioning)`: Khâu claim issue gán nhãn `in-progress` phải idempotent: chạy `gh label create in-progress --force --color fbca04 2>/dev/null || true`.
-- `RULE-4.5 (Bidirectional LLM Peer Review)`: Phối hợp 2 LLMs (Antigravity & Grok) qua tệp JSON/MD thời gian thực (`status.json`, `grok_cross_review.md`). Tiến hành 2 vòng đối soát: Vòng 1 rà soát blockers, Vòng 2 kiểm chứng chéo qua AST & test suite trước khi commit.
+- `RULE-4.5 (Bidirectional LLM Peer Review)`: Phối hợp 2 LLMs (Antigravity & Grok) qua tệp JSON/MD thời gian thực (`status.json`, `grok_cross_review.md`). Tiến hành 2 vòng đối soát: Vòng 1 rà soát blockers, Vòng 2 kiểm chứng chéo AST & test suite.
 - `RULE-4.6 (Maskara URL False-Positive Guard)`: Trong tài liệu và log (.md), cấm ghi thô chuỗi URL dạng database vì pre-commit Maskara chặn nhầm Database URL leak. Bắt buộc mô tả ngữ nghĩa hoặc dùng masked placeholder.
 
 ---
@@ -73,5 +73,4 @@
 - `RULE-5.5 (Headless Watchdog Metric Aggregation)`: Watchdog container đọc metrics SoC Temp, RAM, NVMe trực tiếp từ `/proc/meminfo`, `shutil.disk_usage('/')`, `/sys/class/thermal` không cần root.
 - `RULE-5.6 (Blackwell GB10 Unified Memory SMI Query)`: GPU GB10 (128GB Unified Memory), `nvidia-smi` trả `[N/A]`. Truy vấn qua `--query-compute-apps=process_name,used_memory` rồi cộng dồn tiến trình.
 - `RULE-5.7 (WAL-Safe SQLite Disaster Recovery)`: Nâng cấp container SQLite WAL gọi `sqlite3.backup()` xuất snapshot trước khi tarball. Rollback xóa `-wal`/`-shm` cũ và phục hồi snapshot.
-- `RULE-5.8 (Reasoning Model Thinking Token Management)`: Khi nâng cấp hoặc triển khai các mô hình có chế độ suy luận mặc định (như Qwen 3.6 với `--reasoning-parser qwen3`), các tác vụ trích xuất JSON (`extract_json`), HyDE generation (`max_tokens=512`), và tác vụ nền nội bộ Open WebUI (`TASK_MODEL`) BẮT BUỘC phải vô hiệu hóa thinking (`enable_thinking: False` hoặc route qua role-based alias `local-instruct`). Tránh hiện tượng cạn kiệt token (`finish_reason: length`) và tăng tốc độ xử lý hơn 13x.
-
+- `RULE-5.8 (Reasoning Model Thinking Token Management)`: Mô hình suy luận mặc định (Qwen 3.6 với `--reasoning-parser qwen3`), các tác vụ JSON (`extract_json`), HyDE (`max_tokens=512`), và tác vụ nền WebUI (`TASK_MODEL`) BẮT BUỘC vô hiệu hóa thinking (`enable_thinking: False` hoặc alias `local-instruct`). Tránh cạn kiệt token (`finish_reason: length`) và tăng tốc >13x.
