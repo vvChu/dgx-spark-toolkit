@@ -1,0 +1,1709 @@
+{
+  "components": {
+    "schemas": {
+      "ChatRequest": {
+        "properties": {
+          "context_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 5,
+            "title": "Context Limit"
+          },
+          "history": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": [],
+            "title": "History"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "vi",
+            "title": "Language"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "use_agentic": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": false,
+            "title": "Use Agentic"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
+      "ChatResponse": {
+        "description": "Response from /chat endpoint.",
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "context": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Context",
+            "type": "array"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "thought": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thought"
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage"
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "title": "ChatResponse",
+        "type": "object"
+      },
+      "ComplianceCheckRequest": {
+        "properties": {
+          "focus_area": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "BIM",
+            "title": "Focus Area"
+          },
+          "project_profile": {
+            "title": "Project Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_profile"
+        ],
+        "title": "ComplianceCheckRequest",
+        "type": "object"
+      },
+      "ConflictAnalysisRequest": {
+        "properties": {
+          "depth": {
+            "default": 1,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "doc_id": {
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "query"
+        ],
+        "title": "ConflictAnalysisRequest",
+        "type": "object"
+      },
+      "DiagramGenerationRequest": {
+        "description": "Request for generating visual SOP/QCVN workflow diagrams via Imagen 4 Fast.",
+        "properties": {
+          "sop_title": {
+            "title": "Sop Title",
+            "type": "string"
+          },
+          "style": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "technical_flowchart",
+            "title": "Style"
+          },
+          "workflow_steps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Workflow Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sop_title",
+          "workflow_steps"
+        ],
+        "title": "DiagramGenerationRequest",
+        "type": "object"
+      },
+      "DiagramGenerationResponse": {
+        "description": "Response containing generated diagram metadata and image prompt.",
+        "properties": {
+          "daily_quota_limit": {
+            "default": 25,
+            "title": "Daily Quota Limit",
+            "type": "integer"
+          },
+          "image_prompt": {
+            "title": "Image Prompt",
+            "type": "string"
+          },
+          "model": {
+            "default": "imagen-4-fast",
+            "title": "Model",
+            "type": "string"
+          },
+          "sop_title": {
+            "title": "Sop Title",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "sop_title",
+          "image_prompt"
+        ],
+        "title": "DiagramGenerationResponse",
+        "type": "object"
+      },
+      "EvaluationRequest": {
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "context": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Context",
+            "type": "array"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "answer",
+          "context"
+        ],
+        "title": "EvaluationRequest",
+        "type": "object"
+      },
+      "EvaluationResponse": {
+        "properties": {
+          "faithfulness": {
+            "title": "Faithfulness",
+            "type": "number"
+          },
+          "faithfulness_reason": {
+            "title": "Faithfulness Reason",
+            "type": "string"
+          },
+          "relevancy": {
+            "title": "Relevancy",
+            "type": "number"
+          },
+          "relevancy_reason": {
+            "title": "Relevancy Reason",
+            "type": "string"
+          },
+          "suggestions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggestions"
+          }
+        },
+        "required": [
+          "faithfulness",
+          "relevancy",
+          "faithfulness_reason",
+          "relevancy_reason"
+        ],
+        "title": "EvaluationResponse",
+        "type": "object"
+      },
+      "FeedbackRequest": {
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "is_positive": {
+            "title": "Is Positive",
+            "type": "boolean"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "answer",
+          "is_positive"
+        ],
+        "title": "FeedbackRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "SearchRequest": {
+        "properties": {
+          "authority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authority"
+          },
+          "doc_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Number"
+          },
+          "doc_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Type"
+          },
+          "limit": {
+            "default": 10,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "use_cache": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Cache"
+          },
+          "use_hyde": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Hyde"
+          },
+          "use_reranker": {
+            "default": true,
+            "title": "Use Reranker",
+            "type": "boolean"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SearchRequest",
+        "type": "object"
+      },
+      "SearchResponse": {
+        "description": "Response from /search and /retrieve endpoints.",
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "query": {
+            "default": "",
+            "title": "Query",
+            "type": "string"
+          },
+          "results": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SearchResultItem"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "rewritten_query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rewritten Query"
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace"
+          }
+        },
+        "title": "SearchResponse",
+        "type": "object"
+      },
+      "SearchResultItem": {
+        "additionalProperties": true,
+        "description": "A single document chunk returned from search.",
+        "properties": {
+          "authority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authority"
+          },
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "doc_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Id"
+          },
+          "doc_number": {
+            "default": "",
+            "title": "Doc Number",
+            "type": "string"
+          },
+          "doc_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Type"
+          },
+          "page": {
+            "default": 0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "score": {
+            "default": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "SearchResultItem",
+        "type": "object"
+      },
+      "StatsResponse": {
+        "description": "Response from /stats endpoint.",
+        "properties": {
+          "milvus_entities": {
+            "default": 0,
+            "title": "Milvus Entities",
+            "type": "integer"
+          },
+          "neo4j_docs": {
+            "default": 0,
+            "title": "Neo4J Docs",
+            "type": "integer"
+          },
+          "neo4j_rels": {
+            "default": 0,
+            "title": "Neo4J Rels",
+            "type": "integer"
+          },
+          "total_target": {
+            "default": 8870,
+            "title": "Total Target",
+            "type": "integer"
+          }
+        },
+        "title": "StatsResponse",
+        "type": "object"
+      },
+      "SyncStatusRequest": {
+        "properties": {
+          "doc_id": {
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "new_status": {
+            "pattern": "^(ACTIVE|OUTDATED|REPLACED|EXPIRED)$",
+            "title": "New Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "new_status"
+        ],
+        "title": "SyncStatusRequest",
+        "type": "object"
+      },
+      "SyncStatusResponse": {
+        "description": "Response from /admin/sync-status endpoint.",
+        "properties": {
+          "doc_id": {
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "new_status": {
+            "title": "New Status",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updates": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Updates",
+            "type": "object"
+          }
+        },
+        "required": [
+          "status",
+          "doc_id",
+          "new_status"
+        ],
+        "title": "SyncStatusResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "\n    Retrieval Augmented Generation service for BIM applications.\n    Enterprise Architecture Version.\n    ",
+    "title": "BIM RAG Engine API (Refactored)",
+    "version": "2.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Root",
+        "tags": [
+          "General"
+        ]
+      }
+    },
+    "/admin/audit": {
+      "get": {
+        "description": "Run comprehensive audit in-process and return formatted report.",
+        "operationId": "run_audit_admin_audit_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Admin-Key",
+            "required": true,
+            "schema": {
+              "title": "X-Admin-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Audit",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/admin/pipeline/{action}": {
+      "get": {
+        "description": "Run export postprocessor in-process with apply, revert, or dry-run.",
+        "operationId": "run_pipeline_admin_pipeline__action__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action",
+            "required": true,
+            "schema": {
+              "title": "Action",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Key",
+            "required": true,
+            "schema": {
+              "title": "X-Admin-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Pipeline",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/admin/quota-status": {
+      "get": {
+        "description": "Retrieve real-time Google AI Studio Free Tier model quotas & Redis tracking status.",
+        "operationId": "get_quota_status_admin_quota_status_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Admin-Key",
+            "required": true,
+            "schema": {
+              "title": "X-Admin-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Quota Status",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/admin/sync-status": {
+      "post": {
+        "description": "Cascading update of document validity status across all data stores.",
+        "operationId": "sync_document_status_admin_sync_status_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Admin-Key",
+            "required": true,
+            "schema": {
+              "title": "X-Admin-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync Document Status",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/admin/warmup": {
+      "post": {
+        "description": "Trigger manual model warmup at runtime (Zero-Downtime Recovery).",
+        "operationId": "trigger_warmup_admin_warmup_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Admin-Key",
+            "required": true,
+            "schema": {
+              "title": "X-Admin-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Warmup",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/analysis/compliance": {
+      "post": {
+        "description": "Check a project profile for compliance against active regulations.",
+        "operationId": "check_compliance_analysis_compliance_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComplianceCheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Compliance",
+        "tags": [
+          "Analysis"
+        ]
+      }
+    },
+    "/analysis/conflict": {
+      "post": {
+        "description": "Analyze regulatory changes and potential conflicts between a document and its predecessors.",
+        "operationId": "analyze_conflict_analysis_conflict_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConflictAnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyze Conflict",
+        "tags": [
+          "Analysis"
+        ]
+      }
+    },
+    "/analysis/generate-diagram": {
+      "post": {
+        "description": "Generate an SOP/QCVN workflow diagram prompt using Imagen 4 Fast (Free Tier 25/day limit).",
+        "operationId": "generate_diagram_analysis_generate_diagram_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagramGenerationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagramGenerationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Diagram",
+        "tags": [
+          "Analysis"
+        ]
+      }
+    },
+    "/chat": {
+      "post": {
+        "description": "Generate a chat response with retrieved legal document context.\nSupports Context Lake features: session memory, agentic retrieval.",
+        "operationId": "chat_endpoint_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat Endpoint",
+        "tags": [
+          "Generation"
+        ]
+      }
+    },
+    "/chat/stream": {
+      "post": {
+        "description": "Stream a chat response with retrieved legal document context via SSE.",
+        "operationId": "chat_stream_endpoint_chat_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat Stream Endpoint",
+        "tags": [
+          "Generation"
+        ]
+      }
+    },
+    "/evaluate": {
+      "post": {
+        "description": "Evaluate RAG answer quality using deep RAGEvaluator.",
+        "operationId": "evaluate_evaluate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluate",
+        "tags": [
+          "Monitoring",
+          "Monitoring"
+        ]
+      }
+    },
+    "/feedback": {
+      "post": {
+        "description": "Log user feedback.",
+        "operationId": "submit_feedback_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Feedback",
+        "tags": [
+          "Monitoring",
+          "Monitoring"
+        ]
+      }
+    },
+    "/graph/data": {
+      "get": {
+        "description": "Return nodes and links for the force-directed graph visualization.",
+        "operationId": "get_graph_data_graph_data_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Graph Data",
+        "tags": [
+          "Visualization",
+          "Visualization"
+        ]
+      }
+    },
+    "/graph/neighbors/{node_id}": {
+      "get": {
+        "description": "Expand a node — return its immediate neighbors and connecting edges.",
+        "operationId": "get_graph_neighbors_graph_neighbors__node_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Graph Neighbors",
+        "tags": [
+          "Visualization",
+          "Visualization"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Real health check — verifies Milvus and Neo4j connectivity.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "General"
+        ]
+      }
+    },
+    "/health/circuits": {
+      "get": {
+        "description": "Health status of all LLM model circuit breakers.\n\nReturns state (closed/open/half_open), failure count, and recovery\nstatus for each model in the OCR fallback chain.",
+        "operationId": "circuit_breaker_health_health_circuits_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Circuit Breaker Health",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/health/hitl": {
+      "get": {
+        "description": "HITL review queue status — shows pending expert review count.",
+        "operationId": "hitl_health_health_hitl_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Hitl Health",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/health/pipeline": {
+      "get": {
+        "description": "Health check for the ingestion pipeline subsystems (Redis queue, DB, state).",
+        "operationId": "pipeline_health_health_pipeline_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Pipeline Health",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/preview": {
+      "get": {
+        "description": "Render a PDF page as a base64-encoded PNG image.",
+        "operationId": "preview_page_preview_get",
+        "parameters": [
+          {
+            "description": "Document ID",
+            "in": "query",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "description": "Document ID",
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Page",
+        "tags": [
+          "Visualization",
+          "Visualization"
+        ]
+      }
+    },
+    "/search": {
+      "post": {
+        "description": "Perform semantic search with optional reranking and graph augmentation.",
+        "operationId": "search_endpoint_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Endpoint",
+        "tags": [
+          "Retrieval"
+        ]
+      }
+    },
+    "/stats": {
+      "get": {
+        "description": "Aggregate stats from Milvus + Neo4j for the dashboard header.",
+        "operationId": "get_stats_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Stats",
+        "tags": [
+          "Monitoring",
+          "Monitoring"
+        ]
+      }
+    },
+    "/traces/recent": {
+      "get": {
+        "description": "Return the most recent query traces.",
+        "operationId": "get_recent_traces_traces_recent_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Recent Traces",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/traces/session/{session_id}": {
+      "get": {
+        "description": "Return traces for a specific session.",
+        "operationId": "get_session_traces_traces_session__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Traces",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "General service information",
+      "name": "General"
+    },
+    {
+      "description": "Vector search and reranking operations",
+      "name": "Retrieval"
+    },
+    {
+      "description": "LLM interaction and RAG",
+      "name": "Generation"
+    },
+    {
+      "description": "Collection and document management",
+      "name": "Admin"
+    },
+    {
+      "description": "Endpoints for graph and document preview",
+      "name": "Visualization"
+    },
+    {
+      "description": "Service monitoring and statistics",
+      "name": "Monitoring"
+    }
+  ]
+}

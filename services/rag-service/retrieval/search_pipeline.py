@@ -282,87 +282,97 @@ class SearchPipeline:
         )
         return await self.execute(ctx)
 
-    async def execute(self, ctx: SearchContext) -> Dict[str, Any]:
+    def _init_search_context(self, ctx: SearchContext) -> None:
         if ctx.ai_client is None:
             ctx.ai_client = self.ai_client
         if ctx.tracer is None:
             ctx.tracer = QueryTracer(ctx.raw_query, session_id=ctx.session_id)
 
+    def _finalize_cached_response(self, ctx: SearchContext) -> Dict[str, Any]:
+        return {
+            "results": ctx.top_results,
+            "cached": True,
+            "trace": ctx.tracer.finalize(cache_hit=True, result_count=len(ctx.top_results)),
+            "query_intent": ctx.intent.value if ctx.intent else "GENERAL",
+            "search_grounding_triggered": ctx.search_grounding_triggered,
+            "hops": ctx.hops,
+            "sub_queries": ctx.sub_queries,
+            "reasoning": ctx.reasoning,
+        }
+
+    async def _run_retrieval_and_ranking(self, ctx: SearchContext) -> None:
+        is_agentic = (ctx.use_agentic is True) or (ctx.use_agentic is None and ctx.intent == QueryIntent.COMPLEX)
+        if is_agentic:
+            await self._stage_agentic_multihop(ctx)
+        else:
+            await self._stage_rewrite_and_hyde(ctx)
+            await self._stage_hybrid_search(ctx)
+
+        await self._stage_rerank_and_score(ctx)
+
+    def _check_search_grounding(self, ctx: SearchContext) -> None:
+        max_score = max((r.get("score", 0.0) for r in ctx.top_results), default=0.0)
+        if not ctx.top_results or max_score < 0.65:
+            ctx.search_grounding_triggered = True
+            logger.info(
+                f"[SEARCH-GROUNDING] Low RAG confidence ({max_score:.2f} < 0.65). "
+                f"Triggered 1,500 RPD Search Grounding Fallback for query: {ctx.raw_query}"
+            )
+
+    def _finalize_fresh_response(self, ctx: SearchContext) -> Dict[str, Any]:
+        if ctx.use_cache and ctx.top_results:
+            _semantic_cache.get().set(
+                ctx.search_query or ctx.raw_query,
+                ctx.query_vector_np,
+                ctx.top_results,
+                filter_key=ctx.cache_filter_key,
+            )
+            exact_key = compute_sha256_cache_key(
+                ctx.raw_query,
+                filter_expr=ctx.filter_expr,
+                limit=ctx.limit,
+                use_reranker=ctx.use_reranker,
+            )
+            _tier0_cache.get().set(exact_key, ctx.top_results)
+
+        if self._sampler_hook:
+            try:
+                self._sampler_hook(ctx.raw_query, ctx.top_results, ctx.session_id or "")
+            except Exception as _hitl_err:
+                logger.debug(f"Sampler hook failed: {_hitl_err}")
+
+        trace_data = ctx.tracer.finalize(result_count=len(ctx.top_results))
+        return {
+            "results": ctx.top_results,
+            "trace": trace_data,
+            "query_intent": ctx.intent.value if ctx.intent else "GENERAL",
+            "search_grounding_triggered": ctx.search_grounding_triggered,
+            "hops": ctx.hops,
+            "sub_queries": ctx.sub_queries,
+            "reasoning": ctx.reasoning,
+        }
+
+    async def execute(self, ctx: SearchContext) -> Dict[str, Any]:
+        self._init_search_context(ctx)
+
         with SEARCH_LATENCY.time():
             # Step 1: Intent & Cache Check
             if await self._stage_intent_and_cache(ctx):
-                return {
-                    "results": ctx.top_results,
-                    "cached": True,
-                    "trace": ctx.tracer.finalize(cache_hit=True, result_count=len(ctx.top_results)),
-                    "query_intent": ctx.intent.value if ctx.intent else "GENERAL",
-                    "search_grounding_triggered": ctx.search_grounding_triggered,
-                    "hops": ctx.hops,
-                    "sub_queries": ctx.sub_queries,
-                    "reasoning": ctx.reasoning,
-                }
+                return self._finalize_cached_response(ctx)
 
-            is_agentic = (ctx.use_agentic is True) or (ctx.use_agentic is None and ctx.intent == QueryIntent.COMPLEX)
-
-            if is_agentic:
-                await self._stage_agentic_multihop(ctx)
-            else:
-                # Step 2: Query Rewrite & HyDE
-                await self._stage_rewrite_and_hyde(ctx)
-
-                # Step 3: Hybrid Search
-                await self._stage_hybrid_search(ctx)
-
-            # Step 4: Rerank & Score
-            await self._stage_rerank_and_score(ctx)
+            # Step 2-4: Retrieve and Rank
+            await self._run_retrieval_and_ranking(ctx)
 
             # Step 5: Graph RAG & Timeline Enrichment
             await self._stage_graph_enrichment(ctx)
 
-            # Step 6: Search Grounding Fallback Check (1,500 RPD Free Quota Pool)
-            max_score = max((r.get("score", 0.0) for r in ctx.top_results), default=0.0)
-            if not ctx.top_results or max_score < 0.65:
-                ctx.search_grounding_triggered = True
-                logger.info(
-                    f"[SEARCH-GROUNDING] Low RAG confidence ({max_score:.2f} < 0.65). "
-                    f"Triggered 1,500 RPD Search Grounding Fallback for query: {ctx.raw_query}"
-                )
+            # Step 6: Search Grounding Fallback Check
+            self._check_search_grounding(ctx)
 
-            # Cache final results
-            if ctx.use_cache and ctx.top_results:
-                _semantic_cache.get().set(
-                    ctx.search_query or ctx.raw_query,
-                    ctx.query_vector_np,
-                    ctx.top_results,
-                    filter_key=ctx.cache_filter_key,
-                )
-                exact_key = compute_sha256_cache_key(
-                    ctx.raw_query,
-                    filter_expr=ctx.filter_expr,
-                    limit=ctx.limit,
-                    use_reranker=ctx.use_reranker,
-                )
-                _tier0_cache.get().set(exact_key, ctx.top_results)
+            # Step 7: Store Cache & Finalize
+            return self._finalize_fresh_response(ctx)
 
-            # HITL Sampling
-            if self._sampler_hook:
-                try:
-                    self._sampler_hook(ctx.raw_query, ctx.top_results, ctx.session_id or "")
-                except Exception as _hitl_err:
-                    logger.debug(f"Sampler hook failed: {_hitl_err}")
-
-            trace_data = ctx.tracer.finalize(result_count=len(ctx.top_results))
-            return {
-                "results": ctx.top_results,
-                "trace": trace_data,
-                "query_intent": ctx.intent.value if ctx.intent else "GENERAL",
-                "search_grounding_triggered": ctx.search_grounding_triggered,
-                "hops": ctx.hops,
-                "sub_queries": ctx.sub_queries,
-                "reasoning": ctx.reasoning,
-            }
-
-    async def _stage_intent_and_cache(self, ctx: SearchContext) -> bool:
+    def _prepare_intent_and_filters(self, ctx: SearchContext) -> None:
         intent_result = classify_query(ctx.raw_query)
         ctx.intent = intent_result.intent
         QUERY_INTENT_COUNTER.labels(intent=ctx.intent.value).inc()
@@ -384,23 +394,52 @@ class SearchPipeline:
         ctx.filter_expr = " and ".join(filters) if filters else None
         ctx.cache_filter_key = ctx.filter_expr or ""
 
-        # Tier 0 Exact Query Cache Check (< 1 ms, pre-embedding)
-        if ctx.use_cache:
-            ctx.tracer.start_step("tier0_cache_check")
+    def _check_tier0_cache(self, ctx: SearchContext) -> bool:
+        if not ctx.use_cache:
+            return False
+        ctx.tracer.start_step("tier0_cache_check")
+        exact_key = compute_sha256_cache_key(
+            ctx.raw_query,
+            filter_expr=ctx.filter_expr,
+            limit=ctx.limit,
+            use_reranker=ctx.use_reranker,
+        )
+        cached_results = _tier0_cache.get().get(exact_key)
+        if cached_results:
+            SEMANTIC_CACHE_HITS.inc()
+            ctx.top_results = cached_results
+            ctx.cached_hit = True
+            ctx.tracer.end_step(result="exact_hit", tier=0)
+            return True
+        ctx.tracer.end_step(result="miss")
+        return False
+
+    def _check_semantic_cache(self, ctx: SearchContext) -> bool:
+        if not ctx.use_cache:
+            return False
+        ctx.tracer.start_step("cache_check")
+        cached = _semantic_cache.get().get(ctx.raw_query, ctx.query_vector_np, filter_key=ctx.cache_filter_key)
+        if cached:
+            SEMANTIC_CACHE_HITS.inc()
             exact_key = compute_sha256_cache_key(
                 ctx.raw_query,
                 filter_expr=ctx.filter_expr,
                 limit=ctx.limit,
                 use_reranker=ctx.use_reranker,
             )
-            cached_results = _tier0_cache.get().get(exact_key)
-            if cached_results:
-                SEMANTIC_CACHE_HITS.inc()
-                ctx.top_results = cached_results
-                ctx.cached_hit = True
-                ctx.tracer.end_step(result="exact_hit", tier=0)
-                return True
-            ctx.tracer.end_step(result="miss")
+            _tier0_cache.get().set(exact_key, cached)
+            ctx.tracer.end_step(result="hit")
+            ctx.top_results = cached
+            ctx.cached_hit = True
+            return True
+        ctx.tracer.end_step(result="miss")
+        return False
+
+    async def _stage_intent_and_cache(self, ctx: SearchContext) -> bool:
+        self._prepare_intent_and_filters(ctx)
+
+        if self._check_tier0_cache(ctx):
+            return True
 
         # Initial embedding for cache lookup
         ctx.tracer.start_step("embed")
@@ -412,25 +451,7 @@ class SearchPipeline:
         ctx.sparse_query = emb.get("sparse", {})
         ctx.tracer.end_step(model="bge-m3")
 
-        if ctx.use_cache:
-            ctx.tracer.start_step("cache_check")
-            cached = _semantic_cache.get().get(ctx.raw_query, ctx.query_vector_np, filter_key=ctx.cache_filter_key)
-            if cached:
-                SEMANTIC_CACHE_HITS.inc()
-                exact_key = compute_sha256_cache_key(
-                    ctx.raw_query,
-                    filter_expr=ctx.filter_expr,
-                    limit=ctx.limit,
-                    use_reranker=ctx.use_reranker,
-                )
-                _tier0_cache.get().set(exact_key, cached)
-                ctx.tracer.end_step(result="hit")
-                ctx.top_results = cached
-                ctx.cached_hit = True
-                return True
-            ctx.tracer.end_step(result="miss")
-
-        return False
+        return self._check_semantic_cache(ctx)
 
     async def _stage_rewrite_and_hyde(self, ctx: SearchContext):
         ctx.tracer.start_step("rewrite")
@@ -471,8 +492,7 @@ class SearchPipeline:
         ctx.raw_hits = await self._retrieve_raw_hits(ctx.query_vector, ctx.sparse_query, limit=initial_limit, expr=ctx.filter_expr)
         ctx.tracer.end_step(source="milvus", hits=len(ctx.raw_hits))
 
-    async def _stage_agentic_multihop(self, ctx: SearchContext):
-        """Execute multi-hop plan-retrieve-reflect loop inside SearchPipeline."""
+    async def _agentic_plan_subqueries(self, ctx: SearchContext) -> None:
         ctx.tracer.start_step("agentic_plan")
         try:
             plan = await ctx.ai_client.extract_json(
@@ -491,10 +511,9 @@ class SearchPipeline:
             ctx.sub_queries = [ctx.raw_query]
         ctx.tracer.end_step(sub_queries=ctx.sub_queries, reasoning=ctx.reasoning)
 
-        # Hop 1: Parallel sub-query retrieval
+    async def _agentic_retrieve_hop1(self, ctx: SearchContext, initial_limit: int) -> tuple[list, set]:
         ctx.tracer.start_step("agentic_retrieve_hop1")
         ctx.hops = 1
-        initial_limit = min(ctx.limit * 5 if ctx.use_reranker else ctx.limit, 40)
 
         async def _fetch_for_sub_query(sub_q: str):
             _, dense_vec, sparse_vec = await self._embed_query(sub_q)
@@ -515,53 +534,61 @@ class SearchPipeline:
 
         ctx.raw_hits = all_hits
         ctx.tracer.end_step(hop=1, unique_hits=len(all_hits))
+        return all_hits, seen_texts
 
-        # Hop 2: Reflection & Follow-up (if necessary)
-        if all_hits and len(all_hits) > 0:
-            ctx.tracer.start_step("agentic_evaluate")
-            preview_chunks = []
-            for hit in all_hits[:8]:
-                ent = _get_hit_entity(hit)
-                doc_num = ent.get("doc_number", "")
-                txt = ent.get("text", "")[:300]
-                preview_chunks.append(f"[{doc_num}] {txt}")
-            context_preview = "\n".join(preview_chunks)
+    async def _agentic_reflect_and_hop2(self, ctx: SearchContext, all_hits: list, seen_texts: set, initial_limit: int) -> None:
+        if not all_hits:
+            return
 
+        ctx.tracer.start_step("agentic_evaluate")
+        preview_chunks = [
+            f"[{_get_hit_entity(h).get('doc_number', '')}] {_get_hit_entity(h).get('text', '')[:300]}"
+            for h in all_hits[:8]
+        ]
+        context_preview = "\n".join(preview_chunks)
+
+        try:
+            eval_res = await ctx.ai_client.extract_json(
+                _AGENTIC_EVAL_PROMPT.format(query=ctx.raw_query, context=context_preview),
+                model="claude-haiku-4",
+                model_chain=["claude-haiku-4", "rag-core"],
+                timeout=3.0,
+            )
+            ctx.is_sufficient = eval_res.get("is_sufficient", True)
+            ctx.confidence = float(eval_res.get("confidence", 1.0))
+            follow_up = eval_res.get("follow_up_query", "")
+        except Exception as e:
+            logger.warning(f"Agentic evaluation failed: {e}")
+            ctx.is_sufficient = True
+            ctx.confidence = 1.0
+            follow_up = ""
+
+        ctx.tracer.end_step(is_sufficient=ctx.is_sufficient, confidence=ctx.confidence)
+
+        if not ctx.is_sufficient and ctx.confidence < 0.70 and follow_up and follow_up != ctx.raw_query:
+            ctx.hops = 2
+            ctx.tracer.start_step("agentic_retrieve_hop2")
             try:
-                eval_res = await ctx.ai_client.extract_json(
-                    _AGENTIC_EVAL_PROMPT.format(query=ctx.raw_query, context=context_preview),
-                    model="claude-haiku-4",
-                    model_chain=["claude-haiku-4", "rag-core"],
-                    timeout=3.0,
-                )
-                ctx.is_sufficient = eval_res.get("is_sufficient", True)
-                ctx.confidence = float(eval_res.get("confidence", 1.0))
-                follow_up = eval_res.get("follow_up_query", "")
+                _, dense_vec, sparse_vec = await self._embed_query(follow_up)
+                hop2_hits = await self._retrieve_raw_hits(dense_vec, sparse_vec, limit=initial_limit, expr=ctx.filter_expr)
+                for hit in hop2_hits:
+                    txt = _get_hit_entity(hit).get("text", "")[:200]
+                    if txt and txt not in seen_texts:
+                        seen_texts.add(txt)
+                        all_hits.append(hit)
+                ctx.sub_queries.append(follow_up)
+                ctx.raw_hits = all_hits
+                ctx.tracer.end_step(hop=2, added_hits=len(hop2_hits))
             except Exception as e:
-                logger.warning(f"Agentic evaluation failed: {e}")
-                ctx.is_sufficient = True
-                ctx.confidence = 1.0
-                follow_up = ""
+                logger.warning(f"Hop 2 retrieval failed: {e}")
+                ctx.tracer.end_step(hop=2, error=str(e))
 
-            ctx.tracer.end_step(is_sufficient=ctx.is_sufficient, confidence=ctx.confidence)
-
-            if not ctx.is_sufficient and ctx.confidence < 0.70 and follow_up and follow_up != ctx.raw_query:
-                ctx.hops = 2
-                ctx.tracer.start_step("agentic_retrieve_hop2")
-                try:
-                    _, dense_vec, sparse_vec = await self._embed_query(follow_up)
-                    hop2_hits = await self._retrieve_raw_hits(dense_vec, sparse_vec, limit=initial_limit, expr=ctx.filter_expr)
-                    for hit in hop2_hits:
-                        txt = _get_hit_entity(hit).get("text", "")[:200]
-                        if txt and txt not in seen_texts:
-                            seen_texts.add(txt)
-                            all_hits.append(hit)
-                    ctx.sub_queries.append(follow_up)
-                    ctx.raw_hits = all_hits
-                    ctx.tracer.end_step(hop=2, added_hits=len(hop2_hits))
-                except Exception as e:
-                    logger.warning(f"Hop 2 retrieval failed: {e}")
-                    ctx.tracer.end_step(hop=2, error=str(e))
+    async def _stage_agentic_multihop(self, ctx: SearchContext):
+        """Execute multi-hop plan-retrieve-reflect loop inside SearchPipeline."""
+        await self._agentic_plan_subqueries(ctx)
+        initial_limit = min(ctx.limit * 5 if ctx.use_reranker else ctx.limit, 40)
+        all_hits, seen_texts = await self._agentic_retrieve_hop1(ctx, initial_limit)
+        await self._agentic_reflect_and_hop2(ctx, all_hits, seen_texts, initial_limit)
 
     async def _stage_rerank_and_score(self, ctx: SearchContext):
         if not ctx.raw_hits:
@@ -612,30 +639,27 @@ class SearchPipeline:
                 ent = _get_hit_entity(hit)
                 ctx.top_results.append(_build_result_item(ent, ent.get("text", ""), _get_hit_score(hit)))
 
-    async def _stage_graph_enrichment(self, ctx: SearchContext):
-        if not ctx.top_results:
-            return
-
-        # Graph Status Injection
-        unique_sources = list(set(r["source"] for r in ctx.top_results if r.get("source")))
+    async def _inject_graph_status(self, top_results: list[dict]) -> None:
+        unique_sources = list(set(r["source"] for r in top_results if r.get("source")))
         status_map = await self.neo4j.find_document_status(unique_sources)
-        for r in ctx.top_results:
+        for r in top_results:
             status = status_map.get(r["source"], "ACTIVE")
             if status == "OUTDATED":
                 r["text"] = f"[WARNING: THIS DOCUMENT IS OUTDATED/REPLACED] {r['text']}"
             r["status"] = status
 
-        # Parent-Child context expansion
-        parent_ids = list(set(r["parent_id"] for r in ctx.top_results if r.get("chunk_type") == "child" and r.get("parent_id")))
-        if parent_ids:
-            parent_results = await self.milvus.get_parent_chunks(parent_ids)
-            parent_map = {p["parent_id"]: p["text"] for p in parent_results}
-            for r in ctx.top_results:
-                if r.get("chunk_type") == "child" and r["parent_id"] in parent_map:
-                    r["child_text"] = r["text"]
-                    r["text"] = parent_map[r["parent_id"]]
+    async def _expand_parent_child_context(self, top_results: list[dict]) -> None:
+        parent_ids = list(set(r["parent_id"] for r in top_results if r.get("chunk_type") == "child" and r.get("parent_id")))
+        if not parent_ids:
+            return
+        parent_results = await self.milvus.get_parent_chunks(parent_ids)
+        parent_map = {p["parent_id"]: p["text"] for p in parent_results}
+        for r in top_results:
+            if r.get("chunk_type") == "child" and r["parent_id"] in parent_map:
+                r["child_text"] = r["text"]
+                r["text"] = parent_map[r["parent_id"]]
 
-        # Graph RAG Timeline Traversal
+    async def _enrich_graph_timeline(self, ctx: SearchContext) -> None:
         ctx.tracer.start_step("graph_timeline")
         timeline_count = 0
         if self.graph_timeline is not None:
@@ -643,15 +667,7 @@ class SearchPipeline:
                 doc_summaries: Dict[str, Optional[str]] = {}
                 for r in ctx.top_results:
                     doc_num = r.get("doc_number")
-                    if not doc_num:
-                        continue
-                    if doc_num in doc_summaries:
-                        cached_sum = doc_summaries[doc_num]
-                        if cached_sum:
-                            r["legal_timeline_summary"] = cached_sum
-                            r["text"] = f"[LEGAL TIMELINE]: {cached_sum}\n\n[CONTENT]: {r['text']}"
-                        continue
-                    if timeline_count >= 2:
+                    if not doc_num or doc_num in doc_summaries or timeline_count >= 2:
                         continue
                     timeline = await self.graph_timeline.get_legal_timeline(doc_num)
                     if timeline and len(timeline) > 1:
@@ -667,6 +683,13 @@ class SearchPipeline:
             except Exception as e:
                 logger.warning(f"Graph timeline enrichment failed gracefully: {e}")
         ctx.tracer.end_step(timelines_generated=timeline_count)
+
+    async def _stage_graph_enrichment(self, ctx: SearchContext):
+        if not ctx.top_results:
+            return
+        await self._inject_graph_status(ctx.top_results)
+        await self._expand_parent_child_context(ctx.top_results)
+        await self._enrich_graph_timeline(ctx)
 
 
 class InMemorySearchPipeline(SearchPipeline):

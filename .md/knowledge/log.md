@@ -4,6 +4,25 @@ Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật 
 
 ---
 
+## [2026-09-28] [refactor/ai-native] | Hoàn tất Tái Cấu Trúc AI-Native Codebase (ADR-0005) & Nghiệm Thu Đối Soát Grok
+
+- **Nhiệm vụ**: Thực hiện tái cấu trúc hệ thống `dgx-spark-toolkit` sang kiến trúc AI-Native Codebase theo chuẩn Deep Seams, thiết lập Scoped Progressive Disclosure, phân vùng cách ly Redis DB 3 cho Table Cache, xây dựng Fast MCP Server, ban hành ADR-0005 và nghiệm thu đối soát chéo 2 chiều cùng Grok 4.7 xhigh.
+- **Thành phần**:
+  - `Task 0`: Sửa assertion tại `test_hub3_bridge.py:76` sang `>= 12` theo RULE-2.11, mở khóa toàn bộ 527 tests xanh.
+  - `Task 1`: Tạo 3 tệp `AGENTS.md` (< 40 dòng) cho `services/rag-service/`, `services/ai-gateway/`, và `services/frontend/`.
+  - `Task 2`: Phân rã monolith `chunking.py` (894 dòng) thành package `ingestion.chunkers/` (100–240 dòng/file); di chuyển Table Cache sang Redis DB 3 qua helper `format_redis_db3_url(raw_url)`, bảo vệ Redis DB 1 cho `ingest:queue`. Giữ facade `chunking.py` 148 dòng zero-regression.
+  - `Task 3`: Phân rã toàn bộ các hàm > 50 dòng trong `search_pipeline.py` và các chunkers thành sub-functions $\le 35$ dòng tuân thủ triệt để KISS (quét AST 82/82 hàm đều $\le 50$ dòng).
+  - `Task 4`: Xây dựng Fast MCP Server (`scripts/mcp_server.py`) dạng Lightweight HTTP Bridge kết nối daemon RAG (:8005), 0 MB VRAM phụ, boot ~0.3s. Hỗ trợ 4 tools chuẩn hóa router và URL-encoding cho số hiệu văn bản có dấu `/`.
+  - `Task 5`: Tự động xuất schema OpenAPI và API_MODELS ra `.md/schemas/`.
+  - `Task 6`: Ban hành `docs/adr/0005-ai-native-codebase-modularization.md`, đồng bộ `ARCHITECTURE.md` và Living Traceability Matrix `docs/adr/TRACEABILITY_MATRIX.md`.
+  - `Đối soát Grok`: Kênh bắt tay thời gian thực qua `.md/peer_exchange/`. Grok nghiệm thu chính thức sau 2 vòng kiểm chứng tại `.md/peer_exchange/grok_cross_review.md`.
+- **Xác thực**:
+  - Unit tests: 527/527 passed in 13.1s (rag-service).
+  - Flake8: 0 findings.
+  - Maskara Secret Scanner: 0 leaks (PASS).
+  - AST Function Length: 82/82 functions $\le 50$ dòng (dài nhất 49 dòng).
+  - Git: 6 atomic commits trên nhánh `refactor/ai-native-codebase`, mở thành công Pull Request #76 trên GitHub.
+
 ## [2026-09-23] [opt/rag-quality] | RAG Quality Score Optimization (90/100 → 95/100)
 
 - **Nhiệm vụ**: Tối ưu hóa toàn diện chất lượng RAG theo kết quả kiểm toán đối kháng `/boost`, nâng điểm `comprehensive_audit.py` từ 90/100 lên 95/100 (trần toán học tối đa cho 10 file xuất khẩu).

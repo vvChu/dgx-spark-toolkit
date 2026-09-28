@@ -42,8 +42,10 @@ async def fetch_completion(client: AsyncOpenAI, model: str, req_id: int, prompt:
         async for chunk in response:
             if first_token_time is None:
                 first_token_time = time.time()
-            if chunk.choices and chunk.choices[0].delta.content:
-                token_count += 1
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta.content or getattr(delta, "reasoning", None) or getattr(delta, "reasoning_content", None):
+                    token_count += 1
 
         end_time = time.time()
 

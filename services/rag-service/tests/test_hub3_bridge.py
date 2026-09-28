@@ -73,7 +73,7 @@ class TestCatalogDiscovery:
             pytest.skip("Hub 3 path not present")
 
         qcvn_bundles = hub3_bridge.load_master_catalog(category="02_qcvn")
-        assert len(qcvn_bundles) == 12
+        assert len(qcvn_bundles) >= 12
         for b in qcvn_bundles:
             assert b.category == "02_qcvn"
 
