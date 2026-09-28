@@ -1037,7 +1037,6 @@ model_list:
       custom_llm_provider: "openai"
       api_base: os.environ/GATEWAY_LOCAL_URL
       api_key: "unused"
-      tool_call_parser: "openai"
       rpm: 600
       tpm: 10000000
       timeout: 900
@@ -1600,6 +1599,7 @@ router_settings:
     "gemini-flash-latest": "gemini-3.8-flash"
     "gemini-reasoning-latest": "gemini-3.8-flash-high"
     "embedding-default": "gemini-embedding-2"
+    "text-light-gemma": "text-gemma-12b"
     "claude-haiku-4-5-20251001": "claude-haiku-4-5"
     "claude-3-5-haiku-20241022": "claude-haiku-4-5"
     "claude-3-5-haiku-latest": "claude-haiku-4-5"
@@ -1750,6 +1750,7 @@ litellm_settings:
     "gemini-flash-latest": "gemini-3.8-flash"
     "gemini-reasoning-latest": "gemini-3.8-flash-high"
     "embedding-default": "gemini-embedding-2"
+    "text-light-gemma": "text-gemma-12b"
   success_callback: ["prometheus", "postgresql"]
   failure_callback: ["prometheus", "postgresql"]
   callbacks: ["custom_callbacks.gemini_corrector_instance"]

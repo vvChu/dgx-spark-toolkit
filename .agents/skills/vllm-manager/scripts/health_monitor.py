@@ -16,7 +16,7 @@ sys.path.append(os.path.join(skills_dir, "shared"))
 from vllm_client import VLLM_API_BASE, GATEWAY_API_KEY, chat_completion
 
 VLLM_ENDPOINTS = [
-    {"name": "Qwen 3.5 35B", "port": 8004, "container": "qwen36b"},
+    {"name": "Qwen 3.6 35B", "port": 8004, "container": "qwen36b"},
 ]
 
 
@@ -55,6 +55,7 @@ def get_vllm_metrics(port: int) -> dict:
             if line.startswith("#"):
                 continue
             for key in ["vllm:num_requests_running", "vllm:num_requests_waiting", 
+                        "vllm:kv_cache_usage_perc", "vllm:generation_tokens_total",
                         "vllm:gpu_cache_usage_perc", "vllm:avg_generation_throughput_toks_per_s"]:
                 if line.startswith(key):
                     parts = line.split(" ")

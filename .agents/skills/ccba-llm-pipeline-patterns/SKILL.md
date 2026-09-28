@@ -27,6 +27,9 @@ triggers:
 - self-correction
 - map reduce
 - multi turn memory
+- thinking token
+- reasoning starvation
+- local-instruct
 ---
 
 # LLM Pipeline Patterns
@@ -526,7 +529,8 @@ Khi triển khai các mô hình lý luận (Reasoning LLMs / Hybrid MoE như Qwe
 
 ### Triển khai Mẫu & Quy Tắc RULE-5.8 (Reasoning Model Thinking Token Management)
 
-1. **Forced Non-Thinking Flag trong Python Client**:
+1. **Forced Non-Thinking Flag trong Python Client & Seams**:
+   Áp dụng trực tiếp trong các Seam sản xuất như `services/rag-service/core/ai_gateway_client.py` (`extract_json()`) và `services/rag-service/retrieval/hyde.py`:
    ```python
    # Khi gọi API Gateway / vLLM cho các hàm trích xuất JSON hoặc HyDE
    response = await client.chat.completions.create(
@@ -540,21 +544,34 @@ Khi triển khai các mô hình lý luận (Reasoning LLMs / Hybrid MoE như Qwe
    ```
 
 2. **Role-Based Aliases tại API Gateway (LiteLLM)**:
-   - **`local-instruct`**: Trỏ về local model nhưng cố định tham số `enable_thinking: false` trong `model_info` hoặc gateway params. Dùng cho: `extract_json()`, HyDE queries, classification, titling, translation.
+   - **`local-instruct`**: Trỏ về local model nhưng cố định tham số `enable_thinking: false` trong `model_info` hoặc gateway params. Dùng cho: `extract_json()`, HyDE queries, classification, titling, translation, OCR.
    - **`local-coder` / `rag-core`**: Bật đầy đủ `qwen3` reasoning parser và `qwen3_coder` tool parser. Dùng cho: Code generation, complex multi-step planning, audit, verification.
 
-3. **Defensive Pipeline Fallback (Auto-Recovery)**:
+3. **Defensive Pipeline Fallback (Auto-Recovery & Cache-Bust Guard)**:
+   > [!WARNING]
+   > LiteLLM Redis Cache (DB 0) **không** đưa `chat_template_kwargs` vào cache key. Khi một prompt bị starvation dưới thinking bật, lần retry sau BẮT BUỘC gửi kèm `caching: false` (hoặc nonce) để tránh nhận lại response rỗng từ cache.
    ```python
-   # Cơ chế tự phục hồi khi gặp lỗi cạn token vì thinking
-   if response.choices[0].finish_reason == "length" and not response.choices[0].message.content:
-       logger.warning("Thinking token starvation detected! Retrying with enable_thinking=False...")
-       return await call_llm(prompt, enable_thinking=False, max_tokens=max_tokens * 2)
+   # Cơ chế tự phục hồi 1 lần duy nhất với cờ chống tái nhập (re-entry guard)
+   async def safe_call_llm(prompt: str, is_retry: bool = False) -> str:
+       resp = await call_llm(prompt)
+       choice = resp.choices[0]
+       # Phát hiện thinking token starvation
+       if choice.finish_reason == "length" and not choice.message.content and not is_retry:
+           logger.warning("Thinking token starvation detected! Retrying once with enable_thinking=False and cache bypass...")
+           return await call_llm(
+               prompt,
+               enable_thinking=False,
+               caching=False,  # Bypass LiteLLM Redis cache trap
+               is_retry=True,  # Re-entry guard (tối đa 1 lần)
+           )
+       return choice.message.content or ""
    ```
 
 ### Key Invariants
 1. **Never Prompt-Beg**: Tuyệt đối không phụ thuộc vào văn xuôi "không suy nghĩ" trong system prompt. BẮT BUỘC tắt thinking từ tầng chat template (`enable_thinking: False`) hoặc định tuyến qua alias `local-instruct`.
-2. **Strict Extraction Budget**: Mọi hàm bóc tách dữ liệu có cấu trúc có `max_tokens <= 512` phải vô hiệu hóa thinking để bảo toàn trọn vẹn ngân sách token cho payload JSON.
+2. **Task-Type Scoped Thinking Isolation**: Ranh giới bật/tắt thinking phải dựa trên **hợp đồng loại tác vụ** (structured JSON extraction, HyDE, OCR, titling/tagging) thay vì chỉ nhìn vào ngưỡng token số học đơn thuần.
 3. **Decoupled Gateway Contract**: Application code chỉ được gọi thông qua các alias ngữ nghĩa (`local-instruct`, `rag-core`), không hardcode tên checkpoint vật lý.
+4. **Cache-Bust on Starvation Recovery**: Mọi cơ chế retry khắc phục starvation bắt buộc phải gắn kèm cờ bypass cache hoặc nonce để ngăn chặn hiệu ứng ngộ độc cache rỗng 3600 giây từ Redis.
 
 ---
 
