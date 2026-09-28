@@ -8,7 +8,7 @@ import datetime
 import os
 import shutil
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 try:
     import docker
 except ImportError:
@@ -18,7 +18,7 @@ import requests
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-spark-secure-key-2026")
-GATEWAY_PROXY_URL = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045")
+GATEWAY_PROXY_URL = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045")  # ccba:allow-raw-ip
 GATEWAY_PROXY_KEY = os.environ.get("GATEWAY_PROXY_KEY", "")
 GATEWAY_ADMIN_PASSWORD = os.environ.get("GATEWAY_ADMIN_PASSWORD") or GATEWAY_PROXY_KEY
 
@@ -253,6 +253,239 @@ def extract_validation_url(account_data: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+# --- PHASE 2: RESILIENT AUTO-HEALING HELPERS ---
+_healer_memory_first_seen: Dict[str, float] = {}
+_healer_memory_attempts: Dict[str, int] = {}
+_healer_memory_last_attempt: Dict[str, float] = {}
+
+
+def _get_redis_client():
+    """Gets Redis client connection for persistent state tracking."""
+    redis_url = os.getenv("REDIS_URL", "redis://litellm-redis:6379/1")
+    try:
+        import redis
+        return redis.Redis.from_url(redis_url, socket_timeout=2)
+    except Exception:
+        return None
+
+
+def get_account_lockout_info(acc_id: str) -> Tuple[float, int, float]:
+    """Retrieves (first_seen_time, attempts_24h, last_attempt_time) for an account."""
+    r = _get_redis_client()
+    now = time.time()
+    if r:
+        try:
+            fs_val = r.get(f"watchdog:healer:first_seen:{acc_id}")
+            att_val = r.get(f"watchdog:healer:attempts:{acc_id}")
+            la_val = r.get(f"watchdog:healer:last_attempt:{acc_id}")
+            first_seen = float(fs_val) if fs_val else now
+            attempts = int(att_val) if att_val else 0
+            last_attempt = float(la_val) if la_val else 0.0
+            return first_seen, attempts, last_attempt
+        except Exception:
+            pass
+
+    first_seen = _healer_memory_first_seen.get(acc_id, now)
+    attempts = _healer_memory_attempts.get(acc_id, 0)
+    last_attempt = _healer_memory_last_attempt.get(acc_id, 0.0)
+    return first_seen, attempts, last_attempt
+
+
+def record_account_first_seen(acc_id: str) -> None:
+    """Records the initial lockout timestamp if not already tracked."""
+    now = time.time()
+    r = _get_redis_client()
+    if r:
+        try:
+            r.set(f"watchdog:healer:first_seen:{acc_id}", str(now), nx=True, ex=604800)  # 7 days
+            return
+        except Exception:
+            pass
+    if acc_id not in _healer_memory_first_seen:
+        _healer_memory_first_seen[acc_id] = now
+
+
+def record_healing_attempt(acc_id: str) -> None:
+    """Records a healing attempt incrementing 24h attempt counter."""
+    now = time.time()
+    r = _get_redis_client()
+    if r:
+        try:
+            p = r.pipeline()
+            p.incr(f"watchdog:healer:attempts:{acc_id}")
+            p.expire(f"watchdog:healer:attempts:{acc_id}", 86400)  # 24h
+            p.set(f"watchdog:healer:last_attempt:{acc_id}", str(now), ex=86400)
+            p.execute()
+            return
+        except Exception:
+            pass
+    _healer_memory_attempts[acc_id] = _healer_memory_attempts.get(acc_id, 0) + 1
+    _healer_memory_last_attempt[acc_id] = now
+
+
+def clear_account_healer_state(acc_id: str) -> None:
+    """Clears healer tracking state upon successful recovery."""
+    r = _get_redis_client()
+    if r:
+        try:
+            r.delete(
+                f"watchdog:healer:first_seen:{acc_id}",
+                f"watchdog:healer:attempts:{acc_id}",
+                f"watchdog:healer:last_attempt:{acc_id}",
+            )
+        except Exception:
+            pass
+    _healer_memory_first_seen.pop(acc_id, None)
+    _healer_memory_attempts.pop(acc_id, None)
+    _healer_memory_last_attempt.pop(acc_id, None)
+
+
+def is_eligible_for_auto_heal(account: Dict[str, Any]) -> bool:
+    """Checks whether an account can safely undergo automated health probe healing.
+
+    Enforces strict Zero-Upstream-Challenge invariant:
+    - No validation URL
+    - Not validation_blocked
+    - Not globally disabled
+    - No challenge/manual block reasons.
+    """
+    if account.get("validation_url") or extract_validation_url(account):
+        return False
+    if account.get("validation_blocked"):
+        return False
+    if account.get("disabled"):
+        return False
+
+    raw_reason = str(
+        account.get("disabled_reason")
+        or account.get("proxy_disabled_reason")
+        or account.get("validation_blocked_reason")
+        or (account.get("quota") or {}).get("forbidden_reason")
+        or ""
+    ).lower()
+
+    blocked_keywords = [
+        "verify your account",
+        "validation_required",
+        "invalid_grant",
+        "unauthorized_client",
+        "manual",
+        "disabled manually by user",
+    ]
+    for kw in blocked_keywords:
+        if kw in raw_reason:
+            return False
+
+    quota = account.get("quota") or {}
+    return bool(account.get("proxy_disabled") or quota.get("is_forbidden"))
+
+
+def auto_heal_single_candidate(
+    accounts: List[Dict[str, Any]],
+    base_url: str,
+    headers: Dict[str, str],
+) -> Optional[str]:
+    """Selects and safely attempts to heal at most one eligible account per cycle.
+
+    Enforces:
+    - Strict Zero-Upstream-Challenge pre-classification
+    - Minimum 60-minute lockout age (cooldown)
+    - Max 3 attempts per 24 hours per account
+    - 60-minute interval between attempts on the same account
+    - 4-stage health probe gate (GET /quota -> check is_forbidden==False -> POST /toggle-proxy)
+    """
+    now = time.time()
+    candidates = []
+
+    for acc in accounts:
+        acc_id = str(acc.get("id") or "")
+        email = str(acc.get("email") or "unknown")
+        if not acc_id:
+            continue
+
+        if not is_eligible_for_auto_heal(acc):
+            continue
+
+        record_account_first_seen(acc_id)
+        first_seen, attempts, last_attempt = get_account_lockout_info(acc_id)
+        lockout_age = now - first_seen
+
+        # 1. Lockout age must be at least 60 minutes (3600s)
+        if lockout_age < 3600:
+            continue
+
+        # 2. Maximum 3 attempts per 24h
+        if attempts >= 3:
+            continue
+
+        # 3. Minimum 60 minutes between attempts on this account
+        if now - last_attempt < 3600:
+            continue
+
+        candidates.append({
+            "id": acc_id,
+            "email": email,
+            "attempts": attempts,
+            "lockout_age": lockout_age,
+        })
+
+    if not candidates:
+        return None
+
+    # Rule 5: Multi-Key Deterministic Sorting
+    candidates.sort(key=lambda c: (c["attempts"], -round(c["lockout_age"], 2), c["id"]))
+    target = candidates[0]
+    target_id = target["id"]
+    target_email = target["email"]
+
+    print(
+        f"[Watchdog Healer] Selected candidate {target_email} ({target_id}) for auto-healing probe "
+        f"(Age: {target['lockout_age']:.0f}s, Attempts: {target['attempts']}/3)",
+        flush=True,
+    )
+    record_healing_attempt(target_id)
+
+    quota_url = f"{base_url}/api/accounts/{target_id}/quota"
+    toggle_url = f"{base_url}/api/accounts/{target_id}/toggle-proxy"
+
+    try:
+        # Stage 2: Quota Probe Gate (GET /quota with timeout 30s)
+        q_res = requests.get(quota_url, headers=headers, timeout=30)
+        if q_res.status_code != 200:
+            print(f"[Watchdog Healer] Quota probe HTTP {q_res.status_code} for {target_email}. Retaining lock.", flush=True)
+            return None
+
+        q_data = q_res.json() if q_res.content else {}
+        quota_obj = q_data.get("quota") if isinstance(q_data, dict) else None
+        is_forbidden = bool(quota_obj.get("is_forbidden")) if isinstance(quota_obj, dict) else False
+
+        if is_forbidden:
+            reason = str((quota_obj or {}).get("forbidden_reason") or "")[:80]
+            print(f"[Watchdog Healer] Quota still forbidden for {target_email} ({reason}). Retaining lock.", flush=True)
+            return None
+
+        # Stage 3: Proxy Activation (POST /toggle-proxy with enable=True)
+        en_res = requests.post(toggle_url, headers=headers, json={"enable": True}, timeout=10)
+        if en_res.status_code == 200:
+            clear_account_healer_state(target_id)
+            print(f"[Watchdog Healer] Successfully auto-healed and reloaded account {target_email} ({target_id})!", flush=True)
+            notify_chatops(
+                "TỰ ĐỘNG PHỤC HỒI TÀI KHOẢN (HEALTH PROBE PASSED)",
+                f"✅ Tài khoản `{target_email}` đã tự động vượt qua Health Probe sau thời gian hạ nhiệt.\n"
+                f"• **Trạng thái**: Đã kích hoạt lại thành công vào RAM Rotation Pool.\n"
+                f"• **Thời gian phục hồi**: {datetime.datetime.now().strftime('%H:%M:%S %d/%m/%Y')}",
+                actions=[],
+                severity="INFO",
+            )
+            return target_email
+        else:
+            print(f"[Watchdog Healer] Toggle proxy failed with HTTP {en_res.status_code} for {target_email}.", flush=True)
+            return None
+    except Exception as e:
+        print(f"[Watchdog Healer Error] Probe error for {target_email}: {e}", flush=True)
+        return None
+
+
 def check_quota_pool() -> None:
     """Monitors Antigravity Tools account pool health and detects checkpoints."""
     auth_key = GATEWAY_ADMIN_PASSWORD or GATEWAY_PROXY_KEY
@@ -374,6 +607,11 @@ def check_quota_pool() -> None:
                     f"• Hiện có `{active_count}/{total}` tài khoản sẵn sàng phục vụ."
                 )
                 notify_chatops(title, body, actions=[], severity="INFO")
+
+        # 3. Automated Auto-Healing Loop (Phase 2)
+        # Quorum is guaranteed healthy here (mass failure returned early above)
+        if current_blocked:
+            auto_heal_single_candidate(accounts, base_url, headers)
     except requests.RequestException as e:
         print(f"Error checking quota pool: {e}", flush=True)
 
@@ -489,7 +727,11 @@ def get_gateway_telemetry_digest() -> str:
             cmd = [
                 "docker", "exec", "-i", "litellm-postgres",
                 "psql", "-U", "litellm", "-d", "litellm", "--csv", "-c",
-                'SELECT COUNT(*) as reqs, COALESCE(SUM(total_tokens), 0) as tokens, ROUND(AVG(EXTRACT(EPOCH FROM ("endTime" - "startTime")))::numeric, 2) as avg_lat FROM "LiteLLM_SpendLogs" WHERE "startTime" >= NOW() - INTERVAL \'24 hours\';'
+                (
+                    'SELECT COUNT(*) as reqs, COALESCE(SUM(total_tokens), 0) as tokens, '
+                    'ROUND(AVG(EXTRACT(EPOCH FROM ("endTime" - "startTime")))::numeric, 2) as avg_lat '
+                    'FROM "LiteLLM_SpendLogs" WHERE "startTime" >= NOW() - INTERVAL \'24 hours\';'
+                )
             ]
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode == 0:
@@ -497,7 +739,11 @@ def get_gateway_telemetry_digest() -> str:
             cmd_top = [
                 "docker", "exec", "-i", "litellm-postgres",
                 "psql", "-U", "litellm", "-d", "litellm", "--csv", "-c",
-                'SELECT regexp_replace(model, \'^(openai|gemini)/\', \'\') as clean_model, COUNT(*) as cnt, COALESCE(SUM(total_tokens), 0) as tok FROM "LiteLLM_SpendLogs" WHERE "startTime" >= NOW() - INTERVAL \'24 hours\' GROUP BY clean_model ORDER BY cnt DESC LIMIT 3;'
+                (
+                    "SELECT regexp_replace(model, '^(openai|gemini)/', '') as clean_model, COUNT(*) as cnt, "
+                    'COALESCE(SUM(total_tokens), 0) as tok FROM "LiteLLM_SpendLogs" '
+                    "WHERE \"startTime\" >= NOW() - INTERVAL '24 hours' GROUP BY clean_model ORDER BY cnt DESC LIMIT 3;"
+                )
             ]
             res_top = subprocess.run(cmd_top, capture_output=True, text=True)
             if res_top.returncode == 0:
@@ -512,7 +758,7 @@ def get_gateway_telemetry_digest() -> str:
             tok_str = f"{tokens / 1000000:.2f}M" if tokens >= 1000000 else (f"{tokens / 1000:.1f}k" if tokens >= 1000 else str(tokens))
 
             top_items = []
-            for t_line in [l.strip() for l in top_output.strip().splitlines() if l.strip()][1:]:
+            for t_line in [row.strip() for row in top_output.strip().splitlines() if row.strip()][1:]:
                 t_parts = t_line.split(",")
                 if len(t_parts) >= 3:
                     m_name = t_parts[0].replace("openai/", "").replace("gemini/", "")
