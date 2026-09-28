@@ -260,11 +260,21 @@ _healer_memory_last_attempt: Dict[str, float] = {}
 
 
 def _get_redis_client():
-    """Gets Redis client connection for persistent state tracking."""
-    redis_url = os.getenv("REDIS_URL", "redis://litellm-redis:6379/1")
+    """Gets Redis client connection for watchdog healer state on isolated DB 5."""
+    explicit_url = os.getenv("WATCHDOG_REDIS_URL")
+    if explicit_url:
+        target_url = explicit_url
+    else:
+        base_url = os.getenv("REDIS_URL", "redis://litellm-redis:6379/5")
+        try:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(base_url)
+            target_url = urllib.parse.urlunparse(parsed._replace(path="/5"))
+        except Exception:
+            target_url = "redis://litellm-redis:6379/5"
     try:
         import redis
-        return redis.Redis.from_url(redis_url, socket_timeout=2)
+        return redis.Redis.from_url(target_url, socket_timeout=2)
     except Exception:
         return None
 
@@ -273,36 +283,42 @@ def get_account_lockout_info(acc_id: str) -> Tuple[float, int, float]:
     """Retrieves (first_seen_time, attempts_24h, last_attempt_time) for an account."""
     r = _get_redis_client()
     now = time.time()
+    fs_val, att_val, la_val = None, None, None
     if r:
         try:
             fs_val = r.get(f"watchdog:healer:first_seen:{acc_id}")
             att_val = r.get(f"watchdog:healer:attempts:{acc_id}")
             la_val = r.get(f"watchdog:healer:last_attempt:{acc_id}")
-            first_seen = float(fs_val) if fs_val else now
-            attempts = int(att_val) if att_val else 0
-            last_attempt = float(la_val) if la_val else 0.0
-            return first_seen, attempts, last_attempt
         except Exception:
             pass
 
-    first_seen = _healer_memory_first_seen.get(acc_id, now)
-    attempts = _healer_memory_attempts.get(acc_id, 0)
-    last_attempt = _healer_memory_last_attempt.get(acc_id, 0.0)
+    if fs_val is not None:
+        first_seen = float(fs_val)
+    elif acc_id in _healer_memory_first_seen:
+        first_seen = _healer_memory_first_seen[acc_id]
+    else:
+        first_seen = now
+
+    attempts = int(att_val) if att_val is not None else _healer_memory_attempts.get(acc_id, 0)
+    last_attempt = float(la_val) if la_val is not None else _healer_memory_last_attempt.get(acc_id, 0.0)
     return first_seen, attempts, last_attempt
 
 
 def record_account_first_seen(acc_id: str) -> None:
     """Records the initial lockout timestamp if not already tracked."""
     now = time.time()
+    recorded_ts = now
     r = _get_redis_client()
     if r:
         try:
-            r.set(f"watchdog:healer:first_seen:{acc_id}", str(now), nx=True, ex=604800)  # 7 days
-            return
+            if not r.set(f"watchdog:healer:first_seen:{acc_id}", str(now), nx=True, ex=604800):
+                val = r.get(f"watchdog:healer:first_seen:{acc_id}")
+                if val:
+                    recorded_ts = float(val)
         except Exception:
             pass
     if acc_id not in _healer_memory_first_seen:
-        _healer_memory_first_seen[acc_id] = now
+        _healer_memory_first_seen[acc_id] = recorded_ts
 
 
 def record_healing_attempt(acc_id: str) -> None:
@@ -338,6 +354,52 @@ def clear_account_healer_state(acc_id: str) -> None:
     _healer_memory_first_seen.pop(acc_id, None)
     _healer_memory_attempts.pop(acc_id, None)
     _healer_memory_last_attempt.pop(acc_id, None)
+
+
+def is_account_blocked(acc: Dict[str, Any]) -> bool:
+    """Determines if an account is in a blocked/non-working state.
+
+    Checks 4 canonical flags:
+    1. proxy_disabled: True (manually or breaker disabled)
+    2. disabled: True (system disabled)
+    3. validation_blocked: True (Google browser challenge required)
+    4. quota.is_forbidden: True (Google 403 Forbidden quota exhaustion)
+    """
+    if not isinstance(acc, dict):
+        return True
+    if acc.get("proxy_disabled") or acc.get("disabled") or acc.get("validation_blocked"):
+        return True
+    quota_obj = acc.get("quota")
+    if isinstance(quota_obj, dict) and quota_obj.get("is_forbidden"):
+        return True
+    return False
+
+
+def quota_probe_allows_toggle(payload: object) -> bool:
+    """Strictly evaluates if a quota probe payload authorizes proxy reactivation.
+
+    Rules:
+    1. payload must be a non-empty dict.
+    2. Sources examined: root payload, and nested payload["quota"] if dict.
+    3. If ANY source has "is_forbidden" with True or non-bool -> reject (False).
+    4. Must encounter AT LEAST ONE "is_forbidden" that is explicitly boolean False.
+    5. Empty payload, missing key, corrupted structure -> reject (False).
+    """
+    if not isinstance(payload, dict) or not payload:
+        return False
+    sources = [payload]
+    nested = payload.get("quota")
+    if isinstance(nested, dict):
+        sources.append(nested)
+    seen_false = False
+    for source in sources:
+        if "is_forbidden" not in source:
+            continue
+        flag = source["is_forbidden"]
+        if flag is True or not isinstance(flag, bool):
+            return False
+        seen_false = True
+    return seen_false
 
 
 def is_eligible_for_auto_heal(account: Dict[str, Any]) -> bool:
@@ -455,13 +517,18 @@ def auto_heal_single_candidate(
             print(f"[Watchdog Healer] Quota probe HTTP {q_res.status_code} for {target_email}. Retaining lock.", flush=True)
             return None
 
-        q_data = q_res.json() if q_res.content else {}
-        quota_obj = q_data.get("quota") if isinstance(q_data, dict) else None
-        is_forbidden = bool(quota_obj.get("is_forbidden")) if isinstance(quota_obj, dict) else False
+        q_data = None
+        try:
+            q_data = q_res.json() if q_res.content else {}
+        except Exception:
+            q_data = None
 
-        if is_forbidden:
-            reason = str((quota_obj or {}).get("forbidden_reason") or "")[:80]
-            print(f"[Watchdog Healer] Quota still forbidden for {target_email} ({reason}). Retaining lock.", flush=True)
+        is_allowed = quota_probe_allows_toggle(q_data)
+        if not is_allowed:
+            forbidden_reason = ""
+            if isinstance(q_data, dict):
+                forbidden_reason = str(q_data.get("forbidden_reason") or (q_data.get("quota") or {}).get("forbidden_reason") or "")
+            print(f"[Watchdog Healer] Quota still forbidden or malformed for {target_email} ({forbidden_reason[:60]}). Retaining lock.", flush=True)
             return None
 
         # Stage 3: Proxy Activation (POST /toggle-proxy with enable=True)
@@ -509,12 +576,7 @@ def check_quota_pool() -> None:
 
         for a in accounts:
             email = a.get("email", "unknown")
-            is_blocked = (
-                a.get("proxy_disabled")
-                or a.get("disabled")
-                or a.get("validation_blocked")
-                or (a.get("quota") or {}).get("is_forbidden")
-            )
+            is_blocked = is_account_blocked(a)
             if is_blocked:
                 val_url = extract_validation_url(a)
                 raw_reason = (
@@ -531,6 +593,21 @@ def check_quota_pool() -> None:
                 }
             else:
                 active_count += 1
+
+        # Dọn dẹp trạng thái healer cho các tài khoản không còn blocked:
+        blocked_ids = {str(a.get("id")) for a in accounts if is_account_blocked(a)}
+        healer_ids = set(_healer_memory_first_seen.keys())
+        r = _get_redis_client()
+        if r:
+            try:
+                for k in r.scan_iter(match="watchdog:healer:first_seen:*", count=100):
+                    k_str = k.decode("utf-8") if isinstance(k, bytes) else str(k)
+                    healer_ids.add(k_str.replace("watchdog:healer:first_seen:", ""))
+            except Exception as e:
+                print(f"[Watchdog Healer State Warning] Redis scan error: {e}", flush=True)
+
+        for acc_id in (healer_ids - blocked_ids):
+            clear_account_healer_state(acc_id)
 
         now = time.time()
         failed_count = len(current_blocked)
@@ -821,7 +898,7 @@ def build_daily_digest_message(date_str: str) -> str:
             accounts = data.get("accounts", []) if isinstance(data, dict) else data
             active = sum(
                 1 for a in accounts
-                if not a.get("disabled") and not a.get("proxy_disabled") and not (a.get("quota") or {}).get("is_forbidden")
+                if not is_account_blocked(a)
             )
             blocked = len(accounts) - active
             if blocked > 0:
