@@ -74,7 +74,11 @@ class AIGatewayClient:
         for target_model in chain:
             enable_thinking = (
                 "instruct" not in target_model.lower()
-                and (target_model in {"rag-core", "qwen-local-primary", "local-coder"} or "core" in target_model.lower())
+                and (
+                    target_model in {"qwen-local-primary", "local-coder"}
+                    or ("qwen" in target_model.lower() and "primary" in target_model.lower())
+                    or "coder" in target_model.lower()
+                )
             )
             model_extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
             if extra_body:
