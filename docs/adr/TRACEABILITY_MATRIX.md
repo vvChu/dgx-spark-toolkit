@@ -1,0 +1,82 @@
+# 🗺️ Living Architecture Traceability Matrix & Skill Radar
+
+> **Mục tiêu:** Ma trận tự động theo dõi mối quan hệ giữa các **Quyết định Kiến trúc (ADR)** và các **Kỹ năng (Skills) / Hiến pháp Vận hành**.
+
+*(Tệp này được biên dịch tự động bởi `scripts/sync_hub_adr_matrix.py` — Cơ chế Two-Tier Preservation)*
+
+---
+
+## 🏛️ Tier 1 — Platform Constitution (Hub ADRs)
+
+> Các quyết định kiến trúc nền tảng dùng chung được đồng bộ từ Central Hub ([https://github.com/vvChu/ccba-agent-platform](https://github.com/vvChu/ccba-agent-platform)).
+
+| Mã ADR | Tiêu đề Quyết Định | Trạng thái | Tài Liệu & Skills Đang Tuân Thủ / Viện Dẫn |
+| :--- | :--- | :---: | :--- |
+| [HUB-ADR 0001](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0001-standardize-skill-steps-format.md) | **Standardize Skill Steps Format for Linter Validation** | ✅ ACCEPTED | `.agents/skills/ccba-build-skill/SKILL.md`<br>`SKILL.md` |
+| [HUB-ADR 0002](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0002-hierarchical-skill-validation.md) | **Hierarchical Skill Validation Parser with Keyword Exclusion** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0003](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0003-object-oriented-plan-management.md) | **Object-Oriented Plan Management with File-based Concurrency Lock** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0004](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0004-academic-writing-microstructure-auditing.md) | **Academic Writing Microstructure Auditing and Compliance Checks** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0005](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0005-academic-paper-formatting-and-citations.md) | **Academic Paper Title Page Formatting and Citation Auditing** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0006](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0006-skills-quality-alignment-for-academic-writing.md) | **Quality and Context Optimization for Academic Writing Skill** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0007](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0007-multimodal-youtube-learning-and-transcription.md) | **Multimodal Video Ingestion and Belief Archaeology Analysis** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0008](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0008-spoke-classification-and-functional-ownership.md) | **Spoke Classification and Functional Ownership Mapping in CCBA** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0009](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0009-hub-spoke-sync-and-partition-strategy.md) | **Hub-Spoke Synchronization and Directory Partitioning Strategy** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0010](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0010-skills-integration-and-rag-boundaries.md) | **Phân Định Ranh Giới Tích Hợp Kỹ Năng Nghiên Cứu & Mẫu Thử** | ✅ ACCEPTED | `SKILL.md` |
+| [HUB-ADR 0017](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0017-dynamic-override-notebook-ids-via-environment-variables.md) | **Dynamic Override of Notebook IDs via Environment Variables** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0018](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0018-remove-idop-scaffolder-from-hub.md) | **Loại bỏ skill ccba-idop-scaffolder khỏi Central Hub** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0019](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0019-port-matt-pocock-engineering-skills.md) | **Đồng bộ Quy trình Triển khai Kỹ nghệ từ Thượng nguồn & Dọn dẹp Thành phần Lỗi thời** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0020](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0020-port-and-adapt-high-priority-upstream-skills.md) | **Quyết định Port và Địa hóa nhóm Skill Upstream Ưu tiên cao** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0021](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0021-dual-mode-workspace-and-bigbim-retention.md) | **Dual-Mode Workspace & BIGBIM Skills Retention** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0022](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0022-restrict-fast-flag-in-xia-challenge-gate.md) | **Restrict --fast from fully bypassing the Challenge Hard Gate in ccba-xia** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0023](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0023-skill-auto-tuner-integration-via-skillopt.md) | **Tích hợp CCBA Skill Auto-Tuner dựa trên phương pháp Microsoft SkillOpt** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0024](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0024-deepen-tvpl-crawler-module-interface.md) | **Tái cấu trúc Sâu (Deep Module) cho Phân hệ TVPL VIP Crawler** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0025](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0025-ai-gateway-client-configuration-standardization.md) | **Standardizing AI Gateway Client Configuration and Model Aliases** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0026](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0026-isolated-test-runner-and-timeout-policy.md) | **Isolated Test Execution and Timeout Policy for Agent Stability** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0027](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0027-deepen-notebooklm-service-module.md) | **Deepen NotebookLMService Module & Separate Service Layer** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0028](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0028-deepen-detached-execution-engine.md) | **Deepen DetachedExecutionEngine in `scripts/eval/process_safety.py`** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0029](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0029-ai-gateway-client-integration-contract.md) | **AI Gateway Client Integration Contract & 4 Model Archetypes Standardization** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0030](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0030-progressive-disclosure-and-instruction-budget-optimization.md) | **Progressive Disclosure and Instruction Budget Optimization for AGENTS.md** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0031](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0031-capability-first-instructions-and-stale-path-mitigation.md) | **Capability-First Instructions and Stale Path Mitigation** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0032](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0032-monorepo-hierarchical-agents-md.md) | **Monorepo Hierarchical AGENTS.md for CCBA Packages** | ✅ ACCEPTED | `SKILL.md` |
+| [HUB-ADR 0033](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0033-automation-first-quality-enforcement.md) | **Automation-First Code Quality Enforcement and Instruction Pruning** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0034](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0034-cross-agent-parity-bridge.md) | **Cross-Agent Parity Bridge for AGENTS.md and CLAUDE.md** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0035](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0035-polyglot-deep-modules-and-subagent-guardrails.md) | **Polyglot Deep Modules Enforcement and Sub-Agent Review Guardrails** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0036](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0036-brownfield-spoke-adoption-and-non-destructive-onboarding.md) | **Brownfield Spoke Adoption and Non-Destructive Onboarding** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0037](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0037-constitution-driven-traceability-matrix.md) | **Constitution-Driven Traceability Matrix Pattern & Dynamic Knowledge Pointers** | ✅ ACCEPTED | `SKILL.md` |
+| [HUB-ADR 0038](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0038-unified-okf-v2-bundle-specification.md) | **Chuẩn Hóa Cấu Trúc Gói Tri Thức Hợp Nhất OKF Bundle v2.0 (Unified OKF v2.0 Bundle Specification)** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0039](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0039-autonomous-crawler-to-spoke-ingestion-protocol.md) | **Giao Thức Chuyển Giao Tự Động Từ VIP Crawler (Hub) Sang Ingestion Engine (Spoke)** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0040](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0040-skills-hierarchy-and-automated-governance.md) | **Phân Tầng Kỹ Năng Kim Tự Tháp 3 Tầng & Rào Chắn Quản Trị Tự Động (Hard CI Gate)** | ✅ ACCEPTED | `.agents/skills/ccba-build-skill/SKILL.md`<br>`SKILL.md` |
+| [HUB-ADR 0041](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0041-hub-spoke-ecosystem-taxonomy-and-archetypes.md) | **Hub-Spoke Ecosystem Taxonomy, Spoke Archetypes, and Extensibility Framework** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0042](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0042-tiered-ai-pre-submission-gate-and-tri-repo-sync.md) | **Tiered Multi-Severity AI Pre-Submission Gate and Tri-Repo Server Synchronization Protocol** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0043](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0043-idop-active-dev-resilience-and-fallback.md) | **Decoupled Resilience, Schema Contract Drift Gate, and Dual-Mode Authentication for IDOP-CCBA-WAY Active Development** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0044](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0044-spoke-hub-package-bootstrap-standard.md) | **Hub-Spoke Package Bootstrap Standardization & Editable Install Protocol** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0045](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0045-hub-proposal-ingestion-governance.md) | **Hub Proposal Ingestion & Lifecycle Governance Standard (Hybrid Gate & Supervised Self-Healing)** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0046](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0046-personal-sandbox-lifecycle-and-charter-2026-alignment.md) | **Personal Sandbox Spoke Lifecycle, Registry TTL, and CCBA Charter 2026 Alignment** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0047](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0047-catalog-manifest-compiler-and-frontmatter-ssot.md) | **Catalog Manifest Compiler & Frontmatter Single Source of Truth (SSOT)** | ✅ ACCEPTED | `.agents/skills/ccba-build-skill/SKILL.md`<br>`SKILL.md` |
+| [HUB-ADR 0048](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0048-tvpl-vip-digital-pdf-priority-and-session-engine.md) | **TVPL VIP Digital PDF Priority & Persistent Chrome Profile Session Engine** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0049](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0049-okf-v2-4-universal-agent-centric-specification-and-cloud-vault.md) | **OKF v2.4 Universal Agent-Centric Specification & Multi-Asset Cloud Vault** | ✅ ACCEPTED | `.agents/skills/ccba-platform/SKILL.md`<br>`SKILL.md` |
+| [HUB-ADR 0050](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0050-automated-legal-sync-and-mock-data-isolation.md) | **Automated Legal Sync Pipeline & Mock Data Isolation for Spokes** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0051](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0051-hub-spoke-sync-hardening-constitution-preservation-and-virtual-fallback.md) | **Hub-Spoke Sync Hardening, Constitution Preservation & Virtual Hub Fallback** | ✅ ACCEPTED | `.agents/skills/ccba-platform/SKILL.md`<br>`SKILL.md` |
+| [HUB-ADR 0052](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0052-boost-deep-reasoning-protocol-and-escalation-gate.md) | **Boost Deep Reasoning Protocol, Early Escalation & Multi-Agent Hierarchy** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0053](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0053-teamwork-multi-agent-orchestration-framework.md) | **Teamwork Multi-Agent Orchestration Framework & Exclusive Seam Protocol** | ✅ ACCEPTED | `.agents/skills/ccba-platform/SKILL.md`<br>`SKILL.md` |
+| [HUB-ADR 0054](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0054-antigravity-lifecycle-hooks-and-security-bridge.md) | **Antigravity Lifecycle Hooks & Security Bridge — Adapter Bridge Architecture** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0055](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0055-ccba-ai-multi-tier-failover-and-mock-provider.md) | **CCBA AI Multi-Tier Failover Matrix, Antigravity CLI Bridge, Local Ollama & Offline Mock Provider** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0056](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0056-migrate-legacy-workflows-to-skills-and-standardize-ccba-namespace.md) | **Migration of Legacy Workflows to Modern Skills and Direct CCBA Namespace Standardization** | ✅ ACCEPTED | `.agents/skills/ccba-build-skill/SKILL.md`<br>`SKILL.md` |
+| [HUB-ADR 0057](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0057-two-stage-granularity-decision-framework-and-gpi.md) | **Two-Stage Granularity Decision Framework, Granularity Placement Index (GPI), and 3-Tier Skills Architecture** | ✅ ACCEPTED | `.agents/skills/ccba-build-skill/SKILL.md`<br>`SKILL.md` |
+| [HUB-ADR 0058](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0058-live-collaboration-artifacts-workspace-mirroring-and-charter-alignment.md) | **Live Collaboration Artifacts, Workspace Mirroring, and CCBA Charter 11-Seat Review Alignment** | ✅ ACCEPTED | `.agents/skills/ccba-build-skill/SKILL.md`<br>`.agents/skills/ccba-code-review/SKILL.md`<br>`.agents/skills/ccba-implement/SKILL.md`<br>`.agents/skills/ccba-platform/SKILL.md`<br>`SKILL.md` |
+| [HUB-ADR 0059](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0059-legal-verbatim-grounding-and-mandatory-acquisition-invariant.md) | **Legal Verbatim Grounding, Zero-Hallucination Invariant, and Cryptographic Provenance Stamping** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [HUB-ADR 0060](https://github.com/vvChu/ccba-agent-platform/blob/main/docs/adr/0060-4hub-federated-spokes-architecture.md) | **4-Hubs × Federated Spokes Architecture & Distributed Ecosystem Governance** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+
+---
+
+## 🌐 Tier 2 — Domain-Specific Architecture Decisions (Spoke ADRs)
+
+> Các quyết định kiến trúc nghiệp vụ đặc thù được ban hành và quản trị độc lập tại Spoke.
+
+| Mã ADR | Tiêu đề Quyết Định | Trạng thái | Tài Liệu & Skills Đang Tuân Thủ / Viện Dẫn |
+| :--- | :--- | :---: | :--- |
+| [Domain ADR 0001](0001-ai-gateway-routing-and-caching-topology.md) | **AI Gateway Routing, Fallback Topology, and Caching Strategy** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [Domain ADR 0002](0002-centralized-proxy-resilience-and-image-routing.md) | **Centralized API Proxy Harmonization, Exponential Retry Backoff, and Image Routing** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [Domain ADR 0003](0003-hybrid-direct-key-and-proxy-routing-policy.md) | **Hybrid Direct-Key & Centralized Proxy Dual-Engine Routing Policy** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [Domain ADR 0004](0004-progressive-disclosure-agent-architecture.md) | **Progressive Disclosure Agent Architecture** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [Domain ADR 0005](0005-ai-native-codebase-modularization.md) | **AI-Native Codebase Modularization & Agent Protocol** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
