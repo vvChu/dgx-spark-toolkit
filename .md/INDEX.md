@@ -17,6 +17,9 @@
    - [Hướng Dẫn Phát Triển & CI/CD](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/DEVELOPMENT.md)
    - [Cạm Bẫy Kỹ Thuật Cần Tránh (Pitfalls)](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/PITFALLS.md)
    - [Quyết Định Kiến Trúc (ADR Records)](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/adr/)
+   - [Hướng Dẫn Kết Nối MCP Server](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/MCP_SERVER.md)
+   - [OpenAPI Schemas & API Models](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/schemas/API_MODELS.md)
 
-3. **Lưu Trữ Dữ Liệu Trích Xuất**:
+3. **Lưu Trữ Dữ Liệu Trích Xuất & Giao Tiếp Agent**:
    - `extracted_docs/`: Thư mục lưu trữ raw text, bảng biểu và nội dung trích xuất từ văn bản pháp quy (QCVN/TCVN).
+   - `peer_exchange/`: Kênh giao tiếp tự động thời gian thực giữa các AI Agents (Antigravity & Grok).

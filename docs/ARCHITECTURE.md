@@ -49,6 +49,12 @@ Single-page application built with React 19, Vite 7, and Tailwind CSS 4:
 - Graph visualization: `react-force-graph-2d`.
 - Markdown rendering: `react-markdown` + `remark-gfm`.
 
+### 5. AI Agent Tooling & MCP Server (`scripts/mcp_server.py`)
+Fast Model Context Protocol (MCP) interface bridging AI agents (Claude Code, Cursor, Antigravity) to the running RAG engine:
+- Exposes tools for legal search, Neo4j timeline validation, vector stats, and document inspection over stdio JSON-RPC.
+- Lightweight HTTP bridge pattern (fast startup ~0.3s, sub-50ms dispatch, 0 MB extra VRAM).
+- Progressive disclosure documentation: see [`docs/MCP_SERVER.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/MCP_SERVER.md) and [ADR-0005](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/adr/0005-ai-native-codebase-modularization.md).
+
 ## Databases & Persistence
 
 | Database | Primary Purpose | Identifier / Namespace |
