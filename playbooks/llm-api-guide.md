@@ -63,7 +63,7 @@ Mô hình "ảo" (Alias) được Gateway tự động định tuyến để t�
 | `ocr-primary` | Gemini 3.1 Flash Lite | Cloud OCR Vision (Backup: `ocr-fallback` gemini-3.5-flash-lite) | **10 Keys x 500 RPD** |
 | `ocr-fallback` | Gemini 3.5 Flash Lite | OCR Secondary Backup | **10 Keys x 500 RPD** |
 | `text-gemma` | Gemma 3 27B | High-volume NLP (Sinh câu hỏi, Summarize) | **144,000 req/ngày** |
-| `text-light-gemma` | Gemma 3 12B | Bóc tách siêu dữ liệu (Metadata, Tagging) | **144,000 req/ngày** |
+| `text-gemma-12b` (alias `text-light-gemma`) | Gemma 3 12B | Bóc tách siêu dữ liệu (Metadata, Tagging) | **144,000 req/ngày** |
 | `reasoning-gemma` | Gemma 4 31B | Logical Graph (Neo4j), Structured JSON | **15,000 req/ngày** |
 
 ### 🧠 Balanced Tier (1–3s)

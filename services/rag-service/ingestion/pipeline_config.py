@@ -20,7 +20,7 @@ NEO4J_PASS = os.getenv("NEO4J_PASSWORD") or os.getenv("NEO4J_PASS", "")
 JSON_MODEL = os.getenv("JSON_MODEL", "reasoning-gemma")
 # Free-tier-first models: use Google Direct API free quota, fallback to rag-core when exhausted
 SYNTHETIC_QUERY_MODEL = os.getenv("SYNTHETIC_QUERY_MODEL", "text-gemma")       # ~144K RPD free, Gemma 3 27B
-TEXT_METADATA_MODEL = os.getenv("TEXT_METADATA_MODEL", "text-light-gemma")     # ~144K RPD free, Gemma 3 12B
+TEXT_METADATA_MODEL = os.getenv("TEXT_METADATA_MODEL", "text-gemma-12b")     # ~144K RPD free, Gemma 3 12B
 RELATIONSHIP_MODEL = os.getenv("RELATIONSHIP_MODEL", "reasoning-gemma")        # ~15K RPD free, Gemma 4 31B MoE
 
 # Image preprocessing & OCR rendering

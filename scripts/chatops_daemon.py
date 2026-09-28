@@ -27,7 +27,7 @@ import shutil
 import signal
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -532,7 +532,8 @@ async def _query_litellm_postgres_stats() -> Optional[Dict[str, Any]]:
     """Queries LiteLLM PostgreSQL container for today's ICT local usage statistics via UNION ALL."""
     sql = (
         "(\n"
-        "  SELECT 'SUMMARY' AS tag, count(*)::text AS col1, coalesce(sum(total_tokens), 0)::text AS col2, coalesce(sum(prompt_tokens), 0)::text AS col3, coalesce(sum(completion_tokens), 0)::text AS col4\n"
+        "  SELECT 'SUMMARY' AS tag, count(*)::text AS col1, coalesce(sum(total_tokens), 0)::text AS col2,\n"
+        "         coalesce(sum(prompt_tokens), 0)::text AS col3, coalesce(sum(completion_tokens), 0)::text AS col4\n"
         '  FROM "LiteLLM_SpendLogs"\n'
         "  WHERE \"startTime\" >= ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh' AT TIME ZONE 'UTC')\n"
         ")\n"
@@ -626,10 +627,29 @@ async def _query_litellm_postgres_stats() -> Optional[Dict[str, Any]]:
         return None
 
 
+def is_account_blocked(account: Dict[str, Any]) -> bool:
+    """Checks whether an Antigravity account is blocked, disabled, or in forbidden status."""
+    quota = account.get("quota") or {}
+    return bool(
+        account.get("proxy_disabled")
+        or account.get("disabled")
+        or account.get("validation_blocked")
+        or quota.get("is_forbidden")
+    )
+
+
+def get_antigravity_base_url() -> str:
+    """Returns the base URL for Antigravity Tools API, preferring loopback on local host."""
+    url = os.environ.get("GATEWAY_PROXY_URL", "http://127.0.0.1:8045").rstrip("/").removesuffix("/v1")
+    if "100.83.192.30" in url:
+        return url.replace("100.83.192.30", "127.0.0.1")  # ccba:allow-raw-ip
+    return url
+
+
 async def probe_gateway_stats() -> str:
     """Queries Antigravity Tools API (Cloud) and LiteLLM Postgres (Local GPU) for unified stats."""
     lines = ["📈 *BÁO CÁO SẢN LƯỢNG AI GATEWAY* 📈\n"]
-    base_url = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045").rstrip("/").removesuffix("/v1")
+    base_url = get_antigravity_base_url()
     key = os.environ.get("GATEWAY_ADMIN_PASSWORD") or os.environ.get("GATEWAY_PROXY_KEY", "")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
 
@@ -674,7 +694,7 @@ async def probe_gateway_stats() -> str:
             if res_acc.status_code == 200:
                 data = res_acc.json()
                 accounts = data.get("accounts", []) if isinstance(data, dict) else []
-                active = sum(1 for a in accounts if not a.get("disabled"))
+                active = sum(1 for a in accounts if not is_account_blocked(a))
                 lines.append(f"• *Quota Pool:* `{active}/{len(accounts)}` tài khoản khả dụng")
     except Exception as e:
         clean_err = str(e).replace("`", "'")
@@ -721,7 +741,7 @@ async def probe_gateway_stats() -> str:
 
 async def probe_antigravity_status() -> str:
     """Queries Antigravity Tools API (:8045) for account pool health and blocked states."""
-    base_url = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045").rstrip("/").removesuffix("/v1")
+    base_url = get_antigravity_base_url()
     key = os.environ.get("GATEWAY_ADMIN_PASSWORD") or os.environ.get("GATEWAY_PROXY_KEY", "")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
 
@@ -743,13 +763,7 @@ async def probe_antigravity_status() -> str:
                 blocked_list = []
 
                 for a in accounts:
-                    is_blocked = (
-                        a.get("proxy_disabled")
-                        or a.get("disabled")
-                        or a.get("validation_blocked")
-                        or (a.get("quota") or {}).get("is_forbidden")
-                    )
-                    if is_blocked:
+                    if is_account_blocked(a):
                         blocked_list.append(a)
                     else:
                         active_list.append(a)
@@ -783,6 +797,33 @@ async def probe_antigravity_status() -> str:
     return "\n".join(lines)
 
 
+def quota_probe_allows_toggle(payload: object) -> bool:
+    """Strictly evaluates if a quota probe payload authorizes proxy reactivation.
+
+    Rules:
+    1. payload must be a non-empty dict.
+    2. Sources examined: root payload, and nested payload["quota"] if dict.
+    3. If ANY source has "is_forbidden" with True or non-bool -> reject (False).
+    4. Must encounter AT LEAST ONE "is_forbidden" that is explicitly boolean False.
+    5. Empty payload, missing key, corrupted structure -> reject (False).
+    """
+    if not isinstance(payload, dict) or not payload:
+        return False
+    sources = [payload]
+    nested = payload.get("quota")
+    if isinstance(nested, dict):
+        sources.append(nested)
+    seen_false = False
+    for source in sources:
+        if "is_forbidden" not in source:
+            continue
+        flag = source["is_forbidden"]
+        if flag is True or not isinstance(flag, bool):
+            return False
+        seen_false = True
+    return seen_false
+
+
 async def reenable_antigravity_account(
     account_id: str,
     chat_id: int,
@@ -790,62 +831,187 @@ async def reenable_antigravity_account(
     cq_id: Optional[str] = None,
     user_id: int = ADMIN_USER_ID,
 ) -> bool:
-    """Executes a Health Probe Gate before safely re-enabling an Antigravity account."""
+    """Executes a 4-stage Health Probe Gate before safely re-enabling an Antigravity account."""
     if cq_id:
         await answer_callback(cq_id, f"🔍 Đang kiểm tra probe {account_id}...")
 
     t0 = time.time()
-    base_url = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045").rstrip("/").removesuffix("/v1")
+    base_url = get_antigravity_base_url()
     key = os.environ.get("GATEWAY_ADMIN_PASSWORD") or os.environ.get("GATEWAY_PROXY_KEY", "")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
 
     client = get_http_client()
-    probe_url = f"{base_url}/api/accounts/{account_id}/probe"
-    enable_url = f"{base_url}/api/accounts/{account_id}/enable"
 
+    # --- CHỐT CHẶN 1: Local Pre-Classification (Không gọi Upstream bừa bãi) ---
+    target_account: Optional[Dict[str, Any]] = None
     try:
-        # Step 1: Health Probe Gate
-        probe_res = await client.post(probe_url, headers=headers, timeout=10.0)
-        is_probe_ok = (probe_res.status_code == 200)
-        probe_code = probe_res.status_code
-    except Exception as e:
-        is_probe_ok = False
-        probe_code = f"Lỗi kết nối ({e})"
+        acc_list_res = await client.get(f"{base_url}/api/accounts", headers=headers, timeout=5.0)
+        if acc_list_res.status_code != 200:
+            duration_ms = int((time.time() - t0) * 1000)
+            fail_msg = f"🔒 *LỖI KẾT NỐI LOCAL API*\n\nKhông thể đọc danh sách tài khoản từ máy chủ local (HTTP {acc_list_res.status_code})."
+            if not await edit_telegram_msg(chat_id, status_msg_id, fail_msg, reply_markup=get_main_dashboard_markup()):
+                await send_telegram_msg(chat_id, fail_msg, reply_markup=get_main_dashboard_markup())
+            append_audit_log(
+                "antigravity_reenable",
+                "antigravity.account.reenable",
+                {"account_id": account_id, "error": f"HTTP {acc_list_res.status_code}"},
+                user_id,
+                "PRE_CHECK_REJECTED",
+                duration_ms,
+                1,
+                "Local accounts API unavailable",
+            )
+            return False
 
-    duration_ms = int((time.time() - t0) * 1000)
+        data = acc_list_res.json()
+        accs = data.get("accounts", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        for a in accs:
+            if str(a.get("id")) == str(account_id) or str(a.get("email")) == str(account_id):
+                target_account = a
+                account_id = str(a.get("id"))
+                break
 
-    if not is_probe_ok:
-        fail_msg = (
-            f"🔒 *HEALTH PROBE THẤT BẠI (CHALLENGE CHƯA GIẢI)*\n\n"
-            f"• **Tài khoản**: `{account_id}`\n"
-            f"• **Kết quả Probe**: HTTP `{probe_code}`\n"
-            f"• **Quyết định**: **Giữ nguyên trạng thái ngắt kết nối** để bảo vệ tài khoản khỏi bị Google vô hiệu hóa vĩnh viễn.\n\n"
-            f"👉 *Hướng dẫn*: Vui lòng hoàn thành xác minh qua liên kết trên trình duyệt trước khi thử lại."
+        if not target_account:
+            duration_ms = int((time.time() - t0) * 1000)
+            fail_msg = f"🔒 *TÀI KHOẢN KHÔNG TỒN TẠI*\n\nKhông tìm thấy tài khoản `{account_id}` trong hệ thống quản trị local."
+            if not await edit_telegram_msg(chat_id, status_msg_id, fail_msg, reply_markup=get_main_dashboard_markup()):
+                await send_telegram_msg(chat_id, fail_msg, reply_markup=get_main_dashboard_markup())
+            append_audit_log(
+                "antigravity_reenable",
+                "antigravity.account.reenable",
+                {"account_id": account_id},
+                user_id,
+                "PRE_CHECK_REJECTED",
+                duration_ms,
+                1,
+                "Account not found in local pool",
+            )
+            return False
+
+        raw_reason = str(
+            target_account.get("disabled_reason")
+            or target_account.get("proxy_disabled_reason")
+            or target_account.get("validation_blocked_reason")
+            or (target_account.get("quota") or {}).get("forbidden_reason")
+            or ""
         )
+        has_val_url = bool(target_account.get("validation_url") or "accounts.google.com/signin/continue" in raw_reason)
+        is_disabled = bool(target_account.get("disabled"))
+        is_val_req = bool(
+            target_account.get("validation_blocked")
+            or any(kw in raw_reason.lower() for kw in [
+                "verify your account", "validation_required", "invalid_grant", "unauthorized_client", "manual", "disabled manually by user"
+            ])
+        )
+
+        # Từ chối probe nếu có dấu hiệu challenge, disabled hoặc khóa tay
+        if has_val_url or is_disabled or is_val_req:
+            duration_ms = int((time.time() - t0) * 1000)
+            reason_desc = (
+                "Cần mở khóa thủ công trên trình duyệt"
+                if (has_val_url or "verify your account" in raw_reason.lower())
+                else ("Tài khoản đã bị vô hiệu hóa (disabled)" if is_disabled else "Tài khoản bị khóa thủ công hoặc cần xác thực lại")
+            )
+            reject_msg = (
+                f"🔒 *TỪ CHỐI HEALTH PROBE (CHỐT CHẶN LOCAL BẢO VỆ)*\n\n"
+                f"• **Tài khoản**: `{account_id}` ({target_account.get('email', 'N/A')})\n"
+                f"• **Nguyên nhân**: {reason_desc}\n"
+                f"• **Quyết định**: **Chặn probe upstream** để ngăn Google đánh cờ (flag) tài khoản lạm dụng.\n\n"
+                f"👉 *Vui lòng hoàn thành xác thực trình duyệt hoặc kiểm tra trên giao diện máy chủ trước khi kích hoạt lại.*"
+            )
+            if not await edit_telegram_msg(chat_id, status_msg_id, reject_msg, reply_markup=get_main_dashboard_markup()):
+                await send_telegram_msg(chat_id, reject_msg, reply_markup=get_main_dashboard_markup())
+            append_audit_log(
+                "antigravity_reenable",
+                "antigravity.account.reenable",
+                {"account_id": account_id, "reason": raw_reason},
+                user_id,
+                "PRE_CHECK_REJECTED",
+                duration_ms,
+                1,
+                f"Pre-check blocked upstream probe: {reason_desc}",
+            )
+            return False
+    except Exception as e:
+        duration_ms = int((time.time() - t0) * 1000)
+        fail_msg = f"🔒 *LỖI NGOẠI LỆ PRE-CHECK*\n\nĐã chặn probe upstream do lỗi pre-check: {e}"
         if not await edit_telegram_msg(chat_id, status_msg_id, fail_msg, reply_markup=get_main_dashboard_markup()):
             await send_telegram_msg(chat_id, fail_msg, reply_markup=get_main_dashboard_markup())
         append_audit_log(
             "antigravity_reenable",
             "antigravity.account.reenable",
-            {"account_id": account_id, "probe": str(probe_code)},
+            {"account_id": account_id, "error": str(e)},
             user_id,
-            "PROBE_FAILED",
+            "PRE_CHECK_REJECTED",
             duration_ms,
             1,
-            f"Probe rejected with {probe_code}",
+            f"Pre-check exception: {e}",
         )
         return False
 
-    # Step 2: Probe Passed -> Enable Account
+    # --- CHỐT CHẶN 2: Quota Probe Gate (GET /api/accounts/{id}/quota) ---
+    quota_url = f"{base_url}/api/accounts/{account_id}/quota"
+    toggle_url = f"{base_url}/api/accounts/{account_id}/toggle-proxy"
+
     try:
-        enable_res = await client.post(enable_url, headers=headers, timeout=10.0)
+        quota_res = await client.get(quota_url, headers=headers, timeout=30.0)
+        quota_code = quota_res.status_code
+        q_data = None
+        if quota_code == 200:
+            try:
+                q_data = quota_res.json()
+            except Exception:
+                q_data = None
+
+        is_allowed = quota_probe_allows_toggle(q_data) if quota_code == 200 else False
+
+        if not is_allowed:
+            duration_ms = int((time.time() - t0) * 1000)
+            forbidden_reason = ""
+            if isinstance(q_data, dict):
+                forbidden_reason = str(q_data.get("forbidden_reason") or (q_data.get("quota") or {}).get("forbidden_reason") or "")
+            if quota_code == 401:
+                detail = "Admin Secret không hợp lệ (HTTP 401 Unauthorized)"
+            elif quota_code == 404:
+                detail = f"Không tìm thấy tài khoản `{account_id}` (HTTP 404 Not Found)"
+            elif forbidden_reason:
+                detail = f"Google Cloud Code vẫn chặn (403 Forbidden: {forbidden_reason[:60]})"
+            elif quota_code == 200:
+                detail = "Phản hồi quota upstream không hợp lệ hoặc thiếu cờ khả dụng"
+            else:
+                detail = f"Mã phản hồi HTTP {quota_code}"
+
+            fail_msg = (
+                f"🔒 *HEALTH PROBE THẤT BẠI (GOOGLE UPSTREAM REJECTED)*\n\n"
+                f"• **Tài khoản**: `{account_id}`\n"
+                f"• **Chi tiết**: {detail}\n"
+                f"• **Quyết định**: **Giữ nguyên trạng thái ngắt kết nối** để bảo vệ tài khoản.\n\n"
+                f"👉 *Hướng dẫn*: Vui lòng kiểm tra lại trạng thái tài khoản trên máy chủ."
+            )
+            if not await edit_telegram_msg(chat_id, status_msg_id, fail_msg, reply_markup=get_main_dashboard_markup()):
+                await send_telegram_msg(chat_id, fail_msg, reply_markup=get_main_dashboard_markup())
+            append_audit_log(
+                "antigravity_reenable",
+                "antigravity.account.reenable",
+                {"account_id": account_id, "quota_code": str(quota_code), "probe_allowed": is_allowed},
+                user_id,
+                "PROBE_FAILED",
+                duration_ms,
+                1,
+                f"Probe rejected: {detail}",
+            )
+            return False
+
+        # --- CHỐT CHẶN 3: Kích Hoạt Proxy (POST /api/accounts/{id}/toggle-proxy) ---
+        enable_res = await client.post(toggle_url, headers=headers, json={"enable": True}, timeout=10.0)
         duration_ms = int((time.time() - t0) * 1000)
+
         if enable_res.status_code == 200:
             success_msg = (
                 f"✅ *XÁC THỰC THÀNH CÔNG (HEALTH PROBE PASSED)*\n\n"
                 f"• **Tài khoản**: `{account_id}`\n"
-                f"• **Health Probe**: HTTP `200 OK` (Vượt qua thử thách danh tính)\n"
-                f"• **Trạng thái Pool**: 🟢 Đã kích hoạt lại thành công (Active)\n"
+                f"• **Health Probe**: HTTP `200 OK` (Google Quota xác nhận sạch)\n"
+                f"• **Trạng thái Pool**: 🟢 Đã kích hoạt lại thành công (Active in RAM Rotation)\n"
                 f"• **Thời gian**: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}"
             )
             if not await edit_telegram_msg(chat_id, status_msg_id, success_msg, reply_markup=get_main_dashboard_markup()):
@@ -853,12 +1019,12 @@ async def reenable_antigravity_account(
             append_audit_log(
                 "antigravity_reenable",
                 "antigravity.account.reenable",
-                {"account_id": account_id, "probe": 200, "enable": 200},
+                {"account_id": account_id, "probe": 200, "toggle_proxy": 200},
                 user_id,
                 "SUCCESS",
                 duration_ms,
                 0,
-                "Account re-enabled after passing probe gate",
+                "Account re-enabled after passing quota probe and toggle proxy",
             )
             return True
         else:
@@ -866,7 +1032,7 @@ async def reenable_antigravity_account(
                 f"⚠️ *PROBE THÀNH CÔNG NHƯNG BẬT LẠI THẤT BẠI*\n\n"
                 f"• **Tài khoản**: `{account_id}`\n"
                 f"• **Probe**: HTTP `200 OK`\n"
-                f"• **Lỗi Enable**: HTTP `{enable_res.status_code}`\n"
+                f"• **Lỗi Toggle Proxy**: HTTP `{enable_res.status_code}`\n"
                 f"• Vui lòng kiểm tra lại dịch vụ Antigravity Tools."
             )
             if not await edit_telegram_msg(chat_id, status_msg_id, enable_err_msg, reply_markup=get_main_dashboard_markup()):
@@ -879,9 +1045,10 @@ async def reenable_antigravity_account(
                 "ENABLE_FAILED",
                 duration_ms,
                 1,
-                f"Enable returned HTTP {enable_res.status_code}",
+                f"Toggle proxy returned HTTP {enable_res.status_code}",
             )
             return False
+
     except Exception as e:
         duration_ms = int((time.time() - t0) * 1000)
         net_err_msg = f"❌ *LỖI KẾT NỐI KHI BẬT LẠI TÀI KHOẢN*: {e}"
