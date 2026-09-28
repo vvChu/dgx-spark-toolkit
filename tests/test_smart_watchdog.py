@@ -421,7 +421,7 @@ def test_healer_redis_isolated_db5_and_state_tracking(monkeypatch):
 
         # 2. Record first seen
         sw.record_account_first_seen("acc_test_redis")
-        assert f"watchdog:healer:first_seen:acc_test_redis" in fake_r.data
+        assert "watchdog:healer:first_seen:acc_test_redis" in fake_r.data
 
         # 3. Record attempt
         sw.record_healing_attempt("acc_test_redis")
@@ -434,7 +434,7 @@ def test_healer_redis_isolated_db5_and_state_tracking(monkeypatch):
 
         # 5. Clear state
         sw.clear_account_healer_state("acc_test_redis")
-        assert f"watchdog:healer:first_seen:acc_test_redis" not in fake_r.data
+        assert "watchdog:healer:first_seen:acc_test_redis" not in fake_r.data
 
 
 def test_auto_heal_rate_limit_one_per_cycle():
@@ -589,4 +589,3 @@ def test_daily_digest_counts_validation_blocked_account():
         digest = sw.build_daily_digest_message("29/09/2026")
         assert "1/2" in digest
         assert "1 tạm ngắt" in digest
-
