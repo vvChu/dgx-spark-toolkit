@@ -1,42 +1,43 @@
-# Walkthrough — PR #76: AI-Native Architecture, Modular Chunkers, Fast MCP Tooling & Qwen 3.6 Upgrade
+# Walkthrough — PR #81: Harden Qwen 3.6 Reasoning Model Profiles, Non-Thinking Fallback & Cache Isolation
 
-> **PR:** [#76 feat(architecture): refactor for ai-native codebase, modular chunkers, and mcp tooling (ADR-0005)](https://github.com/vvChu/dgx-spark-toolkit/pull/76)  
-> **Merged Commit:** `f92ecb2` $\rightarrow$ `master`  
-> **Verification Status:** ✅ 100% PASS (527/527 Tests Passed, 0 Flake8 Errors, Dual-Gate CI 4/4 Green)  
-> **Production Status:** 🟢 RELEASED & DEPLOYED TO PRODUCTION
+> **PR:** [#81 feat(gateway): harden qwen3.6 reasoning model profiles and non-thinking fallback](https://github.com/vvChu/dgx-spark-toolkit/pull/81)  
+> **Merged Commit:** `81b419f` $\rightarrow$ `master`  
+> **Verification Status:** ✅ 100% PASS (527/527 Tests Passed, 0 Flake8 Errors, Dual-Gate CI 4/4 Green, Live Gateway 5/5 Scenarios Pass)  
+> **Peer Review Verdict:** 🛡️ FINAL APPROVE (Grok 4.7 Host-Direct Audit)  
+> **Production Status:** 🟢 RELEASED & MERGED TO MASTER
 
 ---
 
 ## 1. Tổng Quan Kết Quả Phát Hành (Release Summary)
 
-Gói phát hành PR #76 mang lại hai bước chuyển biến quan trọng cho hệ thống:
-1. **Chuyển đổi Kiến trúc AI-Native (ADR-0005)**: Phân rã cấu trúc tệp monolithic, cách ly Redis DB split, rút ngắn hàm tuân thủ KISS (< 50 dòng), và tích hợp hệ thống MCP Server siêu nhẹ cho AI Agents.
-2. **Nâng cấp Toàn diện Local Primary LLM Lên Qwen 3.6 35B FP8 & Tối Ưu Hệ Sinh Thái**: Tăng tốc bóc tách JSON và các tác vụ nền gấp 13.5 lần, kích hoạt Thinking Preservation với parser `qwen3`, và chống cạn kiệt token trong pipeline RAG/HyDE.
+Gói phát hành PR #81 củng cố toàn diện tầng trung chuyển AI-Gateway (LiteLLM) và các dịch vụ RAG kết nối mô hình cục bộ Qwen 3.6 35B A3B FP8:
+1. **Triệt tiêu nguy cơ Token Starvation**: Cấu hình `enable_thinking: false` trên `rag-core`, loại bỏ nguy cơ cạn kiệt token (`finish_reason: length`) trên các prompt ngắn, đảm bảo 34 chuỗi cloud fallback và các tác vụ trích xuất JSON hoạt động ổn định < 0.03s.
+2. **Phân định rõ rệt 3 Profile Mô Hình**:
+   - `rag-core` / `local-instruct`: Non-thinking siêu tốc, finish_reason=stop.
+   - `local-coder`: Hỗ trợ function calling (`qwen3_coder`) và thinking (`max_tokens >= 512`).
+   - `qwen-local-primary`: Giữ trọn Chain-of-Thought sâu (1,700+ ký tự suy luận).
+3. **Cách ly Cache Namespace Redis DB 0**: Kích hoạt `cache_params.namespace: "v20260928_qwen36_nonthinking"` trên LiteLLM, ngăn chặn rủi ro phục vụ lại cache rỗng bị starvation trước đó mà không làm xáo trộn các DB dữ liệu khác (DB 1, 2, 4) và không cần chạy lệnh nguy hiểm `FLUSHALL`.
+4. **Vệ sinh Hợp đồng Dịch vụ**: Sửa `ai_gateway_client.py` và `chat_service.py` để loại bỏ false positive với `ocr-primary`.
 
 ---
 
 ## 2. Toàn Bộ Các Hạng Mục Đã Phát Hành
 
-### A. Kiến Trúc AI-Native & Modular Chunkers (ADR-0005)
-- **Scoped Progressive Disclosure**: Bổ sung `AGENTS.md` phạm vi hẹp (< 40 dòng) cho các dịch vụ `services/rag-service/`, `services/ai-gateway/`, và `services/frontend/`.
-- **Phân rã Chunking Monolith**: Tách `chunking.py` (894 dòng) thành gói module chuyên biệt `services/rag-service/ingestion/chunkers/` (`base.py`, `legal.py`, `layout.py`, `table.py`, `fallback.py`) kèm Facade mỏng bảo đảm 100% tương thích ngược.
-- **Cách Ly Redis DB 3**: Chuyển Table Summary Cache sang Redis DB 3 (`format_redis_db3_url`), giải phóng triệt để Redis DB 1 cho hàng đợi ingestion stream (`ingest:queue`).
-- **Tối Giản Hóa Pipeline Tìm Kiếm (KISS)**: Refactor các stage trong `search_pipeline.py` thành các hàm con < 35 dòng, bảo đảm 100% hàm trong phạm vi kiểm toán $\le 50$ dòng.
-- **Fast MCP Server (`scripts/mcp_server.py`)**: Cầu nối HTTP Bridge sang RAG daemon `:8005`, tiêu thụ 0 MB VRAM bổ sung, cold start ~0.3s.
+### A. Cấu Hình AI Gateway (`services/ai-gateway/litellm_config.yaml`)
+- **`rag-core`**: Bổ sung `extra_body.chat_template_kwargs.enable_thinking: false`. Loại bỏ cấu hình chết `tool_call_parser: openai`.
+- **`local-coder`**: Bổ sung `chat_template_kwargs.enable_thinking: true`.
+- **`qwen-local-primary`**: Bổ sung `extra_body.chat_template_kwargs.enable_thinking: true`.
+- **Redis Cache Isolation**: Bổ sung `namespace: "v20260928_qwen36_nonthinking"` dưới `litellm_settings.cache_params`.
 
-### B. Nâng Cấp Local Primary LLM Lên Qwen 3.6 35B FP8
-- **Mô hình**: `Qwen/Qwen3.6-35B-A3B-FP8` chạy trên vLLM (container `qwen36b`), kiến trúc `Qwen3_5MoeForConditionalGeneration` (MoE 256/8, Dynamic FP8, native Vision multimodal).
-- **Thinking Preservation**: Kích hoạt `--reasoning-parser qwen3` và `--tool-call-parser qwen3_coder`.
-- **Inductor AOT Cache**: Bổ sung volume mount `- /home/vvc/.cache/vllm:/root/.cache/vllm` tiết kiệm 40s thời gian khởi động container.
+### B. RAG Backend Service (`services/rag-service/`)
+- **`core/ai_gateway_client.py`**: Tinh chỉnh điều kiện stream thinking: Chỉ kích hoạt cho `local-coder`, `qwen-local-primary`, hoặc tên chứa `coder`/`qwen` kết hợp `primary` (tránh khớp nhầm `ocr-primary`).
+- **`services/chat_service.py`**: Đồng bộ logic kiểm tra cờ thinking giữa sinh câu trả lời đồng bộ và streaming.
 
-### C. Tối Ưu Hóa Hệ Sinh Thái Đa Dịch Vụ (Ecosystem Optimization)
-- **Role-based Aliases trên AI Gateway (`litellm_config.yaml`)**:
-  - `local-instruct`: Ép buộc `enable_thinking: False`, rút ngắn độ trễ xử lý JSON từ 5.6s xuống **0.398s (nhanh hơn 13.5x)**, loại bỏ hoàn toàn token suy luận thừa.
-  - `local-coder`: Dành riêng cho lập trình và bài toán suy luận sâu.
-- **Open WebUI (`docker-compose.yml`)**: Cấu hình `TASK_MODEL: local-instruct`, giúp các tác vụ ngầm (auto-titling, tóm tắt) hoàn tất trong < 0.4s.
-- **RAG Service & HyDE Pipeline**:
-  - `extract_json()`: Mặc định `enable_thinking: False`, chống cạn kiệt token trên prompt ngắn.
-  - `HyDEGenerator`: Tắt thinking với `max_tokens=512`, khắc phục triệt để hiện tượng câu trả lời giả định bị rỗng (sinh thành công 1,308 ký tự chuẩn xác).
+### C. Tri thức & Vận Hành Chuẩn Hóa
+- **`.agents/skills/ccba-llm-pipeline-patterns/SKILL.md`**: Bổ sung Pattern 16 về quản trị reasoning profile và phòng thủ cache poisoning.
+- **`.md/knowledge/session_learnings.md`**: Cập nhật RULE-5.8 (quản lý dung lượng tệp chặt chẽ $\le 10\text{ KB}$).
+- **`scripts/verify_gateway_endpoints.py`**: Bổ sung Section 6 kiểm thử live tự động 3 profile Qwen 3.6.
+- **`.md/peer_exchange/grok_completion_review_gateway.md`**: Lưu trữ biên bản nghiệm thu độc lập của Grok 4.7.
 
 ---
 
@@ -44,19 +45,20 @@ Gói phát hành PR #76 mang lại hai bước chuyển biến quan trọng cho 
 
 | Hạng mục kiểm tra | Kết quả thực tế | Trạng thái |
 |---|:---:|:---:|
-| **Local Unit Tests** | 527/527 tests passed | ✅ 100% PASS |
-| **Local Linter (flake8)** | 0 errors trên toàn bộ file thay đổi | ✅ PASS |
+| **Local Unit Tests** | 527/527 tests passed in 10.68s | ✅ 100% PASS |
+| **Local Linter (flake8)** | 0 errors trên toàn bộ backend & scripts | ✅ PASS |
 | **Maskara Secret Scanner** | 0 secrets / 0 leaks | ✅ PASS |
-| **GitHub Actions: Backend Tests** | Hoàn thành thành công | ✅ PASS |
-| **GitHub Actions: Frontend Build** | Hoàn thành thành công | ✅ PASS |
-| **GitHub Actions: Python Lint** | Hoàn thành thành công | ✅ PASS |
-| **GitHub Actions: Security Audit** | Hoàn thành thành công | ✅ PASS |
-| **Model Throughput Concurrency=1** | 54.46 tokens/s (TTFT: 0.28s) | ✅ PASS |
-| **Model Throughput Concurrency=4** | 137.35 tokens/s tổng thông lượng | ✅ PASS |
+| **Live Gateway Verification (:8090)** | 5/5 kịch bản PASS (đo đạc latency < 0.03s trên rag-core) | ✅ PASS |
+| **Redis Cache Isolation (DB 0)** | 22 key mang prefix `v20260928_qwen36_nonthinking`, DB 1, 2, 4 nguyên vẹn | ✅ PASS |
+| **Grok 4.7 Host-Direct Audit** | Phán quyết **FINAL APPROVE** không có khiếm khuyết chặn | ✅ PASS |
+| **GitHub Actions: Backend Tests** | Hoàn thành thành công (1m 03s) | ✅ PASS |
+| **GitHub Actions: Frontend Build** | Hoàn thành thành công (24s) | ✅ PASS |
+| **GitHub Actions: Python Lint** | Hoàn thành thành công (11s) | ✅ PASS |
+| **GitHub Actions: Security Audit** | Hoàn thành thành công (43s) | ✅ PASS |
 
 ---
 
 ## 4. Dọn Dẹp Môi Trường & Lưu Trữ
-- **Branch**: Nhánh `refactor/ai-native-codebase` đã được xóa sạch cục bộ và trên remote `origin`.
-- **Nhánh Master**: Đã đồng bộ hoàn toàn với `origin/master` tại commit `f92ecb2`.
-- **Mô hình cũ**: `/home/vvc/models/Qwen3.5-35B-A3B-FP8` (34.89 GB) được lưu giữ an toàn làm rollback safety net; dung lượng trống NVMe hiện tại là 849 GB (> 70%).
+- **Branch**: Nhánh `feat/ai-gateway-reasoning-model-profiles` đã được xóa sạch cục bộ và remote `origin`.
+- **Nhánh Master**: Đã đồng bộ hoàn toàn với `origin/master` tại commit `81b419f`.
+- **Containers**: `ai-gateway` (:8090) up and healthy, `qwen36b` (:8004) ổn định liên tục không bị restart ngoài ý muốn.
