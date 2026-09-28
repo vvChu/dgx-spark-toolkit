@@ -1040,10 +1040,14 @@ model_list:
       rpm: 600
       tpm: 10000000
       timeout: 900
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
     model_info:
       mode: chat
       supports_tool_calling: true
       supports_vision: true
+      description: "General RAG backbone and non-thinking fast fallback for cloud models."
 
   - model_name: local-instruct
     litellm_params:
@@ -1082,6 +1086,8 @@ model_list:
         presence_penalty: 0.0
         repetition_penalty: 1.0
         top_k: 20
+        chat_template_kwargs:
+          enable_thinking: true
     model_info:
       mode: chat
       supports_tool_calling: true
@@ -1144,9 +1150,13 @@ model_list:
       rpm: 600
       tpm: 10000000
       timeout: 900
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: true
     model_info:
       mode: chat
       supports_vision: true
+      description: "Qwen 3.6 35B with deep reasoning (Chain-of-Thought) enabled."
 
   - model_name: rag-light
     litellm_params:
@@ -1762,6 +1772,7 @@ litellm_settings:
     host: litellm-redis
     port: 6379
     ttl: 3600
+    namespace: "v20260928_qwen36_nonthinking"
     caching_groups:
       - ["ocr-primary", "ocr-fallback", reasoning-gemma, reasoning-fallback]
 

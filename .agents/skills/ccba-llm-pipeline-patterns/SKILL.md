@@ -521,10 +521,10 @@ Khi triển khai các mô hình lý luận (Reasoning LLMs / Hybrid MoE như Qwe
     chat_template_kwargs:                     chat_template_kwargs:
    {"enable_thinking": False}                {"enable_thinking": True}
               │                                         │
-    Model Alias: `local-instruct`              Model Alias: `local-coder` / `rag-core`
+    Model: `rag-core` / `local-instruct`       Model: `local-coder` / `qwen-local-primary`
     vLLM: Direct generation                   vLLM: --reasoning-parser qwen3
     Throughput: 150+ tok/s                    Throughput: Deep CoT
-    Latency: ~0.4s                            Latency: ~5.6s
+    Latency: ~0.1 - 0.3s                      Latency: ~1.5 - 5.6s
 ```
 
 ### Triển khai Mẫu & Quy Tắc RULE-5.8 (Reasoning Model Thinking Token Management)
@@ -534,7 +534,7 @@ Khi triển khai các mô hình lý luận (Reasoning LLMs / Hybrid MoE như Qwe
    ```python
    # Khi gọi API Gateway / vLLM cho các hàm trích xuất JSON hoặc HyDE
    response = await client.chat.completions.create(
-       model="local-instruct",  # hoặc model vật lý
+       model="rag-core",  # hoặc local-instruct
        messages=[{"role": "user", "content": prompt}],
        max_tokens=300,
        extra_body={
@@ -544,8 +544,8 @@ Khi triển khai các mô hình lý luận (Reasoning LLMs / Hybrid MoE như Qwe
    ```
 
 2. **Role-Based Aliases tại API Gateway (LiteLLM)**:
-   - **`local-instruct`**: Trỏ về local model nhưng cố định tham số `enable_thinking: false` trong `model_info` hoặc gateway params. Dùng cho: `extract_json()`, HyDE queries, classification, titling, translation, OCR.
-   - **`local-coder` / `rag-core`**: Bật đầy đủ `qwen3` reasoning parser và `qwen3_coder` tool parser. Dùng cho: Code generation, complex multi-step planning, audit, verification.
+   - **`rag-core` / `local-instruct`**: Trỏ về local model nhưng cố định tham số `enable_thinking: false` trong `model_info` hoặc gateway params. Dùng cho: `extract_json()`, HyDE queries, classification, titling, translation, OCR, và 34 chuỗi cloud fallback.
+   - **`local-coder` / `qwen-local-primary`**: Bật đầy đủ `qwen3` reasoning parser và `qwen3_coder` tool parser. Dùng cho: Code generation, complex multi-step planning, audit, verification, deep legal CoT analysis.
 
 3. **Defensive Pipeline Fallback (Auto-Recovery & Cache-Bust Guard)**:
    > [!WARNING]
@@ -568,9 +568,9 @@ Khi triển khai các mô hình lý luận (Reasoning LLMs / Hybrid MoE như Qwe
    ```
 
 ### Key Invariants
-1. **Never Prompt-Beg**: Tuyệt đối không phụ thuộc vào văn xuôi "không suy nghĩ" trong system prompt. BẮT BUỘC tắt thinking từ tầng chat template (`enable_thinking: False`) hoặc định tuyến qua alias `local-instruct`.
+1. **Never Prompt-Beg**: Tuyệt đối không phụ thuộc vào văn xuôi "không suy nghĩ" trong system prompt. BẮT BUỘC tắt thinking từ tầng chat template (`enable_thinking: False`) hoặc định tuyến qua alias `rag-core` / `local-instruct`.
 2. **Task-Type Scoped Thinking Isolation**: Ranh giới bật/tắt thinking phải dựa trên **hợp đồng loại tác vụ** (structured JSON extraction, HyDE, OCR, titling/tagging) thay vì chỉ nhìn vào ngưỡng token số học đơn thuần.
-3. **Decoupled Gateway Contract**: Application code chỉ được gọi thông qua các alias ngữ nghĩa (`local-instruct`, `rag-core`), không hardcode tên checkpoint vật lý.
+3. **Decoupled Gateway Contract**: Application code chỉ được gọi thông qua các alias ngữ nghĩa (`rag-core`, `local-instruct`, `local-coder`, `qwen-local-primary`), không hardcode tên checkpoint vật lý.
 4. **Cache-Bust on Starvation Recovery**: Mọi cơ chế retry khắc phục starvation bắt buộc phải gắn kèm cờ bypass cache hoặc nonce để ngăn chặn hiệu ứng ngộ độc cache rỗng 3600 giây từ Redis.
 
 ---

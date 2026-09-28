@@ -129,6 +129,73 @@ def main():
         except Exception as e:
             print(f"Alias '{alias_name}' failed: {e}", flush=True)
 
+    # 6. Test Local Qwen 3.6 Reasoning Profiles
+    print("\n=== 6. Testing Local Qwen 3.6 Reasoning Profiles ===", flush=True)
+    # 6a. rag-core non-thinking default
+    try:
+        t0 = time.time()
+        r = requests.post(f"{base_url}/v1/chat/completions", headers=headers, json={
+            "model": "rag-core",
+            "messages": [{"role": "user", "content": "Trả về JSON: {\"status\": \"ok\"}"}],
+            "max_tokens": 100,
+            "temperature": 0.1,
+        }, timeout=30)
+        dt = time.time() - t0
+        data = r.json()
+        choice = data["choices"][0]
+        content = choice.get("message", {}).get("content", "")
+        reasoning = choice.get("message", {}).get("reasoning_content") or ""
+        assert choice.get("finish_reason") == "stop", f"Expected stop, got {choice.get('finish_reason')}"
+        assert len(content.strip()) > 0, "rag-core content is empty!"
+        assert len(reasoning) == 0, "rag-core should not have reasoning_content!"
+        print(f"rag-core -> Status: {r.status_code} ({dt:.2f}s, non-thinking OK, finish_reason=stop)", flush=True)
+    except Exception as e:
+        print(f"rag-core check failed: {e}", flush=True)
+
+    # 6b. local-coder tool-calling
+    try:
+        t0 = time.time()
+        r = requests.post(f"{base_url}/v1/chat/completions", headers=headers, json={
+            "model": "local-coder",
+            "messages": [{"role": "user", "content": "Tra cứu Điều 12 Luật Xây dựng"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "lookup_law",
+                    "description": "Tra cứu luật",
+                    "parameters": {"type": "object", "properties": {"dieu": {"type": "string"}}, "required": ["dieu"]}
+                }
+            }],
+            "tool_choice": "auto",
+            "max_tokens": 512,
+        }, timeout=30)
+        dt = time.time() - t0
+        data = r.json()
+        choice = data["choices"][0]
+        assert choice.get("finish_reason") == "tool_calls", f"Expected tool_calls, got {choice.get('finish_reason')}"
+        print(f"local-coder -> Status: {r.status_code} ({dt:.2f}s, tool_calls OK)", flush=True)
+    except Exception as e:
+        print(f"local-coder check failed: {e}", flush=True)
+
+    # 6c. qwen-local-primary deep CoT
+    try:
+        t0 = time.time()
+        prompt_qwen = "Phân tích sự khác nhau giữa Giấy phép xây dựng có thời hạn và chính thức."
+        r = requests.post(f"{base_url}/v1/chat/completions", headers=headers, json={
+            "model": "qwen-local-primary",
+            "messages": [{"role": "user", "content": prompt_qwen}],
+            "max_tokens": 512,
+            "temperature": 0.6,
+        }, timeout=30)
+        dt = time.time() - t0
+        data = r.json()
+        choice = data["choices"][0]
+        reasoning = choice.get("message", {}).get("reasoning_content") or ""
+        assert len(reasoning) > 0, "qwen-local-primary expected deep CoT reasoning_content!"
+        print(f"qwen-local-primary -> Status: {r.status_code} ({dt:.2f}s, CoT: {len(reasoning)} chars)", flush=True)
+    except Exception as e:
+        print(f"qwen-local-primary check failed: {e}", flush=True)
+
+
 if __name__ == "__main__":
     main()
-

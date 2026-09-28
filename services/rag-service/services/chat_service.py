@@ -203,10 +203,7 @@ class ChatService:
     ) -> str:
         """Call the LLM and return the generated answer."""
         tracer.start_step("generate")
-        model_lower = target_model.lower()
-        is_instruct = "instruct" in model_lower
-        is_reasoning_target = any(k in model_lower for k in ["rag-core", "local-coder", "qwen-local-primary"])
-        enable_thinking = is_reasoning_target and not is_instruct
+        enable_thinking = "coder" in target_model.lower() or ("qwen" in target_model.lower() and "primary" in target_model.lower())
         extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
 
         answer = await self.ai_client.complete(
