@@ -1,65 +1,61 @@
-# Báo Cáo Nghiệm Thu Hoàn Tất: Nâng Cấp Khả Năng Phục Hồi ChatOps & Chuẩn Hóa Task Models
+# Báo Cáo Nghiệm Thu Hoàn Tất: Nâng Cấp Khả Năng Phục Hồi ChatOps & Watchdog Auto-Healing Loop (PR #79 & PR #80)
 
-> **Nhánh triển khai:** `fix/chatops-reenable-and-quota-breaker-resilience`  
-> **Căn cứ kiến trúc:** ADR-0001, ADR-0003, Playbook LLM API Guide  
-> **Phản biện đối kháng độc lập:** [Báo cáo Grok 4.7 (CONDITIONAL APPROVE)](.md/peer_exchange/grok_cross_review_chatops_plan.md)  
-> **Chế độ thực thi:** Phase 1 (Chữa dứt điểm cơ chế Re-enable, đồng bộ chỉ số Quota Pool, chuẩn hóa Task Models)
-
----
-
-## 1. Bản Chất Vấn Đề & Phân Tích Căn Nguyên (Root Causes)
-
-Sau quá trình rà soát toàn diện mã nguồn Antigravity-Manager (`crates/proxy/src/handlers/quota.rs`, `account.rs`), ChatOps Daemon (`scripts/chatops_daemon.py`), và AI Gateway LiteLLM:
-
-### A. Vấn Đề Cảnh Báo & Khóa Tạm Thời 1 Lần Truy Cập Lỗi (1-Strike Lockout)
-1. **Hành vi cốt lõi của Antigravity-Manager**: Khi Google upstream trả về mã `403` hoặc `Resource has been exhausted`, Antigravity tự động đánh dấu cờ `quota.is_forbidden = true` và `proxy_disabled = true`, đồng thời loại trừ ngay tài khoản khỏi danh sách quay vòng (RAM rotation) trong `get_active_accounts()`.
-2. **Tại sao cơ chế cũ của ChatOps bị lỗi thời (Dead-End)**:
-   - Trước đây ChatOps gọi `POST /api/accounts/{id}/warmup` hoặc `POST /api/accounts/{id}/enable`. Nhưng mã nguồn Rust thực tế của Antigravity:
-     - Endpoint `/enable` **không tồn tại** (trả về 404). Endpoint đúng là `POST /api/accounts/{id}/toggle-proxy` với payload `{"enable": true}`.
-     - Hàm `warm_up_account` trong `quota.rs` kiểm tra: nếu `proxy_disabled == true` thì trả về ngay `500 Account is disabled`. Do đó, nếu gọi `/warmup` trên tài khoản đang bị khóa thì 100% thất bại!
-     - Nếu chỉ gọi `toggle-proxy` mà không xóa `is_forbidden`, hàm `get_account_state_on_disk` vẫn coi tài khoản là `Disabled` do `quota.is_forbidden == true`, khiến tài khoản không thể nạp lại vào RAM.
-3. **Giải pháp 4-Stage Health Probe Gate chuẩn xác**:
-   - **Stage 1 (Local Pre-Classification)**: Kiểm tra danh sách tài khoản cục bộ qua `GET /api/accounts`. Nếu tài khoản có `validation_url`, `validation_blocked`, `invalid_grant`, hoặc bị khóa thủ công (`manual`), hệ thống **từ chối probe ngay lập tức** mà không gửi bất kỳ request nào lên Google, ngăn ngừa việc tài khoản bị Google đánh cờ gian lận (abuse flagging) hoặc làm mất URL xác thực trình duyệt.
-   - **Stage 2 (Quota Probe Gate)**: Gọi `GET /api/accounts/{id}/quota` kèm Header Admin Bearer Secret (timeout 30s). Đây là endpoint an toàn duy nhất: khi gọi endpoint này, Antigravity sẽ chủ động truy vấn hạn mức Google và **tự động reset `is_forbidden = false`** nếu tài khoản đã hết quota tạm thời hoặc đã sạch lỗi.
-   - **Stage 3 (Proxy Activation)**: Sau khi Quota Probe trả về 200 OK và `is_forbidden == false`, gửi `POST /api/accounts/{id}/toggle-proxy` với `{"enable": true}` để làm sạch cờ `proxy_disabled = false` và nạp lại tài khoản vào RAM rotation pool.
-   - **Stage 4 (Audit & Telemetry)**: Phân loại chính xác 4 trạng thái kiểm toán (`SUCCESS`, `PRE_CHECK_REJECTED`, `PROBE_FAILED`, `ENABLE_FAILED`) kèm ghi nhận log bất biến băm xích (hash chain audit log).
+> **Nhánh phát hành:** `master` (Commits: `6d4a02b` cho PR #79, `266377e` cho PR #80)  
+> **Căn cứ kiến trúc:** ADR-0001, ADR-0003, ADR-0004, ADR-0058, Playbook LLM API Guide  
+> **Phản biện đối kháng độc lập:** [Báo cáo Grok 4.7 (FINAL ACCEPT)](.md/peer_exchange/grok_final_accept_chatops_results.md)  
+> **Trạng thái:** ✅ **RELEASED & VERIFIED TO PRODUCTION**
 
 ---
 
-### B. Lệch Chỉ Số Quota Pool Giữa `/stats` và `/antigravity_status`
-- Hàm `probe_gateway_stats()` trước đây chỉ lọc `not a.get("disabled")`, trong khi tài khoản Antigravity bị khóa chủ yếu qua `proxy_disabled: true` hoặc `quota.is_forbidden: true`. Do đó, `/stats` báo 4/4 tài khoản khả dụng dù thực tế chỉ có 1 tài khoản hoạt động.
-- Đã bổ sung hàm dùng chung `is_account_blocked(account: Dict[str, Any]) -> bool` kiểm tra toàn diện cả 4 cờ: `proxy_disabled`, `disabled`, `validation_blocked`, và `quota.is_forbidden`. Đồng bộ 100% giữa `/stats` và `/antigravity_status`.
+## 1. Tổng Quan & Căn Nguyên Kiến Trúc (Architecture & Root Cause)
+
+Sau đợt rà soát toàn diện và đối soát độc lập với Grok 4.7, toàn bộ chuỗi ChatOps Re-enable và Watchdog Auto-Healing Loop đã được hoàn thiện, khắc phục triệt để lỗi P0 schema mismatch và đảm bảo khả năng tự phục hồi bền bỉ:
+
+### A. Khắc Phục Lỗi P0 Flat Schema trong Quota Probe
+1. **Bản chất**: Handler `admin_fetch_account_quota` của Antigravity-Manager trả về trực tiếp cấu trúc phẳng `QuotaData` (`is_forbidden` nằm ở root level JSON), thay vì bọc bên trong key `"quota"`.
+2. **Khắc phục**:
+   - Triển khai predicate `quota_probe_allows_toggle(body: Any) -> bool` kiểm tra an toàn cả hai cấu trúc (root level và nested), yêu cầu ít nhất một cờ boolean `False` tường minh mới cho phép kích hoạt proxy (`toggle-proxy`).
+   - Mọi payload rỗng, dictionary không có cờ, lỗi format hoặc cờ `True` đều bị chặn tức thì (fail-closed).
+   - Áp dụng đồng bộ cho cả `scripts/chatops_daemon.py` và `scripts/smart_watchdog.py`.
+
+### B. ChatOps 4-Stage Health Probe Gate (PR #79)
+1. **Stage 1 (Local Pre-Classification)**: Kiểm tra danh sách tài khoản cục bộ qua `GET /api/accounts`. Nếu tài khoản có `validation_url`, `validation_blocked`, `invalid_grant`, hoặc bị khóa thủ công (`manual`), từ chối probe ngay lập tức mà không gửi request lên Google, bảo vệ URL xác thực trình duyệt và ngăn chặn abuse flagging.
+2. **Stage 2 (Quota Probe Gate)**: Gọi `GET /api/accounts/{id}/quota` kèm Header Admin Bearer Secret (timeout 30s) để truy vấn hạn mức và kích hoạt Antigravity reset cờ `is_forbidden`.
+3. **Stage 3 (Proxy Activation)**: Gửi `POST /api/accounts/{id}/toggle-proxy` với `{"enable": true}` để nạp lại tài khoản vào RAM rotation pool.
+4. **Stage 4 (Audit & Telemetry)**: Ghi log kiểm toán phân loại rõ ràng 4 trạng thái (`SUCCESS`, `PRE_CHECK_REJECTED`, `PROBE_FAILED`, `ENABLE_FAILED`).
+
+### C. Watchdog Auto-Healing Loop & Cô Lập Redis DB 5 (PR #80)
+1. **Isolated Healer State Store**: Cô lập toàn bộ trạng thái tự phục hồi (backoff, attempt counter) vào **Redis DB 5** (hoặc `WATCHDOG_REDIS_URL`), tuyệt đối không chia sẻ với DB 0 (LiteLLM Cache) hay DB 1 (`ingest:queue`).
+2. **State Cleanup & Accounting Consistency**:
+   - Dọn dẹp triệt để `first_seen` mapping theo `account_id` trong `check_quota_pool` khi tài khoản đã được phục hồi.
+   - Thống nhất hàm `is_account_blocked` kiểm tra đủ 4 cờ (`proxy_disabled`, `disabled`, `validation_blocked`, `quota.is_forbidden`) cho cả ChatOps, Watchdog, và Daily Digest Telegram report.
 
 ---
 
-### C. Lệch Danh Mục Task Models Quản Lý
-1. **Metadata Extractor**:
-   - `services/rag-service/ingestion/pipeline_config.py` mặc định gọi `text-light-gemma`.
-   - `services/ai-gateway/litellm_config.yaml` triển khai model thực tế dưới tên `text-gemma-12b`.
-   - **Khắc phục**: Đồng bộ biến mặc định thành `text-gemma-12b`, đồng thời khai báo alias `text-light-gemma -> text-gemma-12b` trong cả `router_settings.model_group_alias` và `litellm_settings.model_aliases`. Cập nhật tài liệu kiến trúc ADR-0001, ADR-0003, và Playbook API.
-2. **Internal Background Task**:
-   - `gui_config.json` cấu hình `"internal-background-task": "gemini-3.8-flash-high"`. Model này ép ngân sách suy nghĩ 16,000 tokens (thinking budget), gây lãng phí quota nghiêm trọng cho các tác vụ nền nhỏ và dẫn tới lỗi 503 Quota Exhaustion.
-   - **Khắc phục**: Chuyển `"internal-background-task"` về `"gemini-2.5-flash"` (non-thinking, cực nhanh, tiết kiệm quota).
+## 2. Chi Tiết Các PR Đã Tích Hợp
+
+| PR | Nhánh Gốc | Merge Commit | Mô Tả |
+|---|---|---|---|
+| **#79** | `fix/chatops-reenable-and-quota-breaker-resilience` | `6d4a02b` | Sửa mismatch endpoint re-enable, triển khai 4-stage health probe, đồng bộ Quota Pool stats, căn chỉnh task models (`text-gemma-12b`, `gemini-2.5-flash`). |
+| **#80** | `feat/watchdog-auto-healing-loop` | `266377e` | Triển khai vòng lặp tự phục hồi tài khoản hết quota tạm thời, exponential backoff, cô lập Redis DB 5, dọn state map. |
 
 ---
 
-## 2. Chi Tiết Các Tệp Đã Sửa Đổi
+## 3. Ma Trận Kiểm Định Tự Động (Verification Matrix)
 
-| Tệp | Bản chất sửa đổi |
-|---|---|
-| `scripts/chatops_daemon.py` | Bổ sung `is_account_blocked()`, đồng bộ đếm Quota Pool trong `probe_gateway_stats()`, tái cấu trúc `reenable_antigravity_account()` theo quy trình 4-Stage Health Probe Gate chuẩn xác. |
-| `tests/test_chatops.py` | Cập nhật mock dual stats cho Quota Pool, bổ sung 4 test cases chuyên biệt cho quy trình re-enable (thành công, chặn local pre-check, thất bại ở quota probe, probe pass nhưng toggle fail). |
-| `services/rag-service/ingestion/pipeline_config.py` | Đồng bộ default model metadata extractor thành `text-gemma-12b`. |
-| `services/ai-gateway/litellm_config.yaml` | Khai báo alias `"text-light-gemma": "text-gemma-12b"` trong router và litellm settings. |
-| `~/.antigravity_tools/gui_config.json` | Cập nhật `"internal-background-task": "gemini-2.5-flash"` (backup file `.bak_fix`, quyền `0600`). |
-| `docs/adr/0001-*.md`, `docs/adr/0003-*.md`, `playbooks/llm-api-guide.md` | Chuẩn hóa quy ước gọi tên `text-gemma-12b` (alias `text-light-gemma`). |
-
----
-
-## 3. Ma Trận Kiểm Định Tự Động (Deterministic Verification Matrix)
-
-| Cổng kiểm định | Lệnh thực thi | Kết quả | Chi tiết |
+| Hạng mục kiểm định | Phạm vi | Kết quả | Chi tiết |
 |---|---|:---:|---|
-| **ChatOps Unit Tests** | `.venv/bin/pytest tests/test_chatops.py -v` | ✅ **PASS** | **49/49 passed** (100% Green, 4.73s) |
-| **Python Code Style** | `.venv/bin/flake8 scripts/chatops_daemon.py tests/test_chatops.py --max-line-length=160` | ✅ **PASS** | **0 errors, 0 warnings** |
-| **Grok 4.7 Adversarial Review** | `grok review scripts/chatops_daemon.py` | ✅ **APPROVED** | Phê duyệt phương án 4-Stage Probe Gate & loại trừ rủi ro flapping của Phase 2 |
+| **ChatOps Unit Tests** | `tests/test_chatops.py` | ✅ **PASS** | **56/56 passed** (100% Green) |
+| **Watchdog Unit Tests** | `tests/test_smart_watchdog.py` | ✅ **PASS** | **16/16 passed** (100% Green) |
+| **Tổng số Unit Tests** | Toàn bộ suite ChatOps & Watchdog | ✅ **PASS** | **72/72 passed** in 4.70s |
+| **GitHub Actions CI (PR #79)** | Dual-Gate CI Pipeline | ✅ **PASS** | 4/4 checks green (Backend, Frontend, Lint, Security) |
+| **GitHub Actions CI (PR #80)** | Dual-Gate CI Pipeline | ✅ **PASS** | 4/4 checks green (Backend, Frontend, Lint, Security) |
+| **Grok 4.7 Adversarial Review** | Peer Review Cổng 1 & Cổng 2 | ✅ **FINAL ACCEPT** | Score: Defense 9/10, Usability 8/10, KISS 8/10, Feasibility 9/10 |
+
+---
+
+## 4. Trạng Thái Vận Hành Runtime (Production Verification)
+
+- **`dgx-chatops.service`**: Chạy ổn định trên systemd user service (`1860646`), nạp mã nguồn chính thức trên `master`.
+- **`antigravity-tools.service`**: Đã binding `0.0.0.0:8045` (`allow_lan_access: true`), background task chuyển sang `gemini-2.5-flash`.
+- **`smart-watchdog` Container**: Docker container hoạt động bình thường, kết nối thông suốt qua mạng Tailscale, tự động phục hồi và báo cáo quota pool định kỳ.
