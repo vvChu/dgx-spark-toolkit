@@ -62,7 +62,7 @@ Fast Model Context Protocol (MCP) interface bridging AI agents (Claude Code, Cur
 | **Milvus** | Hybrid vector search (dense + sparse BGE-M3) | Collection: `legal_docs_v11` |
 | **Neo4j** | Knowledge graph relationships (`REPLACES`, `AMENDS`, `REFERENCES`, `GUIDES`) | Document nodes |
 | **PostgreSQL** | Ingestion state tracking & LiteLLM state | Table: `ingestion_state` |
-| **Redis** | DB 0: LiteLLM cache, DB 1: Ingestion queue, DB 2: Context Lake, DB 3: SemanticCache L2, DB 4: HITL review queue | Stream: `ingest:queue` (DB 1) |
+| **Redis** | DB 0: LiteLLM cache, DB 1: Ingestion queue, DB 2: Context Lake, DB 3: SemanticCache L2, DB 4: HITL review queue, DB 5: Watchdog auto-healer state | Stream: `ingest:queue` (DB 1) |
 
 ## Infrastructure & Docker
 

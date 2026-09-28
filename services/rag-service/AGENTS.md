@@ -15,5 +15,5 @@ Layered FastAPI backend providing Vietnamese legal document ingestion, hybrid ve
 
 ## Core Invariants
 - **Identity Model**: `doc_id` is uppercase canonical (e.g., `01/2021/TT-BXD`). Chunks are identified via `chunk_id` (`{doc_id}#{strategy}:{hash}`).
-- **Redis Partitioning**: DB 0: LiteLLM, DB 1: Ingestion Queue, DB 2: Context Lake, DB 3: Semantic Cache & Tier 0, DB 4: HITL Review.
+- **Redis Partitioning**: DB 0: LiteLLM, DB 1: Ingestion Queue, DB 2: Context Lake, DB 3: Semantic Cache & Tier 0, DB 4: HITL Review, DB 5: Watchdog Healer.
 - **Zero-Regression**: Never change Milvus collection schema (`legal_docs_v11`) without explicit ADR migration.

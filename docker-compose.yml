@@ -602,6 +602,7 @@ services:
       - GATEWAY_PROXY_KEY=${GATEWAY_PROXY_KEY}
       - GATEWAY_ADMIN_PASSWORD=${GATEWAY_ADMIN_PASSWORD}
       - REDIS_URL=${REDIS_CACHE_URL}
+      - WATCHDOG_REDIS_URL=${WATCHDOG_REDIS_URL}
     command: >
       sh -c "pip install requests docker redis && python /app/smart_watchdog.py"
     restart: unless-stopped

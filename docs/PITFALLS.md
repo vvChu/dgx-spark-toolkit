@@ -21,6 +21,7 @@ Critical technical gotchas, anti-patterns, and environment constraints to keep i
 - **Redis DB 2**: Dedicated strictly to the Context Lake (`SessionMemory`, `TraceStore`, `ContextAccumulator`).
 - **Redis DB 3**: Dedicated strictly to `SemanticCache` L2 persistent cache.
 - **Redis DB 4**: Dedicated strictly to `HITLService` low-confidence review queue.
+- **Redis DB 5**: Dedicated strictly to Smart Watchdog auto-healing ephemeral state and rate limits (key prefix `watchdog:healer:*`).
 - **Rule**: Never cross-post keys between DB partitions (e.g. sending cache keys to DB 1 or queue tasks to DB 0) to avoid cache evictions clearing job queues or corrupting conversational state.
 
 ## 4. Model Cache Volume Persistence
