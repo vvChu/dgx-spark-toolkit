@@ -1612,6 +1612,7 @@ router_settings:
     "text-light-gemma": "text-gemma-12b"
     "claude-haiku-4-5-20251001": "claude-haiku-4-5"
     "claude-3-5-haiku-20241022": "claude-haiku-4-5"
+    "text-light-gemma": "text-gemma-12b"
     "claude-3-5-haiku-latest": "claude-haiku-4-5"
     "claude-3-5-sonnet-20241022": "claude-sonnet-4-6"
     "claude-3-5-sonnet-latest": "claude-sonnet-4-6"

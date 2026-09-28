@@ -478,7 +478,7 @@ def test_dynamic_action_callback_restores_nonce_on_busy_lock():
                 "data": "act:busy_nonce_1",
             }
         }
-        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock), \
              patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
              patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
              patch("scripts.chatops_daemon.is_kernel_runner_locked", return_value=False):
@@ -1132,7 +1132,14 @@ def test_probe_gateway_stats_dual():
 
             mock_resp_acc = MagicMock()
             mock_resp_acc.status_code = 200
-            mock_resp_acc.json.return_value = {"accounts": [{"disabled": False}, {"disabled": True}]}
+            mock_resp_acc.json.return_value = {
+                "accounts": [
+                    {"disabled": False, "proxy_disabled": False},
+                    {"disabled": True, "proxy_disabled": False},
+                    {"disabled": False, "proxy_disabled": True},
+                    {"disabled": False, "quota": {"is_forbidden": True}},
+                ]
+            }
 
             async def mock_get(url, **kwargs):
                 if "/summary" in url:
@@ -1155,6 +1162,7 @@ def test_probe_gateway_stats_dual():
             assert "*Tổng Tokens:* `1,000,000`" in result
             assert "*Tỷ Lệ Tải Cục Bộ (Offload):* `80.0%`" in result
             assert "`openai/qwen-local-primary`" in result
+            assert "• *Quota Pool:* `1/4` tài khoản khả dụng" in result
 
     asyncio.run(_test())
 
@@ -1647,16 +1655,29 @@ def test_command_registry_antigravity_reenable():
 
 
 def test_reenable_antigravity_account_success():
-    """Verify reenable_antigravity_account succeeds when probe returns 200 and enable returns 200."""
+    """Verify reenable_antigravity_account succeeds when pre-check clean, quota probe 200 clean, and toggle-proxy returns 200."""
     async def _test():
         mock_client = AsyncMock()
-        mock_probe_resp = MagicMock()
-        mock_probe_resp.status_code = 200
+        # Stage 1: GET /api/accounts
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 200
+        mock_accs_resp.json.return_value = {
+            "accounts": [{"id": "acc_test_1", "email": "test@example.com", "proxy_disabled": True}]
+        }
 
-        mock_enable_resp = MagicMock()
-        mock_enable_resp.status_code = 200
+        # Stage 2: GET /api/accounts/acc_test_1/quota
+        mock_quota_resp = MagicMock()
+        mock_quota_resp.status_code = 200
+        mock_quota_resp.json.return_value = {
+            "quota": {"is_forbidden": False, "models": []}
+        }
 
-        mock_client.post.side_effect = [mock_probe_resp, mock_enable_resp]
+        mock_client.get.side_effect = [mock_accs_resp, mock_quota_resp]
+
+        # Stage 3: POST /api/accounts/acc_test_1/toggle-proxy
+        mock_toggle_resp = MagicMock()
+        mock_toggle_resp.status_code = 200
+        mock_client.post.return_value = mock_toggle_resp
 
         with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
              patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
@@ -1666,10 +1687,13 @@ def test_reenable_antigravity_account_success():
             success = await daemon.reenable_antigravity_account("acc_test_1", daemon.ADMIN_USER_ID, 1234)
 
             assert success is True
-            assert mock_client.post.call_count == 2
-            # 1st call is probe, 2nd call is enable
-            assert "/api/accounts/acc_test_1/probe" in mock_client.post.call_args_list[0][0][0]
-            assert "/api/accounts/acc_test_1/enable" in mock_client.post.call_args_list[1][0][0]
+            assert mock_client.get.call_count == 2
+            assert "/api/accounts" in mock_client.get.call_args_list[0][0][0]
+            assert "/api/accounts/acc_test_1/quota" in mock_client.get.call_args_list[1][0][0]
+
+            assert mock_client.post.call_count == 1
+            assert "/api/accounts/acc_test_1/toggle-proxy" in mock_client.post.call_args_list[0][0][0]
+            assert mock_client.post.call_args_list[0][1].get("json") == {"enable": True}
 
             mock_edit.assert_called_once()
             edit_text = mock_edit.call_args[0][2]
@@ -1683,14 +1707,64 @@ def test_reenable_antigravity_account_success():
     asyncio.run(_test())
 
 
-def test_reenable_antigravity_account_probe_rejected():
-    """Verify reenable_antigravity_account rejects and does NOT call enable when probe fails (e.g. 403 Challenge)."""
+def test_reenable_antigravity_account_pre_check_rejected():
+    """Verify reenable_antigravity_account halts immediately without calling quota probe or toggle-proxy if validation_url exists."""
     async def _test():
         mock_client = AsyncMock()
-        mock_probe_resp = MagicMock()
-        mock_probe_resp.status_code = 403  # Challenge active
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 200
+        mock_accs_resp.json.return_value = {
+            "accounts": [
+                {
+                    "id": "acc_val_req",
+                    "email": "blocked@example.com",
+                    "validation_url": "https://accounts.google.com/signin/continue",
+                    "disabled_reason": "Action required: verify your account",
+                }
+            ]
+        }
+        mock_client.get.return_value = mock_accs_resp
 
-        mock_client.post.return_value = mock_probe_resp
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("acc_val_req", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is False
+            # Only GET /api/accounts was called. Quota probe and toggle-proxy were NEVER called.
+            assert mock_client.get.call_count == 1
+            assert mock_client.post.call_count == 0
+
+            mock_edit.assert_called_once()
+            edit_text = mock_edit.call_args[0][2]
+            assert "TỪ CHỐI HEALTH PROBE (CHỐT CHẶN LOCAL BẢO VỆ)" in edit_text
+            assert "Cần mở khóa thủ công trên trình duyệt" in edit_text
+
+            mock_audit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "PRE_CHECK_REJECTED"
+
+    asyncio.run(_test())
+
+
+def test_reenable_antigravity_account_probe_rejected():
+    """Verify reenable_antigravity_account rejects and does NOT call toggle-proxy when quota probe detects is_forbidden."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 200
+        mock_accs_resp.json.return_value = {
+            "accounts": [{"id": "acc_blocked_403", "email": "forbidden@example.com"}]
+        }
+
+        mock_quota_resp = MagicMock()
+        mock_quota_resp.status_code = 200
+        mock_quota_resp.json.return_value = {
+            "quota": {"is_forbidden": True, "forbidden_reason": "Resource has been exhausted (e.g. check quota)."}
+        }
+
+        mock_client.get.side_effect = [mock_accs_resp, mock_quota_resp]
 
         with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
              patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
@@ -1700,9 +1774,8 @@ def test_reenable_antigravity_account_probe_rejected():
             success = await daemon.reenable_antigravity_account("acc_blocked_403", daemon.ADMIN_USER_ID, 1234)
 
             assert success is False
-            # Only probe should be called, enable must NEVER be called
-            assert mock_client.post.call_count == 1
-            assert "/api/accounts/acc_blocked_403/probe" in mock_client.post.call_args_list[0][0][0]
+            assert mock_client.get.call_count == 2
+            assert mock_client.post.call_count == 0
 
             mock_edit.assert_called_once()
             edit_text = mock_edit.call_args[0][2]
@@ -1717,16 +1790,24 @@ def test_reenable_antigravity_account_probe_rejected():
 
 
 def test_reenable_antigravity_account_probe_pass_enable_fail():
-    """Verify reenable_antigravity_account reports error if probe passes but enable endpoint returns 500."""
+    """Verify reenable_antigravity_account reports error if probe passes but toggle-proxy endpoint returns 500."""
     async def _test():
         mock_client = AsyncMock()
-        mock_probe_resp = MagicMock()
-        mock_probe_resp.status_code = 200
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 200
+        mock_accs_resp.json.return_value = {
+            "accounts": [{"id": "acc_test_fail", "email": "fail@example.com"}]
+        }
 
-        mock_enable_resp = MagicMock()
-        mock_enable_resp.status_code = 500
+        mock_quota_resp = MagicMock()
+        mock_quota_resp.status_code = 200
+        mock_quota_resp.json.return_value = {"quota": {"is_forbidden": False}}
 
-        mock_client.post.side_effect = [mock_probe_resp, mock_enable_resp]
+        mock_client.get.side_effect = [mock_accs_resp, mock_quota_resp]
+
+        mock_toggle_resp = MagicMock()
+        mock_toggle_resp.status_code = 500
+        mock_client.post.return_value = mock_toggle_resp
 
         with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
              patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
@@ -1736,7 +1817,8 @@ def test_reenable_antigravity_account_probe_pass_enable_fail():
             success = await daemon.reenable_antigravity_account("acc_test_fail", daemon.ADMIN_USER_ID, 1234)
 
             assert success is False
-            assert mock_client.post.call_count == 2
+            assert mock_client.get.call_count == 2
+            assert mock_client.post.call_count == 1
             mock_edit.assert_called_once()
             edit_text = mock_edit.call_args[0][2]
             assert "PROBE THÀNH CÔNG NHƯNG BẬT LẠI THẤT BẠI" in edit_text

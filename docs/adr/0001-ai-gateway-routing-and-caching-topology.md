@@ -6,7 +6,7 @@ During high-volume ingestion and legal document RAG retrieval, API rate limits (
 
 We decided to implement:
 1. **Hybrid Staircase GPU Offloading**: Route ~12-15% of OCR traffic to local `rag-core`, guarded by an instant fail-fast non-blocking mutex (`LOCAL_GPU_OCR_LOCK`). On lock contention, requests immediately spill over to Cloud Gemini burst capacity.
-2. **Selective Reasoning Model Scoping**: Reserve reasoning models (`gemini-3.5-flash` with medium thinking level primary, `reasoning-gemma` fallback) strictly for HyDE generation, legal conflict analysis (`/analysis`), and query synthesis. Use lightweight non-reasoning models (`gemini-2.5-flash-lite`, `text-light-gemma`) for metadata extraction and structured chunking.
+2. **Selective Reasoning Model Scoping**: Reserve reasoning models (`gemini-3.5-flash` with medium thinking level primary, `reasoning-gemma` fallback) strictly for HyDE generation, legal conflict analysis (`/analysis`), and query synthesis. Use lightweight non-reasoning models (`gemini-2.5-flash-lite`, `text-gemma-12b` [alias `text-light-gemma`]) for metadata extraction and structured chunking.
 3. **Split Cache Policy**: Enforce **Exact Hash Matching** (`cache:ocr:<sha256>:<doc_id>:p<page_num>`) for OCR page extractions to prevent cache poisoning across document revisions, and **Semantic Caching (0.85 similarity)** for user search queries and HyDE expansion.
 4. **Lazy Failover**: Maintain `background_health_checks: false` in LiteLLM config to prevent quota drain on 60+ endpoints, relying on `allowed_fails: 1` and `cooldown_time: 3600s` for dynamic endpoint failover.
 

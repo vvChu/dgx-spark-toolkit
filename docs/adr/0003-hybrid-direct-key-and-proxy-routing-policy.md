@@ -12,7 +12,7 @@ We decided to implement:
    - Local GPU Safety Net (`rag-core`): Failover to DGX vLLM Qwen 35B when cloud quotas are exhausted.
 
 2. **Gemma Free-Farm Offloading (144,000 req/day)**:
-   - Enforce 100% offloading of non-vision NLP tasks (chunk metadata extraction, synthetic HyDE queries, document summarization) to `Gemma 3 27B` (`text-gemma`) and `Gemma 3 12B` (`text-light-gemma`) via Direct Keys, preserving Gemini quotas exclusively for Vision OCR.
+   - Enforce 100% offloading of non-vision NLP tasks (chunk metadata extraction, synthetic HyDE queries, document summarization) to `Gemma 3 27B` (`text-gemma`) and `Gemma 3 12B` (`text-gemma-12b` [alias `text-light-gemma`]) via Direct Keys, preserving Gemini quotas exclusively for Vision OCR.
 
 3. **Hybrid Provider Routing Boundary**:
    - Direct Keys: Dedicated to high-volume, free-tier models (`gemini-3.1-flash-lite`, `gemini-3.5-flash-lite`, `gemma-3-27b`, `gemini-embedding-1`) where Redis tracks per-key RPD budgets.
