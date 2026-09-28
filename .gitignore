@@ -58,6 +58,9 @@ model_cache/
 # Ingestion state runtime files
 services/rag-service/ingestion_state.json
 
+# Local agent runtimes
+.grok/
+
 # Test data (large PDFs/docs)
 services/rag-service/data/legal_test/
 tests/*.pdf
