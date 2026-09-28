@@ -72,7 +72,10 @@ class AIGatewayClient:
         started_yielding = False
 
         for target_model in chain:
-            enable_thinking = "35b" in target_model.lower() or "core" in target_model.lower()
+            enable_thinking = (
+                "instruct" not in target_model.lower()
+                and (target_model in {"rag-core", "qwen-local-primary", "local-coder"} or "core" in target_model.lower())
+            )
             model_extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
             if extra_body:
                 model_extra.update(extra_body)
@@ -121,7 +124,11 @@ class AIGatewayClient:
                             finish_reason = choice.get("finish_reason")
 
                             # 1. Check reasoning / thought field (vLLM / LiteLLM / DeepSeek format)
-                            reasoning_content = delta.get("reasoning_content") or delta.get("thought")
+                            reasoning_content = (
+                                delta.get("reasoning_content")
+                                or delta.get("thought")
+                                or delta.get("reasoning")
+                            )
                             if reasoning_content:
                                 started_yielding = True
                                 yield StreamChunk(text=reasoning_content, is_thought=True, finish_reason=finish_reason)
@@ -270,6 +277,12 @@ class AIGatewayClient:
         else:
             raise TypeError("prompt_or_messages must be a str or list of dicts")
 
+        extra_body = dict(kwargs.pop("extra_body", None) or {})
+        chat_template_kwargs = dict(extra_body.get("chat_template_kwargs", {}) or {})
+        if "enable_thinking" not in chat_template_kwargs:
+            chat_template_kwargs["enable_thinking"] = False
+        extra_body["chat_template_kwargs"] = chat_template_kwargs
+
         raw_completion = await self.complete(
             messages,
             model=model,
@@ -277,6 +290,7 @@ class AIGatewayClient:
             max_tokens=max_tokens,
             timeout=timeout,
             model_chain=model_chain,
+            extra_body=extra_body,
             **kwargs,
         )
 
@@ -298,6 +312,7 @@ class AIGatewayClient:
                 max_tokens=max_tokens,
                 timeout=timeout,
                 model_chain=model_chain,
+                extra_body=extra_body,
                 **kwargs,
             )
             return self._clean_and_parse_json(repair_raw, schema=schema)

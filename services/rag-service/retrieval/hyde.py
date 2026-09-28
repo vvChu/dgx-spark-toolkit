@@ -39,6 +39,7 @@ class HyDEGenerator:
                 model=self.model,
                 max_tokens=512,
                 temperature=0.3,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             logger.info(f"HyDE generated hypothetical answer for query: {query[:50]}...")
             return content if content else ""
