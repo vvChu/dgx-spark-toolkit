@@ -1046,6 +1046,73 @@ model_list:
       supports_tool_calling: true
       supports_vision: true
 
+  - model_name: local-instruct
+    litellm_params:
+      model: "qwen-local-primary"
+      custom_llm_provider: "openai"
+      api_base: os.environ/GATEWAY_LOCAL_URL
+      api_key: "unused"
+      rpm: 600
+      tpm: 10000000
+      timeout: 900
+      extra_body:
+        temperature: 0.7
+        top_p: 0.8
+        presence_penalty: 1.5
+        repetition_penalty: 1.0
+        chat_template_kwargs:
+          enable_thinking: false
+        top_k: 20
+    model_info:
+      mode: chat
+      supports_vision: true
+      description: "Qwen 3.6 35B direct non-thinking mode for fast tasks, JSON extraction, and background summarization."
+
+  - model_name: local-coder
+    litellm_params:
+      model: "qwen-local-primary"
+      custom_llm_provider: "openai"
+      api_base: os.environ/GATEWAY_LOCAL_URL
+      api_key: "unused"
+      rpm: 600
+      tpm: 10000000
+      timeout: 900
+      extra_body:
+        temperature: 0.6
+        top_p: 0.95
+        presence_penalty: 0.0
+        repetition_penalty: 1.0
+        top_k: 20
+    model_info:
+      mode: chat
+      supports_tool_calling: true
+      supports_vision: true
+      description: "Qwen 3.6 35B optimized for precise coding, tool-calling, and DevOps."
+
+  - model_name: qwen-3.6-35b
+    litellm_params:
+      model: "qwen-local-primary"
+      custom_llm_provider: "openai"
+      api_base: os.environ/GATEWAY_LOCAL_URL
+      api_key: "unused"
+      timeout: 900
+    model_info:
+      mode: chat
+      supports_vision: true
+      description: "Qwen 3.6 35B FP8 local model on DGX Spark."
+
+  - model_name: Qwen-3.6-35B-FP8
+    litellm_params:
+      model: "qwen-local-primary"
+      custom_llm_provider: "openai"
+      api_base: os.environ/GATEWAY_LOCAL_URL
+      api_key: "unused"
+      timeout: 900
+    model_info:
+      mode: chat
+      supports_vision: true
+      description: "Model chat 35B FP8 tham số chạy cục bộ trên DGX Spark."
+
   - model_name: qwen-3.5-35b
     litellm_params:
       model: "qwen-local-primary"

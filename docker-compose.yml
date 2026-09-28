@@ -510,6 +510,7 @@ services:
       - ${LOCAL_PRIMARY_LLM_DIR:-/home/vvc/models/Qwen3.5-35B-A3B-FP8}:/models/model
       - ./scripts:/app/scripts
       - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+      - /home/vvc/.cache/vllm:/root/.cache/vllm
     entrypoint: [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
     command: >
       --model /models/model
@@ -524,6 +525,7 @@ services:
       --enable-prefix-caching
       --enable-chunked-prefill
       --enable-auto-tool-choice
+      --reasoning-parser qwen3
       --tool-call-parser qwen3_coder
       --trust-remote-code
     networks:
@@ -555,7 +557,7 @@ services:
       - ENABLE_SIGNUP=False
       - WEBUI_SECRET_KEY=spark_dgx_secure_key_2026
       - DEFAULT_MODELS=qwen-local-primary
-      - TASK_MODEL=qwen-local-primary
+      - TASK_MODEL=local-instruct
       - WEBUI_NAME=Spark AI Assistant
       - ENABLE_RAG_WEB_SEARCH=True
       - RAG_WEB_SEARCH_ENGINE=duckduckgo
