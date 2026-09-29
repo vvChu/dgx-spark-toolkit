@@ -451,6 +451,13 @@ model_list:
       <<: *gemini25-flash-lite-base
       api_key: os.environ/GEMINI_API_KEY_11
 
+  # ── bge-m3 (local DGX Spark GB10 GPU) ──
+  - model_name: bge-m3
+    litellm_params:
+      model: openai/bge-m3
+      api_base: http://rag-service:8000/v1
+      api_key: sk-spark-local-bge-m3
+
   # ── gemini-embedding-2 ──
   - model_name: gemini-embedding-2
     litellm_params:
@@ -1609,7 +1616,9 @@ router_settings:
     "fast-realtime": "claude-haiku-4"
     "gemini-flash-latest": "gemini-3.8-flash"
     "gemini-reasoning-latest": "gemini-3.8-flash-high"
-    "embedding-default": "gemini-embedding-2"
+    "embedding-default": "bge-m3"
+    "gemini-embed": "bge-m3"
+    "gemini-embedding-2": "bge-m3"
     "text-light-gemma": "text-gemma-12b"
     "claude-haiku-4-5-20251001": "claude-haiku-4-5"
     "claude-3-5-haiku-20241022": "claude-haiku-4-5"
@@ -1737,6 +1746,7 @@ router_settings:
     - {"audio-primary": ["whisper-primary", "whisper-local"]}
 
     - {"gpt-oss-120b-medium": ["gemini-3.1-pro-high"]}
+    - {"fast-realtime": ["text-gemma", "text-gemma-12b", "rag-core"]}
     - {"text-gemma": ["text-gemma-12b", "text-gemma-4b", "rag-core"]}
     - {"text-gemma-12b": ["text-gemma-4b", "rag-core"]}
     - {"text-gemma-4b": ["rag-core"]}
@@ -1748,9 +1758,11 @@ router_settings:
     - reasoning-fallback:
         - rag-core
 
-    # EMBEDDING FALLBACK CHAIN (Issue #51)
-    - {"gemini-embedding-2": ["gemini-embed"]}
-    - {"gemini-embed": ["gemini-embedding-2"]}
+    # EMBEDDING FALLBACK CHAIN
+    - {"bge-m3": []}
+    - {"embedding-default": ["bge-m3"]}
+    - {"gemini-embedding-2": ["bge-m3"]}
+    - {"gemini-embed": ["bge-m3"]}
 
   default_fallbacks: ["ocr-fallback"]
 
@@ -1761,7 +1773,9 @@ litellm_settings:
     "fast-realtime": "claude-haiku-4"
     "gemini-flash-latest": "gemini-3.8-flash"
     "gemini-reasoning-latest": "gemini-3.8-flash-high"
-    "embedding-default": "gemini-embedding-2"
+    "embedding-default": "bge-m3"
+    "gemini-embed": "bge-m3"
+    "gemini-embedding-2": "bge-m3"
     "text-light-gemma": "text-gemma-12b"
   success_callback: ["prometheus", "postgresql"]
   failure_callback: ["prometheus", "postgresql"]
