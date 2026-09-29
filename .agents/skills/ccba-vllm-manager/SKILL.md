@@ -9,7 +9,7 @@ bundle: _software
 tier: domain
 command: /ccba-vllm-manager
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   author: "CCBA Hub"
 gpi:
   s: 3.0
@@ -96,7 +96,7 @@ Bộ cờ bắt buộc cho vLLM 0.26+:
 
 ## 3. Quản Lý Thinking Token & Phòng Thủ Cache
 
-Theo chuẩn mực **RULE-5.8**:
+Theo chuẩn mực **RULE-5.6**:
 - Khi cần trích xuất JSON hoặc sinh HyDE queries, BẮT BUỘC gọi qua alias `local-instruct` hoặc gửi:
   ```json
   {

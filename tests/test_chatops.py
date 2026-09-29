@@ -1729,6 +1729,14 @@ def test_reenable_quota_probe_allows_toggle_predicate():
     assert daemon.quota_probe_allows_toggle(["is_forbidden", False]) is False
 
 
+def test_reenable_quota_probe_allows_toggle_conflicting_nested_false_root_true():
+    """Assert fail-closed when root flag is True even if nested quota is False."""
+    import scripts.smart_watchdog as watchdog
+    payload = {"is_forbidden": True, "quota": {"is_forbidden": False}}
+    assert daemon.quota_probe_allows_toggle(payload) is False
+    assert watchdog.quota_probe_allows_toggle(payload) is False
+
+
 def test_reenable_antigravity_account_success():
     """Verify reenable_antigravity_account succeeds with flat QuotaData schema."""
     async def _test():

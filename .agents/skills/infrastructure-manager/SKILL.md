@@ -1,43 +1,24 @@
 ---
 name: infrastructure-manager
-description: Interface for managing server infrastructure, dgx-chatops daemon, and safe Open WebUI upgrades using dgx-spark-toolkit resources.
+description: (Legacy Pointer) Quản trị hạ tầng máy chủ DGX Spark. Trỏ tới canonical skill ccba-infrastructure-manager.
+bundle: _software
 ---
 
-# Infrastructure Manager
+# Infrastructure Manager (Pointer)
 
-This skill leverages the existing `dgx-spark-toolkit` to manage infrastructure, deployment, and AI service configuration.
+> [!NOTE]
+> Kỹ năng chuẩn hóa chính thức đã được chuyển tiếp sang **[ccba-infrastructure-manager](../ccba-infrastructure-manager/SKILL.md)** tuân thủ quy chuẩn không gian tên CCBA (ADR-0056 / ADR-0057).
+> Vui lòng tham chiếu [ccba-infrastructure-manager/SKILL.md](../ccba-infrastructure-manager/SKILL.md) để xem toàn bộ kiến trúc DGX Spark, ChatOps Universal Gateway, Smart Watchdog Healer, quy trình Socket LAN cổng 8045, và phân vùng Redis DB 5.
 
-## Resource Locations
+## Bảng Tra Cứu Công Cụ & Dịch Vụ
 
-**Toolkit Root**: `/home/vvc/Codebase/dgx-spark-toolkit`
+Toàn bộ công cụ, scripts thực thi và danh mục lệnh ChatOps được quản lý tập trung tại Single Source of Truth (SSoT):
+👉 **[TOOL_REGISTRY.md](../ccba-infrastructure-manager/TOOL_REGISTRY.md)**
 
-### Scripts (`scripts/`)
-Contains shell and python scripts for direct execution.
-*   **Start All Services**: `scripts/start-all.sh` (Launches vLLM containers + Docker Compose stack).
-*   **Stop All Services**: `scripts/stop-all.sh` (Gracefully shuts down everything).
-*   **Remote Access**: `scripts/setup-remote-access.sh`.
-*   **Safe Open WebUI Upgrade**: `scripts/update-openwebui.sh` (6-stage WAL-safe SQLite snapshot, automated rollback).
-*   **ChatOps Universal Daemon**: `scripts/chatops_daemon.py` (Telegram bot poller, REST `:8095`, chained audit log).
+## Hướng Dẫn Vận Hành Nhanh
 
-### ChatOps & Telegram Administration
-*   **Systemd Service**: `systemctl --user {status|restart|stop} dgx-chatops`
-*   **Logs**: `journalctl --user -u dgx-chatops -f`
-*   **Audit Trail**: `logs/chatops/audit.jsonl` (Chained SHA-256 integrity)
-*   **Touch Dashboard**: Gõ `/menu` trên Telegram để xem dashboard cảm ứng, kiểm tra GPU Blackwell, khởi động lại container, hoặc nâng cấp Open WebUI.
-
-### Playbooks (`playbooks/`)
-Contains step-by-step guides for setup and integration.
-*   **LLM API Guide**: `playbooks/llm-api-guide.md` (vLLM OpenAI-compatible API usage).
-*   **Remote Access**: `playbooks/remote-access.md`.
-
-## Usage Guidelines
-1.  **Tool Discovery**: Check `TOOL_REGISTRY.md` in this skill folder first.
-2.  **Execution**:
-    ```bash
-    bash scripts/start-all.sh                # Start everything
-    bash scripts/stop-all.sh                 # Stop everything
-    bash scripts/update-openwebui.sh [ver]   # Safe upgrade Open WebUI (e.g. v0.11.4)
-    systemctl --user status dgx-chatops      # Check ChatOps daemon status
-    ```
-3.  **Or use chat workflows**: `/start-all`, `/stop-all`, `/health`, `/menu`
-
+* **Khởi động toàn bộ dịch vụ**: `bash scripts/start-all.sh`
+* **Dừng toàn bộ dịch vụ**: `bash scripts/stop-all.sh`
+* **Nâng cấp an toàn Open WebUI**: `bash scripts/update-openwebui.sh [ver]`
+* **Kiểm tra trạng thái ChatOps**: `systemctl --user status dgx-chatops`
+* **Lệnh Telegram tương tác**: `/menu`, `/status`, `/gpu`, `/stats`, `/antigravity`, `/reenable_account <id>`
