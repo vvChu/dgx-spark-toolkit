@@ -10,7 +10,7 @@ bundle: _core
 tier: kernel
 command: /ccba-llm-pipeline-patterns
 metadata:
-  version: "1.4.0"
+  version: "1.5.0"
   author: "CCBA Hub"
 gpi:
   s: 3.0
@@ -30,6 +30,11 @@ triggers:
 - thinking token
 - reasoning starvation
 - local-instruct
+- cli subprocess
+- arg_max
+- flock
+- e2big
+- stdio prompt
 ---
 
 # LLM Pipeline Patterns
@@ -575,6 +580,103 @@ Khi triển khai các mô hình lý luận (Reasoning LLMs / Hybrid MoE như Qwe
 
 ---
 
+## Pattern 17: Subprocess CLI Runner Isolation & Stdio Prompt Ingestion (Anti-ARG_MAX & Cross-Process Locking)
+
+### Vấn đề (Incidents Chứng minh)
+Khi xây dựng MCP server, background daemons hoặc pipelines điều phối LLM CLI tools (Grok 4.7, Antigravity CLI, Claude Code) qua `asyncio.create_subprocess_exec`:
+1. **Lỗi `E2BIG` (Argument list too long)**: Truyền prompt dài hoặc ngữ cảnh tiếng Việt UTF-8 qua tham số dòng lệnh `argv` (ví dụ: `-p "<prompt>"`) chạm trần `MAX_ARG_STRLEN` (131,072 bytes trên Linux, tính theo `PAGE_SIZE * 32`) khiến lệnh `execve` bị từ chối ngay lập tức.
+2. **Tranh chấp Đa Tiến trình (Multi-Process Contention)**: `asyncio.Semaphore(1)` chỉ có hiệu lực nội bộ trong một event loop của một tiến trình Python. Khi có nhiều gateway processes, background workers hoặc restarts, các tiến trình chạy song song làm nghẽn GPU/vRAM và CPU.
+3. **Lỗ hổng Khớp Đường Dẫn Dấu Ngã `~`**: Một số CLI engine (như Grok CLI) xử lý dấu `~` trong quy tắc deny theo chuỗi ký tự thô (*literal string*). Quy tắc `Read(~/.ssh/**)` bị bypass hoàn toàn nếu gọi đường dẫn tuyệt đối `/home/<user>/.ssh/...`. Đồng thời khi cô lập `HOME` sang sandbox jail, dấu `~` bị phân giải nhầm sang thư mục jail thay vì host root.
+4. **Treo Tiến Trình & Zombie Processes**: Khi subprocess bị timeout hoặc hủy giữa chừng, nếu không tạo Session Group (`start_new_session=True`) và không gọi tường minh `await proc.wait()` sau khi `os.killpg`, các tiến trình con trở thành zombie hoặc tiếp tục ngốn tài nguyên.
+
+### Bảng Đặc tả Cơ chế Nạp Prompt theo Từng CLI Engine
+| CLI Tool | Flag Thực thi | Kênh Nạp Prompt An Toàn | Chú Ý Đặc Thù |
+| :--- | :--- | :--- | :--- |
+| **Grok 4.7 CLI** | `--prompt-file <path>` | File tạm `0600` qua `tempfile.mkstemp` | Bắt buộc gán `stdin=asyncio.subprocess.DEVNULL`. Không dùng `-p -`. `unlink` file sau khi đã `await proc.wait()`. |
+| **Antigravity CLI** | `-p -` | `stdin=asyncio.subprocess.PIPE` | Truyền qua `await proc.communicate(prompt_bytes)`. Bắt lỗi `stderr` khi `stdout` rỗng để nhận diện soft-denials. |
+| **Claude Code CLI** | `-p` / `--print` | `stdin=asyncio.subprocess.PIPE` | Dùng `--input-format text` khi nạp từ stdin. |
+
+### Quy tắc Triển khai Chuẩn hóa
+
+#### 1. Khóa Liên Tiến Trình Async-Safe (`fcntl.LOCK_NB`)
+Cấm gọi `fcntl.flock(..., LOCK_EX)` trực tiếp trên main thread vì sẽ chặn toàn bộ event loop. Triển khai vòng lặp thăm dò non-blocking:
+```python
+class AsyncProcessLock:
+    def __init__(self, lock_path: Path, timeout: float = 30.0):
+        self.lock_path = lock_path
+        self.timeout = timeout
+        self._fd = None
+
+    async def __aenter__(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        start_time = asyncio.get_running_loop().time()
+        while True:
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except (BlockingIOError, OSError):
+                if asyncio.get_running_loop().time() - start_time >= self.timeout:
+                    raise TimeoutError(f"Could not acquire lock {self.lock_path} within {self.timeout}s")
+                await asyncio.sleep(0.5)
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self._fd is not None:
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self._fd)
+                self._fd = None
+```
+- **Vị trí file khóa**: Đặt tại `$XDG_RUNTIME_DIR/ccba/<tool>.lock` hoặc `~/.local/state/ccba/<tool>.lock`. Tuyệt đối không xóa (`unlink`) file khóa để tránh tách inode giữa các tiến trình. Không ghi/đọc PID vào file khóa để tránh bẫy PID reuse.
+
+#### 2. Thu dọn Triệt để Tiến trình (Process Group Reaping)
+```python
+proc = await asyncio.create_subprocess_exec(*argv, start_new_session=True, ...)
+try:
+    out, err = await asyncio.wait_for(proc.communicate(stdin_data), timeout=CHILD_TIMEOUT)
+except asyncio.TimeoutError:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=3.0)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        await proc.wait()
+finally:
+    if proc.returncode is None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        await proc.wait()
+```
+
+#### 3. Chuẩn hóa Đường dẫn Tuyệt đối Phía Cha (Parent-Side Canonicalization)
+Trước khi ghi đè biến môi trường `HOME` trỏ tới sandbox jail, phải phân giải toàn bộ đường dẫn nhạy cảm thành đường dẫn tuyệt đối chuẩn hóa:
+```python
+def canonical_deny_paths(paths: list[str]) -> list[str]:
+    resolved = []
+    for p in paths:
+        expanded = Path(os.path.normpath(p)).expanduser().resolve(strict=False)
+        resolved.append(f"{expanded}/**")
+    return resolved
+```
+- Cấu hình tường minh các chốt chặn tối thiểu: `--permission-mode dontAsk`, `--sandbox read-only`, `--no-subagents`, explicit `--tools` (loại bỏ `list_dir` nếu muốn chặn duyệt thư mục), giới hạn output bounds (ví dụ: $\le 8,000$ ký tự để chống spillover).
+
+### Key Invariants
+1. **Never Pass Prompts via CLI Argv**: Mọi prompt hoặc input ngữ cảnh người dùng bắt buộc truyền qua file tạm riêng tư (`0600`) hoặc `stdin`. Cấm truyền prompt qua `argv` khi gọi subprocess.
+2. **Non-Blocking Cross-Process Mutex**: Mọi điều phối tiến trình con dùng GPU/CLI bắt buộc dùng khóa file `fcntl.LOCK_NB` trong vòng lặp polling async thay vì semaphore nội bộ hay blocking flock.
+3. **Clean Session Teardown**: Subprocess luôn phải chạy với `start_new_session=True` và được giải phóng triệt để qua `os.killpg` kèm `await proc.wait()`.
+4. **Parent-Side Canonical Deny**: Deny paths phải được chuẩn hóa tuyệt đối trước khi truyền cho jail container/CLI; không tin cậy việc mở rộng `~` trong môi trường con bị đổi `HOME`.
+
+---
+
 ## Quick Reference — Model Routing cho Pipeline Tasks
 
 | Task trong pipeline | Model khuyến nghị | Lý do |
@@ -606,6 +708,7 @@ Khi triển khai các mô hình lý luận (Reasoning LLMs / Hybrid MoE như Qwe
 | Heading-Aware Map-Reduce | `D:\VvC_Notes\scripts\core\text_chunker.py` |
 | Conditional Multi-turn Memory | `D:\VvC_Notes\scripts\services\command\coordinator.py` |
 | Two-Tier Multimodal Noise Defense | `D:\VvC_Notes\scripts\services\youtube\transcript.py` + `visual_extractor.py` |
+| Subprocess CLI Isolation | `packages/ccba-mcp-server/src/ccba_mcp/server.py` |
 
 ## Bất Biến Vận Hành & Khóa Cứng Hoàn Tất (ADR-0058)
 * **Tiêu chí hoàn thành tất định:** Mọi thay đổi mã nguồn, kỹ năng hoặc tài liệu bắt buộc phải vượt qua bộ kiểm thử tự động.
