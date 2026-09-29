@@ -12,7 +12,7 @@ disable-model-invocation: true
 command: /ccba-create-pr
 user-invocable: true
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   author: "CCBA Hub"
 gpi:
   s: 3.0
@@ -59,7 +59,31 @@ Quy trình tự động hóa kiểm định chất lượng mã nguồn tại ch
      git checkout <tên-branch>
      ```
 4. **Nếu đang ở nhánh chính nhưng KHÔNG có commit mới**:
-   - Dừng lại và nhắc nhở: *"Không có thay đổi nào trên `<default_branch>` để tạo PR. Hãy dùng `/ccba-new-feature` để tạo feature branch trước khi lập trình."*
+   - *Rào chắn Working Tree*: Kiểm tra `git status --porcelain=v1`. Nếu có tệp dở dang hoặc đang trong trạng thái merge/rebase/cherry-pick $\rightarrow$ DỪNG LẠI NGAY LẬP TỨC, in danh sách tệp và yêu cầu người dùng xử lý sạch working tree (không tự ý `stash`, `checkout -f`, hay `reset --hard`).
+   - *Khám phá Nhánh Tính Năng Cục Bộ (Local Branch Discovery)*:
+     Quét các nhánh local có commit mới hơn nhánh chính (sắp theo thời gian commit mới nhất):
+     ```bash
+     git for-each-ref --sort=-committerdate \
+       --format='%(committerdate:short) %(refname:short) upstream=%(upstream:short)' refs/heads/
+     ```
+     Đếm commit chênh lệch cho từng nhánh:
+     ```bash
+     git rev-list --left-right --count origin/<default_branch>...<branch>
+     ```
+   - *Khám phá Pull Request Đang Mở (Remote PR Discovery)*:
+     ```bash
+     gh pr list --author @me --state open --limit 20 \
+       --json number,title,headRefName,isDraft,updatedAt,url,reviewDecision
+     ```
+     *(Nếu lệnh `gh` lỗi do mạng hoặc chưa login: ghi nhận "Không thể truy vấn GitHub", không tự kết luận là sạch).*
+   - *Xử lý Tình huống (Read-Only Interactive Router)*:
+     - **Trường hợp A (Có nhánh tính năng cục bộ có commit chưa push)**:
+       In danh sách các nhánh tính năng (tối đa 5 nhánh mới nhất kèm số commit ahead/behind). Yêu cầu người dùng xác nhận chuyển nhánh.
+       Khi người dùng chọn nhánh: Thực thi `git switch -- <branch>`, in log xác nhận và **DỪNG LẠI**. Hướng dẫn người dùng gọi lại `/ccba-create-pr` khi đã đứng trên nhánh đó. Tuyệt đối không tự động push trong bước khám phá.
+     - **Trường hợp B (Có Pull Request đang mở)**:
+       In URL, số PR, tiêu đề và headRefName của PR. **DỪNG LẠI** và hướng dẫn: *"Nếu bạn muốn theo dõi CI & Copilot Review cho PR này, hãy checkout sang nhánh `<headRefName>` và chạy lại `/ccba-create-pr`."* Tuyệt đối KHÔNG tự động chuyển sang Bước 4 khi đang đứng tại `<default_branch>`.
+     - **Trường hợp C (Không có nhánh hay PR nào)**:
+       Nhắc nhở người dùng sử dụng `/ccba-new-feature` để khởi tạo nhánh tính năng mới.
 5. **Nếu đã ở nhánh tính năng (`feat/*`, `fix/*`, `proposal/*`)**: Tiếp tục Bước 1.
 
 - **Tiêu chí hoàn thành:** Đảm bảo toàn bộ commit nằm trên đúng nhánh tính năng, nhánh chính (`<default_branch>`) được bảo vệ tuyệt đối.
