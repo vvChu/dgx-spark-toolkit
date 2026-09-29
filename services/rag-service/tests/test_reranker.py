@@ -17,6 +17,7 @@ class TestRerankerUnit:
             r.model_name = "BAAI/bge-reranker-v2-m3"
             r.model = mock_model
             r._load_lock = __import__("threading").Lock()
+            r._predict_lock = __import__("threading").Lock()
             r.device = "cpu"
             r.force_cpu = True
             return r, mock_model
@@ -30,9 +31,9 @@ class TestRerankerUnit:
         r, mock_model = self._make_reranker()
         mock_model.predict.return_value = [0.1, 0.9, 0.5]
         result = r.rerank_sync("q", ["a", "b", "c"], top_k=3)
-        assert result[0] == ("b", 0.9)
-        assert result[1] == ("c", 0.5)
-        assert result[2] == ("a", 0.1)
+        assert result[0] == ("b", 0.9, 1)
+        assert result[1] == ("c", 0.5, 2)
+        assert result[2] == ("a", 0.1, 0)
 
     def test_top_k_overflow_returns_all(self):
         r, mock_model = self._make_reranker()
@@ -73,3 +74,36 @@ class TestRerankerUnit:
             r.rerank("q", ["doc"], top_k=1)
         )
         assert len(result) == 1
+        assert result[0][0] == "doc"
+        assert result[0][2] == 0
+
+    def test_duplicate_text_keeps_distinct_indices(self):
+        r, mock_model = self._make_reranker()
+        mock_model.predict.return_value = [0.2, 0.9]
+        result = r.rerank_sync("q", ["same", "same"], top_k=2)
+        assert result[0] == ("same", 0.9, 1)
+        assert result[1] == ("same", 0.2, 0)
+
+    def test_predict_is_locked_and_truncates_input(self):
+        r, mock_model = self._make_reranker()
+        long_doc = "x" * 2000
+
+        def _predict(pairs, batch_size=32):
+            assert r._predict_lock.locked() is True
+            assert batch_size == 32
+            assert pairs == [["q", "x" * 1500]]
+            return [0.7]
+
+        mock_model.predict.side_effect = _predict
+        result = r.rerank_sync("q", [long_doc], top_k=1)
+        assert result == [(long_doc, 0.7, 0)]
+        assert r._predict_lock.locked() is False
+
+    def test_predict_error_returns_original_order(self, caplog):
+        import logging
+        r, mock_model = self._make_reranker()
+        mock_model.predict.side_effect = RuntimeError("CUDA out of memory")
+        with caplog.at_level(logging.WARNING):
+            result = r.rerank_sync("q", ["a", "b", "c"], top_k=2)
+        assert result == [("a", 0.0, 0), ("b", 0.0, 1)]
+        assert "Falling back" in caplog.text
