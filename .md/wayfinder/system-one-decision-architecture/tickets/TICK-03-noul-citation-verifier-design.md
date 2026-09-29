@@ -3,9 +3,11 @@
 **Bản đồ cha:** [Bản đồ Định hướng Phân tách Quyết định System One & System Two](../map.md)  
 **Phân loại:** `Research [AFK]`  
 **Giai đoạn:** Phase 2 (Citation Verification & Grounding)  
-**Trạng thái:** `Open (Frontier)`  
-**Thẩm định đối kháng:** Grok 4.7 — Phán quyết: **CONDITIONAL ACCEPT** (Xem mục 4 tại [.md/peer_exchange/grok_review_wayfinder_map.md](../../peer_exchange/grok_review_wayfinder_map.md))  
-**Assignee:** *Unassigned*  
+**Trạng thái:** `Completed (Done)`  
+**Assignee:** Antigravity Agent  
+**Auditor & Reviewer:** Grok 4.7  
+**Ngày hoàn tất:** 29/09/2026  
+**Thành phẩm bàn giao:** [ADR-0006](../../../../docs/adr/0006-three-tier-citation-noul-verifier.md)  
 **Phụ thuộc:** [TICK-02](TICK-02-refactor-search-pipeline-bge-reranker.md) (Đã hoàn tất)  
 
 ---
