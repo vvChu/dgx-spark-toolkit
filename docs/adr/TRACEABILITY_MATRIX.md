@@ -80,3 +80,4 @@
 | [Domain ADR 0003](0003-hybrid-direct-key-and-proxy-routing-policy.md) | **Hybrid Direct-Key & Centralized Proxy Dual-Engine Routing Policy** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
 | [Domain ADR 0004](0004-progressive-disclosure-agent-architecture.md) | **Progressive Disclosure Agent Architecture** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
 | [Domain ADR 0005](0005-ai-native-codebase-modularization.md) | **AI-Native Codebase Modularization & Agent Protocol** | ✅ ACCEPTED | *Chưa có liên kết trực tiếp* |
+| [Domain ADR 0006](0006-three-tier-citation-noul-verifier.md) | **Kiến Trúc Chốt Chặn Xác Thực Trích Dẫn Pháp Lý 3 Tầng (Three-Tier Citation Noul Verifier)** | ✅ ACCEPTED | `.md/wayfinder/system-one-decision-architecture/` |

@@ -2,7 +2,21 @@
 
 Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật và chuẩn hóa tri thức tại repository `dgx-spark-toolkit`.
 
----
+## [2026-09-29] [fix/chatops-and-watchdog] | Khắc Phục Lỗi P0 Schema, Triển Khai Watchdog Auto-Healing & Phát Hành PR #79 / #80 (FINAL ACCEPT)
+
+- **Nhiệm vụ**: Khắc phục triệt để lỗi P0 flat schema trong quota probe, xây dựng vòng lặp Watchdog Healer tự phục hồi tài khoản hết quota tạm thời, cô lập Redis DB 5, đồng bộ số liệu Quota Pool 4 cờ, vượt qua 2 vòng phản biện đối kháng của Grok 4.7 xhigh (FINAL ACCEPT), phát hành thành công PR #79 và PR #80 vào `master`.
+- **Thành phần**:
+  - `ChatOps Resilience (PR #79)`: Khắc phục mismatch endpoint re-enable (gọi `POST /api/accounts/{id}/toggle-proxy` với `{"enable": true}`); triển khai 4-stage health probe gate (Local Pre-Check loại trừ challenge-blocked không gọi Google, Quota Probe qua Admin Secret reset `is_forbidden`, Proxy Activation, Audit Log 4 trạng thái); đồng bộ task models (`text-gemma-12b`, `gemini-2.5-flash`).
+  - `Watchdog Auto-Healing (PR #80)`: Triển khai vòng lặp auto-healing kiểm tra Quota Pool định kỳ; áp dụng exponential backoff (600s $\to$ 7200s); cô lập hoàn toàn Healer State Store trên **Redis DB 5** (tránh corrupt DB 0 Cache hoặc DB 1 Ingest Queue); dọn dẹp mapping `first_seen` theo `account_id` sau khi tài khoản phục hồi.
+  - `P0 Flat Schema Resolution`: Antigravity-Manager trả về flat `QuotaData` (`is_forbidden` ở root level). Triển khai predicate `quota_probe_allows_toggle` kiểm tra cả root và nested, fail-closed khi thiếu cờ. Đồng bộ hàm `is_account_blocked` kiểm tra đủ 4 cờ trên toàn hệ sinh thái.
+  - `LAN Access Socket Binding`: Cấu hình `"allow_lan_access": true` trong `gui_config.json` và restart `antigravity-tools.service` để bind `0.0.0.0:8045`, giải quyết dứt điểm lỗi `Connection refused` từ container Docker qua mạng Tailscale.
+- **Xác thực**:
+  - Unit tests: 72/72 tests passed in 4.66s (56 chatops + 16 watchdog).
+  - Flake8: 0 errors, 0 warnings across all daemon and test files.
+  - GitHub Actions Dual-Gate CI: 4/4 checks (Backend Tests, Frontend Build, Python Lint, Security Audit) 100% Green trên cả PR #79 và PR #80.
+  - Grok 4.7 Adversarial Review: Phê duyệt **FINAL ACCEPT** chính thức (Defense 9/10, Usability 8/10, KISS 8/10, Feasibility 9/10).
+  - Runtime Daemons: `dgx-chatops.service`, `antigravity-tools.service`, `smart-watchdog` container hoạt động đồng bộ, không phát sinh lỗi.
+  - Release: Squash & Merge PR #79 (`6d4a02b`) và PR #80 (`266377e`), dọn sạch remote/local branches.
 
 ## [2026-09-28] [feat/llm-upgrade] | Nâng Cấp Qwen 3.6 35B FP8 & Tối Ưu Hệ Sinh Thái Đa Dịch Vụ (PR #76 Merged)
 
@@ -193,4 +207,25 @@ Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật 
 - **Xác thực**:
   - `ccba-harness validate-skill --file ... --enforce-gpi` 100% PASS.
   - `ccba-harness verify-patch` 100% PASS.
+
+---
+
+## [2026-09-29] [retrospective] | Hermes Peer Consultation Hardening & Session Retrospective
+
+- **Nhiệm vụ**: Chuẩn hóa và thiết lập cơ chế Peer Consultation (Tham vấn Grok 4.7 & Antigravity) an toàn 100% cho Hermes Agent qua Telegram.
+- **Thành phần**:
+  - Triển khai Dedicated Stdio MCP Server `peer_consultant.py` với `fcntl.flock` cross-process locking.
+  - Thiết lập Sandbox Profile độc lập cho Antigravity (`agy-home`) và Grok (`grok-home`) với cấm tuyệt đối `write_file(*)`, `command(*)`, và đường dẫn tuyệt đối cho deny rules.
+  - Phân quyền Telegram Platform Toolset cách ly: sentinel `no_mcp` trên toàn bộ các platform khác, loại bỏ `skills` khỏi Telegram chặn Prompt Injection.
+  - Chuyển cơ chế nạp prompt sang `stdin` (`-p -`) và tệp tạm `0600` triệt tiêu giới hạn `E2BIG` (128 KiB).
+- **Tài liệu**:
+  - Báo cáo phản biện Grok: `.md/peer_exchange/grok_cross_review_peer_consultation_results.md`
+  - Walkthrough: `.md/knowledge/reports/walkthrough.md` và `walkthrough_hermes_peer_consultation_mcp.md`
+  - Tiêu chuẩn tri thức: `.md/knowledge/session_learnings.md` (bổ sung RULE-1.18, 4.5, 5.8; lưu trữ lịch sử tại `archive/session_learnings_history.md`)
+- **Xác thực**:
+  - Live dispatch test qua Hermes Registry 100% PASS.
+  - Canary Secret Deny test (Grok Deny Engine chặn đọc `/home/vvc/.ssh/id_ed25519.pub`) 100% PASS.
+  - `hermes-gateway.service` active & running suốt đêm (>6h) không rò rỉ bộ nhớ.
+  - `ccba-harness verify-patch --preset doc` 100% PASS.
+
 
