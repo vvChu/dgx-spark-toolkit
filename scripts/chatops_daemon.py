@@ -739,6 +739,82 @@ async def probe_gateway_stats() -> str:
     return "\n".join(lines)
 
 
+def extract_validation_url(account_data: Dict[str, Any]) -> Optional[str]:
+    """Extracts Google verification URL from account metadata or error strings."""
+    url = account_data.get("validation_url")
+    if url:
+        return str(url)
+
+    raw = (
+        account_data.get("validation_blocked_reason")
+        or account_data.get("proxy_disabled_reason")
+        or account_data.get("disabled_reason")
+        or (account_data.get("quota") or {}).get("forbidden_reason")
+        or ""
+    )
+    raw_str = str(raw).replace("\\u0026", "&")
+    if "accounts.google.com/signin/continue" in raw_str:
+        m = re.search(r"https://accounts\.google\.com/signin/continue[^\s\"']+", raw_str)
+        if m:
+            return m.group(0).rstrip(".,;\"'")
+    return None
+
+
+def render_health_bar(active: int, total: int, width: int = 10) -> str:
+    """Renders a Unicode visual health bar for account pool."""
+    if total <= 0:
+        return f"[{'⬛' * width}]"
+    ratio = min(max(active / total, 0.0), 1.0)
+    green_blocks = int(round(ratio * width))
+    red_blocks = width - green_blocks
+    bar = "🟩" * green_blocks + "🟥" * red_blocks
+    pct = int(round(ratio * 100))
+    return f"[{bar}] `{active}/{total}` ({pct}%)"
+
+
+def format_blocked_accounts(blocked_list: list) -> list[str]:
+    """Formats blocked accounts into distinct triage categories."""
+    lines: list[str] = ["⚠️ *Tài khoản bị ngắt kết nối:*"]
+    challenge_accounts = []
+    manual_accounts = []
+    cooldown_accounts = []
+
+    for b in blocked_list:
+        val_url = extract_validation_url(b)
+        b_reason = str(b.get("proxy_disabled_reason") or b.get("disabled_reason") or "403 Forbidden")
+        if val_url or b.get("validation_blocked") or "verify your account" in b_reason.lower():
+            challenge_accounts.append((b, val_url))
+        elif "disabled manually by user" in b_reason.lower() or b.get("disabled"):
+            manual_accounts.append(b)
+        else:
+            cooldown_accounts.append((b, b_reason))
+
+    if challenge_accounts:
+        lines.append("  *Cần xác minh danh tính (Browser Challenge):*")
+        for b, val_url in challenge_accounts:
+            b_email = b.get("email")
+            if val_url:
+                lines.append(f"  └─ 🟡 `{b_email}`: [🔗 Xác minh ngay]({val_url})")
+            else:
+                lines.append(f"  └─ 🟡 `{b_email}`: Cần xác minh trình duyệt")
+
+    if manual_accounts:
+        lines.append("  *Đang tắt thủ công:*")
+        for b in manual_accounts:
+            b_email = b.get("email")
+            b_id = b.get("id")
+            lines.append(f"  └─ ⚪ `{b_email}`: Đã tắt tay (Dùng `/reenable_account {b_id}`)")
+
+    if cooldown_accounts:
+        lines.append("  *Đang hạ nhiệt Quota:*")
+        for b, b_reason in cooldown_accounts:
+            b_email = b.get("email")
+            r_desc = "Warmup 403 Forbidden" if "quota fetch denied" in b_reason else b_reason[:40]
+            lines.append(f"  └─ 🔴 `{b_email}`: {r_desc}")
+
+    return lines
+
+
 async def probe_antigravity_status() -> str:
     """Queries Antigravity Tools API (:8045) for account pool health and blocked states."""
     base_url = get_antigravity_base_url()
@@ -768,20 +844,11 @@ async def probe_antigravity_status() -> str:
                     else:
                         active_list.append(a)
 
-                lines.append(f"• *Hồ bơi tài khoản:* `{len(active_list)}/{total}` tài khoản khả dụng\n")
+                health_bar = render_health_bar(len(active_list), total)
+                lines.append(f"• *Hồ bơi tài khoản:* {health_bar}\n")
 
                 if blocked_list:
-                    lines.append("⚠️ *Tài khoản bị ngắt kết nối:*")
-                    for b in blocked_list:
-                        b_email = b.get("email")
-                        b_reason = b.get("proxy_disabled_reason") or b.get("disabled_reason") or "403 Forbidden"
-                        if "Verify your account" in b_reason:
-                            r_desc = "Cần xác minh danh tính (403)"
-                        elif "quota fetch denied" in b_reason:
-                            r_desc = "Warmup 403 Forbidden"
-                        else:
-                            r_desc = b_reason[:40]
-                        lines.append(f"  └─ 🔴 `{b_email}`: {r_desc}")
+                    lines.extend(format_blocked_accounts(blocked_list))
                     lines.append("")
 
                 lines.append("✅ *Tài khoản hoạt động:*")
@@ -895,29 +962,33 @@ async def reenable_antigravity_account(
             or (target_account.get("quota") or {}).get("forbidden_reason")
             or ""
         )
-        has_val_url = bool(target_account.get("validation_url") or "accounts.google.com/signin/continue" in raw_reason)
+        val_url = extract_validation_url(target_account)
+        has_val_url = bool(val_url or "accounts.google.com/signin/continue" in raw_reason)
         is_disabled = bool(target_account.get("disabled"))
-        is_val_req = bool(
+        is_challenge = bool(
             target_account.get("validation_blocked")
+            or has_val_url
             or any(kw in raw_reason.lower() for kw in [
-                "verify your account", "validation_required", "invalid_grant", "unauthorized_client", "manual", "disabled manually by user"
+                "verify your account", "validation_required", "invalid_grant", "unauthorized_client"
             ])
         )
 
-        # Từ chối probe nếu có dấu hiệu challenge, disabled hoặc khóa tay
-        if has_val_url or is_disabled or is_val_req:
+        # Chặn đứng probe nếu tài khoản có Challenge bảo mật hoặc bị Disabled toàn hệ thống
+        if is_challenge or is_disabled:
             duration_ms = int((time.time() - t0) * 1000)
-            reason_desc = (
-                "Cần mở khóa thủ công trên trình duyệt"
-                if (has_val_url or "verify your account" in raw_reason.lower())
-                else ("Tài khoản đã bị vô hiệu hóa (disabled)" if is_disabled else "Tài khoản bị khóa thủ công hoặc cần xác thực lại")
-            )
+            if is_challenge:
+                reason_desc = "Cần mở khóa thủ công trên trình duyệt"
+                action_hint = f"👉 [🔗 Bấm vào đây để mở trang xác minh Google]({val_url})" if val_url else "👉 Vui lòng hoàn thành xác thực trình duyệt trên máy chủ."
+            else:
+                reason_desc = "Tài khoản đã bị vô hiệu hóa (disabled)"
+                action_hint = "👉 Vui lòng kiểm tra lại cấu hình tài khoản trên máy chủ."
+
             reject_msg = (
                 f"🔒 *TỪ CHỐI HEALTH PROBE (CHỐT CHẶN LOCAL BẢO VỆ)*\n\n"
                 f"• **Tài khoản**: `{account_id}` ({target_account.get('email', 'N/A')})\n"
                 f"• **Nguyên nhân**: {reason_desc}\n"
                 f"• **Quyết định**: **Chặn probe upstream** để ngăn Google đánh cờ (flag) tài khoản lạm dụng.\n\n"
-                f"👉 *Vui lòng hoàn thành xác thực trình duyệt hoặc kiểm tra trên giao diện máy chủ trước khi kích hoạt lại.*"
+                f"{action_hint}"
             )
             if not await edit_telegram_msg(chat_id, status_msg_id, reject_msg, reply_markup=get_main_dashboard_markup()):
                 await send_telegram_msg(chat_id, reject_msg, reply_markup=get_main_dashboard_markup())
