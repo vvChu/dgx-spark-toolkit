@@ -245,6 +245,21 @@ Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật 
   - Live dispatch test qua Hermes Registry 100% PASS.
   - Canary Secret Deny test (Grok Deny Engine chặn đọc `/home/vvc/.ssh/id_ed25519.pub`) 100% PASS.
   - `hermes-gateway.service` active & running suốt đêm (>6h) không rò rỉ bộ nhớ.
-  - `ccba-harness verify-patch --preset doc` 100% PASS.
+---
 
+## [2026-09-30] [retrospective] | Parameter Externalization (ADR-0060) & Hermes Executive MCP (PR #89)
 
+- **Nhiệm vụ**: Thực thi 10 chỉ thị phản biện của Grok 4.7 xhigh về Parameter Externalization & Dynamic Scale Invariant (ADR-0060), triển khai Hermes Executive Ops MCP, và bảo vệ nhánh chính.
+- **Thành phần**:
+  - Khử 100% hardcoded model identifiers (`gemini-*`, `claude-*`) chuyển sang capability aliases (`ocr-primary`, `fast-realtime`, `text-auto`, `rag-core`) với SSOT `litellm_config.yaml`.
+  - Khử 100% hardcoded IP (`100.83.192.30`, `100.79.241.120`) và user home paths qua biến môi trường.
+  - Thiết lập chuỗi fallback `fast-realtime` $\to$ `text-gemma` $\to$ `rag-core` (Qwen 35B Local GPU) zero-downtime khi proxy ngoài rate-limit.
+  - Nâng cấp `scripts/check_spoke_cleanliness.py` với AST model leak detector và `ipaddress` IPv4 detector (đạt chuẩn 15/15 script budget, 0 model leaks, 0 IP leaks, 0 path leaks).
+  - Triển khai `scripts/hermes_executive_mcp.py` và bộ 27 bài kiểm thử bảo mật `tests/test_executive_ops_mcp.py`.
+- **Tài liệu**:
+  - Walkthrough: `.md/knowledge/reports/walkthrough.md`
+  - Tiêu chuẩn tri thức: `.md/knowledge/session_learnings.md` (bổ sung RULE-1.21, RULE-1.22, RULE-2.12; duy trì kích thước 9.9 KB $\le 10.0$ KB)
+  - Pull Request: PR #89 đã squash-merge thành công vào `master`.
+- **Xác thực**:
+  - 110/110 root unit tests PASS, 604/604 rag-service tests PASS, 0 flake8 errors, 5/5 bundle budgets PASS.
+  - Dual-Gate CI 4/4 checks green.

@@ -24,10 +24,12 @@
 - `RULE-1.14 (Deep Seams Facade)`: Khi tách module lớn (>500 dòng), tệp gốc biến thành Facade mỏng re-export 100% symbols bảo đảm zero-regression và 100% test pass.
 - `RULE-1.15 (Redis DB Partitioning)`: Redis split: DB 0 LiteLLM, DB 1 `ingest:queue`, DB 2 Context Lake, DB 3 Semantic/Table Cache, DB 4 HITL, DB 5 Healer. Bọc `format_redis_db3_url` chặn ghi nhầm DB 1.
 - `RULE-1.16 (Zero-VRAM Fast MCP Bridge)`: Fast MCP Server kết nối daemon RAG (:8005) qua Lightweight HTTP Bridge, khởi động ~0.3s, 0 MB VRAM phụ, loại bỏ cold warmup 94s (Pitfall #14).
-- `RULE-1.17 (Dual-Level Quota Schema & Fail-Closed Predicate)`: Predicate `quota_probe_allows_toggle` bắt buộc xét cả root (`body.get("is_forbidden")`) và nested (`quota.is_forbidden`); fail-closed (`False`) nếu thiếu cờ boolean tường minh.
-- `RULE-1.18 (Cross-Process Mutex Lock)`: Subprocess nặng (Grok/AGY) bắt buộc dùng `fcntl.flock` trên file khóa chung (`/tmp/*.lock`) kèm `await proc.wait()` dọn dẹp zombie processes.
-- `RULE-1.19 (1-Click Google Validation URL & Stage 1 Decoupling)`: Antigravity Tools lỗi challenge (`accounts.google.com/signin/continue`) bắt buộc dùng `extract_validation_url()` bóc tách link gốc thành nút 1-click URL trên Telegram. Tại Stage 1 Health Probe, phân tách `disabled manually` với challenge bảo mật, cho phép tài khoản tắt thủ công sang Stage 2 Quota Probe kiểm tra upstream trước khi bật lại.
-- `RULE-1.20 (Pattern 17 Subprocess CLI Isolation)`: Subprocess CLI runner nặng bắt buộc dùng Pattern 17: Mutex `fcntl.flock(LOCK_NB)`, chuẩn hóa `Path.resolve()` chặn traversal, và `start_new_session=True` dọn theo process group tránh rò rỉ tài nguyên vRAM/CPU.
+- `RULE-1.17 (Dual-Level Quota Schema)`: `quota_probe_allows_toggle` xét cả root (`is_forbidden`) và nested (`quota.is_forbidden`); fail-closed (`False`) nếu thiếu cờ tường minh.
+- `RULE-1.18 (Cross-Process Mutex)`: Subprocess nặng (Grok/AGY) dùng `fcntl.flock` trên `/tmp/*.lock` kèm `await proc.wait()` dọn dẹp zombie processes.
+- `RULE-1.19 (1-Click Google URL & Stage 1)`: Antigravity challenge bóc link bằng `extract_validation_url()`. Stage 1 Health Probe tách `disabled manually` với challenge bảo mật.
+- `RULE-1.20 (Pattern 17 CLI Isolation)`: Subprocess nặng dùng Pattern 17: Mutex `fcntl.flock`, `Path.resolve()` chặn traversal, và `start_new_session=True` dọn process group.
+- `RULE-1.21 (Parameter Externalization)`: Cấm hardcode model (`gemini-*`) và IP (`100.83.*`); dùng alias (`fast-realtime`, `ocr-primary`) và env vars. Alias phải có fallback về `rag-core`.
+- `RULE-1.22 (Registry Timeout Cap)`: Đề xuất tác vụ ChatOps/MCP bắt buộc lấy timeout từ server registry (`cmd_def.timeout_seconds`), chặn client timeout inflation.
 
 ---
 
@@ -44,6 +46,7 @@
 - `RULE-2.9 (Dynamic Catalog Sizing Invariant)`: Unit test kho tri thức cấm assert kích thước cố định (`assert len == 60`), bắt buộc dùng kiểm tra cận dưới (`assert len >= 60`).
 - `RULE-2.10 (KISS Function Limit)`: Complexity cảnh báo từ 10, lỗi review từ 15. SLOC > 80 là câu review. Xem `platform_aware_kiss_standard.md`.
 - `RULE-2.11 (URL-Encoded Path IDs)`: Endpoint REST/MCP nhận mã văn bản qua path (`/graph/neighbors/{node_id}`), số hiệu pháp lý có `/` bắt buộc `quote(so_hieu, safe="")`.
+- `RULE-2.12 (AST Model/IP Linter)`: Linter tĩnh dùng `ast` duyệt syntax tree quét chuỗi model thô (bỏ qua docstring) và `ipaddress` quét IPv4. Miễn trừ qua cú pháp tường minh (`# ccba:allow-raw-model`, `# ccba:allow-raw-ip`); cấm `# noqa`.
 
 ---
 
@@ -69,9 +72,9 @@
 
 - `RULE-5.1 (Python Executable Ambiguity)`: Trên Ubuntu/Linux, lệnh `python` không tồn tại mặc định. Mọi script/hook phải gọi `python3` hoặc `.venv/bin/python`.
 - `RULE-5.2 (Spoke Virtual Key & Credential Isolation)`: (1) Masking khóa bí mật CLI. (2) File `.env` Spoke bắt buộc gán `0o600`. (3) Chuẩn hóa endpoint Tailscale bỏ dư thừa `/v1`.
-- `RULE-5.3 (Headless Watchdog Metric Aggregation)`: Watchdog container đọc metrics SoC Temp, RAM, NVMe trực tiếp từ `/proc/meminfo`, `shutil.disk_usage(/)`, `/sys/class/thermal` không cần root.
-- `RULE-5.4 (Blackwell GB10 SMI Query)`: GPU GB10 (128GB Unified Memory), `nvidia-smi` trả `[N/A]`. Truy vấn qua `--query-compute-apps=process_name,used_memory` rồi cộng dồn tiến trình.
-- `RULE-5.5 (WAL-Safe SQLite Disaster Recovery)`: Nâng cấp container SQLite WAL gọi `sqlite3.backup()` xuất snapshot trước khi tarball. Rollback xóa `-wal`/`-shm` cũ và phục hồi snapshot.
-- `RULE-5.6 (Thinking Token Management)`: Qwen 3.6 cho JSON/HyDE/WebUI/fallbacks bắt buộc `enable_thinking: false`. Đổi cờ gateway phải gắn `cache_params.namespace` mới tránh cache hit rỗng trên Redis DB 0.
-- `RULE-5.7 (LAN Access Binding & Process Restart Invariant)`: Sửa đổi mạng LAN trong `gui_config.json` bắt buộc restart `antigravity-tools.service` để re-bind socket; tránh `Errno 111 Connection refused` từ container Docker qua Tailscale IP.
-- `RULE-5.8 (Hermes Platform Sentinel & CLI Prompt Ingestion)`: Hermes MCP dùng sentinel `no_mcp` trên platform không cấp quyền; gỡ bỏ `skills` khỏi Telegram chặn Prompt Injection; CLI runner truyền prompt qua `stdin` (`-p -`) hoặc file `0600` tránh `E2BIG`.
+- `RULE-5.3 (Headless Watchdog Metrics)`: Container watchdog đọc SoC Temp, RAM, NVMe từ `/proc/meminfo`, `shutil.disk_usage(/)`, `/sys/class/thermal` không cần root.
+- `RULE-5.4 (Blackwell GB10 SMI)`: GPU GB10 Unified Memory `nvidia-smi` trả `[N/A]`; truy vấn qua `--query-compute-apps=process_name,used_memory` cộng dồn tiến trình.
+- `RULE-5.5 (WAL-Safe SQLite Recovery)`: Nâng cấp container SQLite WAL gọi `sqlite3.backup()` xuất snapshot trước tarball. Rollback xóa `-wal`/`-shm` cũ phục hồi snapshot.
+- `RULE-5.6 (Thinking Token Management)`: Qwen 3.6 JSON/HyDE/fallbacks bắt buộc `enable_thinking: false`. Đổi cờ gateway phải gắn `cache_params.namespace` mới.
+- `RULE-5.7 (LAN Binding Restart)`: Sửa LAN `gui_config.json` bắt buộc restart `antigravity-tools.service` để re-bind socket tránh Connection refused qua Tailscale IP.
+- `RULE-5.8 (Hermes Sentinel & Prompt Ingestion)`: Hermes MCP dùng sentinel `no_mcp`; gỡ `skills` khỏi Telegram chặn prompt injection; CLI runner truyền prompt qua `stdin` tránh `E2BIG`.
