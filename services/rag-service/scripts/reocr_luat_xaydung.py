@@ -33,7 +33,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("reocr_luat_xaydung")
 
-PDF_PATH = "/home/vvc/Public/VB phap quy/QH_Luat-Hienphap/Luat_50-2014-QH13_Luat Xay dung_18-6-2014.pdf"
+PDF_PATH = str(Path.home() / "Public/VB phap quy/QH_Luat-Hienphap/Luat_50-2014-QH13_Luat Xay dung_18-6-2014.pdf")
 CACHE_DIR = Path("/tmp/luat_50_ocr_cache")
 DOC_ID = "ROOT/Luat_50-2014-QH13_Luat_Xay_dung_18-6-2014"
 FILE_NAME = "Luat_50-2014-QH13_Luat Xay dung_18-6-2014.pdf"
@@ -69,7 +69,7 @@ def extract_page_worker(page_idx: int, img_bytes: bytes) -> tuple[int, str]:
 
 def main():
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    export_dir = os.environ.get("EXPORT_DIR", "/home/vvc/Public/exports")
+    export_dir = os.environ.get("EXPORT_DIR", str(Path.home() / "Public/exports"))
     exporter = DataExporter(export_dir)
 
     logger.info(f"Opening PDF: {PDF_PATH}")

@@ -63,16 +63,18 @@ def _correct_broken_table_with_vision(table_text: str, image_bytes: Optional[byt
         )
 
         if image_bytes:
+            table_vision_model = os.getenv("TABLE_VISION_MODEL", "ocr-primary")
             reconstructed = client.complete_vision_sync(
                 image_bytes,
                 prompt=prompt,
-                model="gemini-3.5-flash-lite",
+                model=table_vision_model,
             )
         else:
+            table_text_model = os.getenv("TABLE_CORRECTION_MODEL", "text-auto")
             reconstructed = client.complete_sync(
                 [{"role": "user", "content": prompt}],
-                model="gemini-3.5-flash-lite",
-                model_chain=["gemini-3.5-flash-lite", "openai/gemma-4-26b-a4b-it", "rag-core"],
+                model=table_text_model,
+                model_chain=[table_text_model, "text-gemma-12b", "rag-core"],
             )
 
         if reconstructed and "|" in reconstructed and len(reconstructed) > 20:
@@ -101,7 +103,7 @@ def _generate_table_summary(table_text: str, doc_id: str) -> str:
         except Exception:
             pass
 
-    model = os.environ.get("TABLE_SUMMARY_MODEL", "gemini-flash")
+    model = os.getenv("TABLE_SUMMARY_MODEL", "text-gemma")
     prompt = (
         "Tóm tắt bảng dữ liệu sau bằng tiếng Việt. "
         "Nêu rõ: (1) Mục đích của bảng, (2) Tên các cột chính, "

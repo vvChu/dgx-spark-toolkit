@@ -177,7 +177,10 @@ class _FakeNeo4jSession:
             return _FakeNeo4jResult([
                 {"source": "doc-1", "target": "doc-2", "type": "REFERENCES"},
             ])
-        if "MATCH (d:Document {doc_id: $node_id})-[r]-(n:Document)" in query:
+        if (
+            "MATCH (d:Document {doc_id: $node_id})-[r]-(n:Document)" in query
+            or "OPTIONAL MATCH (d)-[r]-(n:Document)" in query
+        ):
             return _FakeNeo4jResult([
                 {"id": "doc-2", "name": "Doc 2", "group": "TT", "rtype": "AMENDS", "src": kwargs["node_id"], "tgt": "doc-2"},
             ])

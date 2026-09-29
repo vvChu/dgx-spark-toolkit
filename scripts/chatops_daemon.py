@@ -23,11 +23,14 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
+import shlex
 import shutil
 import signal
 import sys
 import time
 from typing import Any, Dict, Optional
+import uuid
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -69,7 +72,7 @@ TELEGRAM_API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 # Allowed internal networks for REST endpoint
 ALLOWED_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("172.16.0.0/12"),  # ccba:allow-raw-ip
 ]
 
 # Blacklisted dangerous shell patterns for /exec
@@ -641,8 +644,9 @@ def is_account_blocked(account: Dict[str, Any]) -> bool:
 def get_antigravity_base_url() -> str:
     """Returns the base URL for Antigravity Tools API, preferring loopback on local host."""
     url = os.environ.get("GATEWAY_PROXY_URL", "http://127.0.0.1:8045").rstrip("/").removesuffix("/v1")
-    if "100.83.192.30" in url:
-        return url.replace("100.83.192.30", "127.0.0.1")  # ccba:allow-raw-ip
+    tailscale_ip = os.environ.get("TAILSCALE_SPARK_IP", "100.83.192.30")  # ccba:allow-raw-ip
+    if tailscale_ip in url:
+        return url.replace(tailscale_ip, "127.0.0.1")
     return url
 
 
@@ -1195,26 +1199,40 @@ async def probe_blackwell_gpu() -> str:
 
 
 async def execute_shell_job(
-    cmd: str,
+    cmd: str | list[str],
     job_id: str,
     chat_id: int,
     status_msg_id: int,
     title: str,
     timeout: int = 120,
+    use_shell: bool = False,
 ) -> None:
     """Executes a subprocess with real-time feedback and Two-Tier Delivery."""
     start_time = time.time()
     await edit_telegram_msg(chat_id, status_msg_id, f"⏳ *[ĐANG CHẠY]* `{title}`\nJob ID: `{job_id}`\nVui lòng đợi...")
 
     try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            stdin=asyncio.subprocess.DEVNULL,
-            start_new_session=True,
-            cwd=str(PROJECT_ROOT),
-        )
+        if use_shell:
+            shell_cmd = cmd if isinstance(cmd, str) else " ".join(cmd)
+            proc = await asyncio.create_subprocess_shell(
+                shell_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.DEVNULL,
+                start_new_session=True,
+                cwd=str(PROJECT_ROOT),
+            )
+        else:
+            argv = shlex.split(cmd) if isinstance(cmd, str) else list(cmd)
+            proc = await asyncio.create_subprocess_exec(
+                argv[0],
+                *argv[1:],
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.DEVNULL,
+                start_new_session=True,
+                cwd=str(PROJECT_ROOT),
+            )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
@@ -1418,9 +1436,12 @@ def get_restart_service_markup() -> Dict[str, Any]:
 
 
 def get_boost_skills_markup(
-    escalations_dir: str = "/home/vvc/ccba/ccba-agent-platform/.md/knowledge/escalations",
+    escalations_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Builds single-column mobile-friendly keyboard for top 6 plateau skills."""
+    if escalations_dir is None:
+        hub_base = os.environ.get("CCBA_HUB_PATH", str(Path.home() / "ccba/ccba-agent-platform"))
+        escalations_dir = os.path.join(hub_base, ".md", "knowledge", "escalations")
     p_dir = Path(escalations_dir)
     keyboard = []
     if p_dir.exists() and p_dir.is_dir():
@@ -1516,11 +1537,11 @@ async def probe_rag_state() -> str:
 async def probe_autotuner_status() -> str:
     """Probes CCBA Nightly Auto-Tuner status via Hub Monorepo CLI."""
     lines = []
-    hub_python = "/home/vvc/ccba/ccba-agent-platform/.venv/bin/python"
+    hub_dir = os.environ.get("CCBA_HUB_PATH", str(Path.home() / "ccba/ccba-agent-platform"))
+    hub_python = os.path.join(hub_dir, ".venv/bin/python")
     if not os.path.exists(hub_python):
         hub_python = sys.executable
-    hub_script = "/home/vvc/ccba/ccba-agent-platform/scripts/eval/check_nightly_status.py"
-    hub_dir = "/home/vvc/ccba/ccba-agent-platform"
+    hub_script = os.path.join(hub_dir, "scripts/eval/check_nightly_status.py")
 
     if not os.path.exists(hub_script):
         return f"❌ *Lỗi Cấu Hình:* Không tìm thấy script `{hub_script}`!"
@@ -1721,7 +1742,7 @@ async def dispatch_command(
     if command_id == "system.emergency.exec":
         shell_cmd = params.get("cmd", "")
         job_id = hashlib.md5(f"exec_{time.time()}".encode()).hexdigest()[:6]
-        await execute_shell_job(shell_cmd, job_id, chat_id, message_id, title or f"Khẩn cấp: {shell_cmd[:30]}", timeout=timeout or 60)
+        await execute_shell_job(shell_cmd, job_id, chat_id, message_id, title or f"Khẩn cấp: {shell_cmd[:30]}", timeout=timeout or 60, use_shell=True)
         return True
 
     registry = load_command_registry()
@@ -2584,37 +2605,137 @@ async def health_check():
     return {"status": "ok", "service": "dgx-chatops", "timestamp": time.time()}
 
 
+@app.get("/api/v1/probe/{probe_type}")
+async def handle_internal_probe(probe_type: str, x_chatops_secret: Optional[str] = Header(None)):
+    """Executes read-only infrastructure probe and returns formatted text."""
+    if not CHATOPS_INTERNAL_SECRET or not x_chatops_secret or not hmac.compare_digest(x_chatops_secret, CHATOPS_INTERNAL_SECRET):
+        raise HTTPException(status_code=401, detail="Invalid ChatOps Secret Header")
+
+    pt = probe_type.lower().strip()
+    match pt:
+        case "gpu":
+            res = await probe_blackwell_gpu()
+        case "memory" | "ram" | "swap":
+            res = await probe_memory_and_swap()
+        case "containers" | "hardware" | "status":
+            res = await probe_hardware_and_containers()
+        case "rag":
+            res = await probe_rag_state()
+        case "gateway":
+            res = await probe_gateway_stats()
+        case "antigravity":
+            res = await probe_antigravity_status()
+        case _:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported probe_type: '{probe_type}'. Supported: gpu, memory, containers, rag, gateway, antigravity",
+            )
+
+    return {"probe_type": pt, "result": res}
+
+
+ALLOWED_NOTIFY_COMMANDS = {
+    "system.container.restart",
+    "system.openwebui.upgrade",
+    "system.deps.check",
+    "system.deps.upgrade",
+    "ccba.skill.boost",
+    "antigravity.account.reenable",
+}
+
+
 @app.post("/api/v1/notify")
 async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Optional[str] = Header(None)):
     """Receives alerts from Docker containers and sends Telegram messages with interactive buttons."""
     if not CHATOPS_INTERNAL_SECRET or not x_chatops_secret or not hmac.compare_digest(x_chatops_secret, CHATOPS_INTERNAL_SECRET):
         raise HTTPException(status_code=401, detail="Invalid ChatOps Secret Header")
 
-    title = payload.get("title", "Thông báo từ máy chủ DGX Spark")
-    body = payload.get("body", "")
+    title = str(payload.get("title", "Thông báo từ máy chủ DGX Spark")).strip()
+    body = str(payload.get("body", "")).strip()
     severity = payload.get("severity", "INFO")
     actions = payload.get("actions", [])
 
-    icon = "🔔" if severity == "INFO" else "⚠️" if severity == "WARNING" else "🚨"
-    msg_text = f"{icon} *{title}*\n\n{body}"
+    if not isinstance(actions, list):
+        raise HTTPException(status_code=400, detail="Trường 'actions' phải là một danh sách")
 
+    registry = load_command_registry()
     inline_keyboard = []
-    for act in actions:
-        action_id = act.get("action_id", "act")
-        label = act.get("label", "Thực thi")
-        cmd = act.get("command", "")
-        params = act.get("params", {})
-        timeout = act.get("timeout")
 
-        nonce = hashlib.sha256(f"{action_id}_{time.time()}_{label}".encode()).hexdigest()[:8]
+    for act in actions:
+        if not isinstance(act, dict):
+            continue
+        cmd = str(act.get("command", "")).strip()
+
+        # Adversarial Defense 1: Chặn tuyệt đối emergency exec
+        if cmd == "system.emergency.exec" or cmd.startswith("system.emergency"):
+            raise HTTPException(status_code=403, detail="Tác vụ khẩn cấp 'system.emergency.exec' bị cấm qua cơ chế notify")
+
+        # Adversarial Defense 2: Whitelist commands
+        if cmd not in ALLOWED_NOTIFY_COMMANDS:
+            raise HTTPException(status_code=403, detail=f"Lệnh '{cmd}' không nằm trong danh sách được phép đề xuất (ALLOWED_NOTIFY_COMMANDS)")
+
+        cmd_def = registry.get(cmd)
+        if not cmd_def:
+            raise HTTPException(status_code=400, detail=f"Lệnh '{cmd}' chưa được định nghĩa trong registry")
+
+        # Adversarial Defense 3: Validate params với param_rules TRƯỚC KHI tạo nonce / gửi Telegram
+        params = act.get("params", {})
+        if not isinstance(params, dict):
+            raise HTTPException(status_code=400, detail="Trường 'params' phải là một dictionary")
+
+        param_rules = cmd_def.get("param_rules", {})
+        extra_keys = set(params.keys()) - set(param_rules.keys())
+        if extra_keys:
+            raise HTTPException(status_code=400, detail=f"Tham số không được phép cho lệnh '{cmd}': {extra_keys}")
+
+        for p_name, p_pattern in param_rules.items():
+            p_val = str(params.get(p_name, ""))
+            if not re.match(p_pattern, p_val):
+                raise HTTPException(status_code=400, detail=f"Tham số '{p_name}'='{p_val}' không thỏa mãn mẫu an toàn '{p_pattern}'")
+
+        # Adversarial Defense 4: Server-side generated action labels (Chống UI spoofing)
+        param_summary = ", ".join(f"{k}={v}" for k, v in params.items())
+        desc = cmd_def.get("description", cmd)
+        server_title = f"Thực thi: {desc}" + (f" ({param_summary})" if param_summary else "")
+        server_label = f"▶️ {cmd}" + (f" ({param_summary})" if param_summary else "")
+        if len(server_label) > 35:
+            server_label = server_label[:32] + "..."
+
+        nonce = hashlib.sha256(f"{cmd}_{time.time()}_{uuid.uuid4().hex[:6]}".encode()).hexdigest()[:8]
+        reg_timeout = cmd_def.get("timeout_seconds", 120)
         action_cache[nonce] = {
             "command": cmd,
             "params": params,
-            "title": label,
-            "timeout": timeout,
-            "expires": time.time() + act.get("ttl_seconds", 3600),
+            "title": server_title,
+            "timeout": reg_timeout,
+            "expires": time.time() + min(act.get("ttl_seconds", 3600), 7200),
         }
-        inline_keyboard.append([{"text": label, "callback_data": f"act:{nonce}"}])
+        inline_keyboard.append([{"text": server_label, "callback_data": f"act:{nonce}"}])
+
+    if inline_keyboard:
+        # Khi có actions đề xuất tác vụ: Tiêu đề và thân thẻ BẮT BUỘC sinh từ server registry (chống UI spoofing)
+        action_summaries = []
+        for nonce, entry in action_cache.items():
+            if any(btn.get("callback_data") == f"act:{nonce}" for row in inline_keyboard for btn in row):
+                cmd_id = entry["command"]
+                cmd_def = registry.get(cmd_id, {})
+                display_timeout = entry["timeout"] if entry["timeout"] is not None else cmd_def.get("timeout_seconds", 120)
+                action_summaries.append(
+                    f"• *Mã lệnh:* `{cmd_id}`\n"
+                    f"  *Mô tả:* {cmd_def.get('description', cmd_id)}\n"
+                    f"  *Tham số:* `{json.dumps(entry['params'], ensure_ascii=False)}`\n"
+                    f"  *Giới hạn thời gian:* `{display_timeout}s`"
+                )
+        body_text = "\n\n".join(action_summaries)
+        msg_text = (
+            f"⚠️ *[ĐỀ XUẤT THỰC THI TÁC VỤ]*\n\n"
+            f"{body_text}\n\n"
+            f"_Vui lòng bấm nút bên dưới để xác nhận thực thi hoặc bỏ qua nếu không đồng ý._"
+        )
+    else:
+        # Thông báo cảnh báo thuần túy (không kèm action) giữ nguyên body từ client
+        icon = "🔔" if severity == "INFO" else "⚠️" if severity == "WARNING" else "🚨"
+        msg_text = f"{icon} *{title}*\n\n{body}"
 
     reply_markup = {"inline_keyboard": inline_keyboard} if inline_keyboard else None
     msg_id = await send_telegram_msg(ADMIN_USER_ID, msg_text, reply_markup=reply_markup)

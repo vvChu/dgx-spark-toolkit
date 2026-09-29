@@ -14,6 +14,7 @@
 2. **Kiến Trúc & Quy Chuẩn Kỹ Thuật**:
    - [Kiến Trúc Hệ Thống & 9-Stage Ingestion](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/ARCHITECTURE.md)
    - [Quy Chuẩn Code & Định Danh (Conventions)](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/CONVENTIONS.md)
+   - [Platform-Aware KISS v2.0](knowledge/platform_aware_kiss_standard.md)
    - [Hướng Dẫn Phát Triển & CI/CD](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/DEVELOPMENT.md)
    - [Cạm Bẫy Kỹ Thuật Cần Tránh (Pitfalls)](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/PITFALLS.md)
    - [Quyết Định Kiến Trúc (ADR Records)](file:///home/vvc/Codebase/dgx-spark-toolkit/docs/adr/)

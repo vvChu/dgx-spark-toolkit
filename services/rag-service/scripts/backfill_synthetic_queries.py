@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 EXPORT_JSON_DIR = os.environ.get(
     "EXPORT_JSON_DIR",
-    "/app/exports/json" if os.path.exists("/app/exports/json") else "/home/vvc/Public/exports/json"
+    "/app/exports/json" if os.path.exists("/app/exports/json") else str(Path.home() / "Public/exports/json")
 )
 BACKFILL_LIMIT = int(os.environ.get("BACKFILL_LIMIT", "0"))
 DRY_RUN = os.environ.get("BACKFILL_DRY_RUN", "0") == "1"
@@ -73,7 +73,7 @@ from core.ai_gateway_client import get_ai_gateway_client
 from ingestion.normalizers.boilerplate import strip_ai_monologue
 from ingestion.legal_taxonomy import classify_source_category
 
-_MODEL = os.environ.get("SYNTHETIC_QUERY_MODEL", "gemini-3.5-flash-lite")
+_MODEL = os.getenv("SYNTHETIC_QUERY_MODEL", "text-gemma")
 logger.info(f"Synthetic queries default model: {_MODEL}")
 
 
@@ -99,7 +99,7 @@ def _generate(chunk_text: str, model: str = _MODEL) -> str:
             content = client.complete_sync(
                 messages=messages,
                 model=model,
-                model_chain=[model, "claude-haiku-4", "rag-core"],
+                model_chain=[model, "fast-realtime", "rag-core"],
                 max_tokens=512,
                 temperature=0.3,
             )

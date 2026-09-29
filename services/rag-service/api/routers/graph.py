@@ -1,4 +1,5 @@
 """Knowledge graph visualization endpoints."""
+from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from core.database import get_neo4j_repo
 from repositories.neo4j_repo import Neo4jRepository
@@ -36,30 +37,43 @@ async def get_graph_data(
     return {"nodes": nodes, "links": links}
 
 
-@router.get("/neighbors/{node_id}", tags=["Visualization"])
+@router.get("/neighbors", tags=["Visualization"])
+@router.get("/neighbors/{node_id:path}", tags=["Visualization"])
 async def get_graph_neighbors(
-    node_id: str,
+    node_id: Optional[str] = None,
+    id: Optional[str] = Query(None),
     neo4j_repo: Neo4jRepository = Depends(get_neo4j_repo),
 ):
     """Expand a node — return its immediate neighbors and connecting edges."""
+    target_id = (node_id or id or "").strip()
     nodes, links = [], []
+    if not target_id:
+        return {"nodes": nodes, "links": links}
 
     try:
         records = await neo4j_repo.run_query(
             """
-            MATCH (d:Document {doc_id: $node_id})-[r]-(n:Document)
-            RETURN n.doc_id AS id, n.title AS name, n.doc_type AS group,
-                   type(r) AS rtype, startNode(r).doc_id AS src, endNode(r).doc_id AS tgt
+            MATCH (d:Document)
+            WHERE d.id = $node_id OR d.doc_number = $node_id OR d.id = ('VBPL/' + $node_id)
+            OPTIONAL MATCH (d)-[r]-(n:Document)
+            RETURN d.id AS target_id, coalesce(d.title, d.doc_number, d.id) AS target_name, coalesce(d.doc_type, 'target') AS target_group,
+                   n.id AS id, coalesce(n.title, n.doc_number, n.id) AS name, coalesce(n.doc_type, 'other') AS group,
+                   type(r) AS rtype, startNode(r).id AS src, endNode(r).id AS tgt
             """,
-            node_id=node_id,
+            node_id=target_id,
         )
         seen = set()
         for r in records:
-            nid = r["id"]
-            if nid not in seen:
-                nodes.append({"id": nid, "name": r["name"] or nid, "group": r["group"] or "other"})
+            tid = r.get("target_id")
+            if tid and tid not in seen:
+                nodes.append({"id": tid, "name": r.get("target_name") or tid, "group": r.get("target_group") or "target"})
+                seen.add(tid)
+            nid = r.get("id")
+            if nid and nid not in seen:
+                nodes.append({"id": nid, "name": r.get("name") or nid, "group": r.get("group") or "other"})
                 seen.add(nid)
-            links.append({"source": r["src"], "target": r["tgt"], "type": r["rtype"]})
+            if r.get("src") and r.get("tgt"):
+                links.append({"source": r["src"], "target": r["tgt"], "type": r.get("rtype")})
     except Exception as e:
         logger.warning(f"Graph neighbors error: {e}")
 

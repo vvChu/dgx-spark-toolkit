@@ -391,8 +391,8 @@ class AIGatewayClient:
                 ]
             }
         )
-        target_model = model or getattr(self.settings, "PRIMARY_VISION_MODEL", "gemini-3-flash")
-        chain = model_chain or [target_model, "ocr-primary", "ocr-fallback", "rag-core"]
+        target_model = model or getattr(self.settings, "PRIMARY_VISION_MODEL", "ocr-primary")
+        chain = model_chain or [target_model, "ocr-fallback", "rag-core"]
         extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
 
         res = await self.complete(

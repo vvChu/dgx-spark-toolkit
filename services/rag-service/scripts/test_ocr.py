@@ -1,3 +1,4 @@
+# ccba:allow-raw-model-file: Test script for OCR accuracy
 import base64
 import requests
 import json

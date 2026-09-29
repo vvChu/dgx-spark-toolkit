@@ -134,3 +134,27 @@ class BGE_M3_HybridEmbedding:
             sparse_dict = {int(k): float(v) for k, v in doc_weights.items()}
             sparse_list.append(sparse_dict)
         return sparse_list
+
+    def encode_dense_only(
+        self, texts: list[str], batch_size: int = 8, max_length: int = 2048
+    ) -> list[list[float]]:
+        """Encode raw texts into L2-normalized 1024-d dense embeddings without legal prefixes."""
+        if isinstance(texts, str):
+            texts = [texts]
+
+        with self._lock:
+            embeddings = self.model.encode(
+                texts,
+                batch_size=batch_size,
+                max_length=max_length,
+                return_dense=True,
+                return_sparse=False,
+                return_colbert_vecs=False,
+            )
+
+        dense_matrix = np.array(embeddings["dense_vecs"], dtype=np.float32)
+        norms = np.linalg.norm(dense_matrix, axis=1, keepdims=True)
+        norms[norms == 0.0] = 1.0
+        normalized = (dense_matrix / norms).tolist()
+        return normalized
+

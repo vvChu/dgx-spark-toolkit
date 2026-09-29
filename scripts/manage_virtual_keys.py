@@ -31,10 +31,10 @@ STANDARD_SPOKES: List[Dict[str, Any]] = [
         "budget": 50.0,
         "budget_duration": "30d",
         "models": [
-            "qwen-3.5-35b",
+            "qwen-3.5-35b",  # ccba:allow-raw-model
             "embedding-default",
-            "gpt-oss-120b-medium",
-            "gemini-3.8-flash",
+            "gpt-oss-120b-medium",  # ccba:allow-raw-model
+            "gemini-3.8-flash",  # ccba:allow-raw-model
             "rag-core",
         ],
     },
@@ -43,9 +43,9 @@ STANDARD_SPOKES: List[Dict[str, Any]] = [
         "budget": 30.0,
         "budget_duration": "30d",
         "models": [
-            "qwen-3.5-35b",
+            "qwen-3.5-35b",  # ccba:allow-raw-model
             "embedding-default",
-            "gemini-3.8-flash",
+            "gemini-3.8-flash",  # ccba:allow-raw-model
         ],
     },
     {
@@ -53,9 +53,9 @@ STANDARD_SPOKES: List[Dict[str, Any]] = [
         "budget": 30.0,
         "budget_duration": "30d",
         "models": [
-            "qwen-3.5-35b",
+            "qwen-3.5-35b",  # ccba:allow-raw-model
             "embedding-default",
-            "gemini-3.8-flash",
+            "gemini-3.8-flash",  # ccba:allow-raw-model
             "rag-core",
         ],
     },
@@ -539,7 +539,7 @@ class VirtualKeyManager:
         output_dir: str = ".md/scratch/spokes_env",
         dry_run: bool = False,
         force: bool = False,
-        tailscale_host: str = "100.83.192.30:8090",
+        tailscale_host: str = os.getenv("AI_GATEWAY_HOST", "127.0.0.1:8090"),
     ) -> List[Dict[str, Any]]:
         """Provision standard virtual keys for federated spokes.
 
@@ -930,8 +930,8 @@ def _add_provision_spokes_subparser(subparsers: Any) -> None:
     )
     p.add_argument(
         "--tailscale-host",
-        default="100.83.192.30:8090",
-        help="Tailscale gateway host:port (default: 100.83.192.30:8090)",
+        default=os.getenv("AI_GATEWAY_HOST", "127.0.0.1:8090"),
+        help="Gateway host:port (default: env AI_GATEWAY_HOST or 127.0.0.1:8090)",
     )
 
 

@@ -1,7 +1,7 @@
 import requests
 import os
 
-API_KEY = "AIzaSyCR6QfgCr0DtNbjOF0pQqgRSnX4ZF-PQRE" # From GEMINI_API_KEY_3 earlier
+API_KEY = os.environ.get("GEMINI_API_KEY_3") or os.environ.get("GEMINI_API_KEY", "")
 url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
 response = requests.get(url)
 models = response.json().get('models', [])

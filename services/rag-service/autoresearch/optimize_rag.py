@@ -35,7 +35,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────────────────────────────────────────
-EXPORT_DIR = "/home/vvc/Public/exports"
+EXPORT_DIR = os.environ.get("EXPORT_DIR", str(Path.home() / "Public/exports"))
 EXPORT_JSON_DIR = os.path.join(EXPORT_DIR, "json")
 EXPORT_MD_DIR = os.path.join(EXPORT_DIR, "markdown")
 

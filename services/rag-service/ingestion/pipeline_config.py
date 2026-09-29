@@ -8,12 +8,13 @@ module-level get_settings() calls that crash without env vars (e.g. in CI).
 Pure env-var reads are safe at module level.
 """
 import os
+from pathlib import Path
 
 # Pure env-var reads (no Settings dependency) — safe at module level
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "2"))
 MAX_DIGITAL_WORKERS = int(os.getenv("MAX_DIGITAL_WORKERS", "10"))
 SOURCE_DIR = os.getenv("SOURCE_DIR", "/app/data/legal_docs_source")
-HUB3_LEGAL_PATH = os.getenv("HUB3_LEGAL_PATH", "/home/vvc/ccba/ccba-legal-knowledge")
+HUB3_LEGAL_PATH = os.getenv("HUB3_LEGAL_PATH", str(Path.home() / "ccba/ccba-legal-knowledge"))
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j-graph:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASS = os.getenv("NEO4J_PASSWORD") or os.getenv("NEO4J_PASS", "")

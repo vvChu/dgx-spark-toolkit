@@ -210,8 +210,9 @@ def is_toc_page(text: str) -> bool:
     return is_toc
 
 
-def call_vision_fallback(img_bytes, ocr_text, page_num, model="gemini-3-flash"):
+def call_vision_fallback(img_bytes, ocr_text, page_num, model=None):
     """Call Vision LLM for fallback extraction via LiteLLM"""
+    target_model = model or os.getenv("PRIMARY_VISION_MODEL", "ocr-primary")
     import base64
     base64_image = base64.b64encode(img_bytes).decode('utf-8')
     prompt = (
@@ -237,8 +238,8 @@ def call_vision_fallback(img_bytes, ocr_text, page_num, model="gemini-3-flash"):
         content = client.complete_vision_sync(
             base64_image,
             prompt=prompt,
-            model=model,
-            model_chain=[model, "ocr-primary", "ocr-fallback", "rag-core"],
+            model=target_model,
+            model_chain=[target_model, "ocr-fallback", "rag-core"],
             max_tokens=8192,
             temperature=0.1,
         )
@@ -272,7 +273,7 @@ def call_table_vision_llm(img_data, ocr_text, page_num, is_pil=False):
         "5. Nếu có merged cells, điền lại dữ liệu vào từng ô riêng để Markdown đọc được.\n"
     )
 
-    _TABLE_MODEL = os.environ.get("TABLE_VISION_MODEL", "gemini-3-flash")
+    _TABLE_MODEL = os.getenv("TABLE_VISION_MODEL", "ocr-primary")
     client = get_ai_gateway_client()
     try:
         content = client.complete_vision_sync(
@@ -449,7 +450,7 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
         )
         if VISION_FALLBACK_COUNT:
             VISION_FALLBACK_COUNT.inc()
-        vision_text = call_vision_fallback(llm_enhanced_bytes, ocr_text="", page_num=page_num, model="gemini-3-flash")
+        vision_text = call_vision_fallback(llm_enhanced_bytes, ocr_text="", page_num=page_num)
     else:
         # [Fix #1] Blank page guard — prevent prompt leakage on signature/spacer pages
         if is_blank_page(img_bytes, surya_text=full_text, ocr_raw=ocr_raw):
@@ -462,10 +463,10 @@ def hybrid_extract_page(img_bytes, page_num, total_pages):
             return {"text": "", "bbox": bbox_list, "layout": layout_segments, "score": score}
 
         if score < threshold or looks_like_annex_table:
-            logger.info(f"Page {page_num} score {score:.1f} < {threshold} (or seems like annex table). Triggering Primary Vision Fallback (gemini-3-flash).")
+            logger.info(f"Page {page_num} score {score:.1f} < {threshold} (or seems like annex table). Triggering Primary Vision Fallback.")
             if VISION_FALLBACK_COUNT:
                 VISION_FALLBACK_COUNT.inc()
-            vision_text = call_vision_fallback(llm_enhanced_bytes, ocr_text=full_text, page_num=page_num, model="gemini-3-flash")
+            vision_text = call_vision_fallback(llm_enhanced_bytes, ocr_text=full_text, page_num=page_num)
 
     if vision_text:
         final_text = vision_text

@@ -47,9 +47,13 @@ class Settings(BaseSettings):
     FORCE_CPU_RERANKER: bool = False
     FORCE_CPU_EMBEDDING: bool = False
 
-    # Vision Models (ingestion pipeline) — Free-tier-first strategy
-    PRIMARY_VISION_MODEL: str = "gemini-3-flash"
-    FALLBACK_VISION_MODEL: str = "gemini-3.1-flash-lite"
+    # Vision & Fast Realtime Models (ingestion & retrieval pipeline) — Capability Aliases
+    PRIMARY_VISION_MODEL: str = "ocr-primary"
+    FALLBACK_VISION_MODEL: str = "ocr-fallback"
+    REALTIME_CHAT_MODEL: str = "fast-realtime"
+    TABLE_VISION_MODEL: str = "ocr-primary"
+    TABLE_SUMMARY_MODEL: str = "text-gemma"
+    REALTIME_CHAT_TIMEOUT_SECONDS: float = 3.0
     OCR_WORKER_URL: str = "http://ocr-worker:8000"
 
     # Paths
