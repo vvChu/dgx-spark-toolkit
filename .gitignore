@@ -79,6 +79,8 @@ tests/*.pdf
 # CCBA Scratch and Backups
 .md/scratch/
 .md/backups/
+.md/peer_exchange/grok_*.md
+.md/peer_exchange/prompt_grok_*.md
 scratch/
 backups/
 
