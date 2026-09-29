@@ -105,7 +105,7 @@ def test_single_model(proxy_url: str, proxy_key: str, model_id: str) -> Dict[str
 
 def main():
     env = load_env()
-    proxy_url = env.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045/v1")
+    proxy_url = env.get("GATEWAY_PROXY_URL", "http://127.0.0.1:8045/v1")
     proxy_key = env.get("GATEWAY_PROXY_KEY", "")
 
     if not proxy_key:

@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # --- Configuration ---
-SERVER_IP="${1:-100.83.192.30}"
+SERVER_IP="${1:-${AI_GATEWAY_HOST:-127.0.0.1}}"
 GATEWAY_URL="http://${SERVER_IP}:8090"
 API_KEY="${AI_GATEWAY_KEY:-sk-spark-secure-key-2026}"
 

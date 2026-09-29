@@ -136,7 +136,7 @@ def verify_integrity(project_root: Path) -> Tuple[bool, List[str]]:
         is_valid = False
 
     # Check for legacy misleading aliases
-    misleading_aliases = ["Qwen-3.6-35B-NVFP4"]
+    misleading_aliases = ["Qwen-3.6-35B-NVFP4"]  # ccba:allow-raw-model
     found_misleading = [a for a in misleading_aliases if a in gateway_models]
     if found_misleading:
         logs.append(f"⚠️ Warning: Misleading legacy alias found on Gateway: {found_misleading}")

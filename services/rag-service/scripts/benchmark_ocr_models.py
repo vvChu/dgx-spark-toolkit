@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ccba:allow-raw-model-file: Benchmark script comparing OCR vision model accuracy
 """Benchmark OCR Vision quality across models.
 
 Renders specific PDF pages to images, sends to each model in the chain,

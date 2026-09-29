@@ -1606,6 +1606,7 @@ router_settings:
 
   # ── Canonical Stable Aliases (Issue #51) ──
   model_group_alias:
+    "fast-realtime": "claude-haiku-4"
     "gemini-flash-latest": "gemini-3.8-flash"
     "gemini-reasoning-latest": "gemini-3.8-flash-high"
     "embedding-default": "gemini-embedding-2"
@@ -1757,6 +1758,7 @@ litellm_settings:
   # Issue #51: Globally drop unsupported parameters across all providers
   drop_params: true
   model_aliases:
+    "fast-realtime": "claude-haiku-4"
     "gemini-flash-latest": "gemini-3.8-flash"
     "gemini-reasoning-latest": "gemini-3.8-flash-high"
     "embedding-default": "gemini-embedding-2"

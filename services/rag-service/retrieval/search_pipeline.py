@@ -615,12 +615,14 @@ class SearchPipeline:
 
     async def _agentic_plan_subqueries(self, ctx: SearchContext) -> None:
         ctx.tracer.start_step("agentic_plan")
+        realtime_model = os.getenv("REALTIME_CHAT_MODEL", "fast-realtime")
+        realtime_timeout = float(os.getenv("REALTIME_CHAT_TIMEOUT_SECONDS", "3.0"))
         try:
             plan = await ctx.ai_client.extract_json(
                 _AGENTIC_PLAN_PROMPT.format(query=ctx.raw_query),
-                model="claude-haiku-4",
-                model_chain=["claude-haiku-4", "rag-core"],
-                timeout=3.0,
+                model=realtime_model,
+                model_chain=[realtime_model, "rag-core"],
+                timeout=realtime_timeout,
             )
             sub_queries = plan.get("sub_queries", [ctx.raw_query])
             if not isinstance(sub_queries, list) or not sub_queries:
@@ -668,12 +670,14 @@ class SearchPipeline:
         ]
         context_preview = "\n".join(preview_chunks)
 
+        realtime_model = os.getenv("REALTIME_CHAT_MODEL", "fast-realtime")
+        realtime_timeout = float(os.getenv("REALTIME_CHAT_TIMEOUT_SECONDS", "3.0"))
         try:
             eval_res = await ctx.ai_client.extract_json(
                 _AGENTIC_EVAL_PROMPT.format(query=ctx.raw_query, context=context_preview),
-                model="claude-haiku-4",
-                model_chain=["claude-haiku-4", "rag-core"],
-                timeout=3.0,
+                model=realtime_model,
+                model_chain=[realtime_model, "rag-core"],
+                timeout=realtime_timeout,
             )
             ctx.is_sufficient = eval_res.get("is_sufficient", True)
             ctx.confidence = float(eval_res.get("confidence", 1.0))

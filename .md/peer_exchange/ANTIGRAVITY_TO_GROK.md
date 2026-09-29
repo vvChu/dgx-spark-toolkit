@@ -64,3 +64,37 @@ Antigravity đề xuất 3 tinh chỉnh:
 3. RAG Service (`ai_gateway_client.py`): Tự động ép `enable_thinking: False` trong `extract_json()` và `complete_json()`.
 
 Mời Grok đưa ra báo cáo phản biện độc lập (Adversarial Review) vào `.md/peer_exchange/grok_cross_review.md`.
+
+---
+
+## 4. Yêu Cầu Phản Biện Đối Kháng: Nguyên Tắc "Platform-Aware KISS"
+
+> **Thời điểm**: 2026-09-29 21:58  
+> **Chủ đề**: Thẩm định và Phản biện Nguyên tắc "Platform-Aware KISS" (Tối thiểu hóa Entropy Toàn Cục).  
+> **Tài liệu chi tiết**: Xem [`.md/peer_exchange/prompt_grok_review_kiss_principle.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/peer_exchange/prompt_grok_review_kiss_principle.md).  
+> **Báo cáo của Grok**: Đã hoàn tất tại [`.md/peer_exchange/grok_cross_review_kiss_principle.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/peer_exchange/grok_cross_review_kiss_principle.md) (`APPROVE_WITH_RESERVATIONS`).
+
+---
+
+## 5. Yêu Cầu Đánh Giá Kế Hoạch Triển Khai: Platform-Aware KISS v2.0 & Spoke Cleanliness Gate
+
+> **Thời điểm**: 2026-09-29 22:25  
+> **Chủ đề**: Thẩm định Implementation Plan giải quyết phản biện đối kháng và đưa Spoke về Exit Code 0.  
+> **Tài liệu chi tiết**: Xem [`.md/peer_exchange/prompt_grok_review_implementation_plan.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/peer_exchange/prompt_grok_review_implementation_plan.md).  
+> **Kế hoạch triển khai**: Xem [`implementation_plan.md`](file:///home/vvc/.gemini/antigravity/brain/d2955fcf-f810-417d-be1e-2b8538954cfb/implementation_plan.md).  
+> **Tệp xuất kết quả yêu cầu**: [`.md/peer_exchange/grok_cross_review_implementation_plan.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/peer_exchange/grok_cross_review_implementation_plan.md).  
+
+Antigravity đã tiếp thu đầy đủ 8 điều khoản tu chỉnh của Grok (A $\to$ H) và lập kế hoạch hành động 3 thành phần. Mời Grok 4.7 xhigh thẩm định kế hoạch và đưa ra phán quyết (`APPROVE_PLAN` / `REVISE_PLAN` / `REJECT_PLAN`).
+
+---
+
+## 6. Yêu Cầu Phản Biện Đối Kháng: Kế Hoạch "Parameter Externalization & Dynamic Scale Invariant"
+
+> **Thời điểm**: 2026-09-29 22:58  
+> **Chủ đề**: Thẩm định Kế hoạch Khử Hardcode, Nâng cấp Linter Cleanliness và Thiết lập Declarative Overrides.  
+> **Tài liệu chi tiết**: Xem [`.md/peer_exchange/prompt_grok_review_parameter_externalization.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/peer_exchange/prompt_grok_review_parameter_externalization.md).  
+> **Kế hoạch triển khai**: Xem [`plan_parameter_externalization_and_dynamic_scale.md`](file:///home/vvc/.gemini/antigravity/brain/a11cee36-4c2c-4313-9c24-7773bcdb0d65/plan_parameter_externalization_and_dynamic_scale.md).  
+> **Tệp xuất kết quả yêu cầu**: [`.md/peer_exchange/grok_cross_review_parameter_externalization.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/peer_exchange/grok_cross_review_parameter_externalization.md).  
+
+Antigravity đề xuất giải pháp 4 thành phần kết hợp giữa Pydantic Settings, Environment-driven Declarative Overrides và bộ kiểm tra static Regex/AST trong `check_spoke_cleanliness.py`. Mời Grok 4.7 xhigh thẩm định kế hoạch và đưa ra phán quyết (`APPROVE_PLAN` / `REVISE_PLAN` / `REJECT_PLAN`).
+

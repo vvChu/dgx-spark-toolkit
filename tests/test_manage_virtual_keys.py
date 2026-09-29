@@ -311,7 +311,7 @@ def test_env_file_generation_permissions(
         content = env_file_path.read_text(encoding="utf-8")
         assert "OPENAI_API_KEY=sk-secret-spoke-token-999" in content
         assert "LITELLM_VIRTUAL_KEY=sk-secret-spoke-token-999" in content
-        assert "CCBA_AI_GATEWAY_URL=http://100.83.192.30:8090/v1" in content
+        assert "CCBA_AI_GATEWAY_URL=http://127.0.0.1:8090/v1" in content
 
 
 def test_missing_master_key_fails_safely() -> None:

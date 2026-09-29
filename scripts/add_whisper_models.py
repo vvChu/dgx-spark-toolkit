@@ -1,3 +1,4 @@
+# ccba:allow-raw-model-file
 import urllib.request, json, os
 
 key = os.popen("grep '^LITELLM_MASTER_KEY' .env | cut -d '=' -f 2").read().strip()

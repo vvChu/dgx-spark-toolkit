@@ -4,8 +4,8 @@ import json
 
 project_root = os.environ.get("WORKSPACE_DIR") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 env_path = os.environ.get("ENV_FILE") or os.path.join(project_root, ".env")
-proxy_url = "http://100.79.241.120:8045/v1"
-proxy_key = "sk-9a13a60d641a42f9a74b18d58d44a358"
+proxy_url = os.environ.get("GATEWAY_PROXY_URL", "http://127.0.0.1:8045/v1")
+proxy_key = os.environ.get("GATEWAY_PROXY_KEY", "")
 
 if os.path.exists(env_path):
     with open(env_path, "r") as f:

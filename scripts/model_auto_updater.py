@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ccba:allow-raw-model-file
 """
 Model Updater & Self-Healing Daemon for DGX Spark.
 Audits live models from Google AI Studio Direct API and Centralized API Proxy,
@@ -89,7 +90,7 @@ def get_live_google_models(env: Dict[str, str]) -> List[str]:
 
 def get_live_proxy_models(env: Dict[str, str]) -> List[str]:
     """Fetches available models from Centralized API Proxy."""
-    proxy_url = env.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045/v1")
+    proxy_url = env.get("GATEWAY_PROXY_URL", "http://127.0.0.1:8045/v1")
     proxy_key = env.get("GATEWAY_PROXY_KEY", "")
     if not proxy_key:
         return []

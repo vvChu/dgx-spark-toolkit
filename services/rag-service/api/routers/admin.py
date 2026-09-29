@@ -128,11 +128,11 @@ async def get_quota_status():
         "redis_connected": redis_connected,
         "master_limits_file": "docs/google_ai_studio_free_tier_limits.md",
         "free_tier_quota_summary": {
-            "gemini-3.1-flash-lite": {"rpm": 15, "tpm": 250000, "rpd": 500, "role": "Primary OCR & Ingestion"},
-            "gemini-3.5-flash-lite": {"rpm": 15, "tpm": 250000, "rpd": 500, "role": "Chatbot & Metadata Extraction"},
-            "gemma-4-26b": {"rpm": 30, "tpm": 16000, "rpd": 14400, "role": "Short Text Query Offloading"},
-            "gemma-4-31b": {"rpm": 30, "tpm": 16000, "rpd": 14400, "role": "Short Text Query Offloading"},
-            "gemini-embedding-2": {"rpm": 100, "tpm": 30000, "rpd": 1000, "role": "RAG Vector Search"},
+            "gemini-3.1-flash-lite": {"rpm": 15, "tpm": 250000, "rpd": 500, "role": "Primary OCR & Ingestion"},  # ccba:allow-raw-model
+            "gemini-3.5-flash-lite": {"rpm": 15, "tpm": 250000, "rpd": 500, "role": "Chatbot & Metadata Extraction"},  # ccba:allow-raw-model
+            "gemma-4-26b": {"rpm": 30, "tpm": 16000, "rpd": 14400, "role": "Short Text Query Offloading"},  # ccba:allow-raw-model
+            "gemma-4-31b": {"rpm": 30, "tpm": 16000, "rpd": 14400, "role": "Short Text Query Offloading"},  # ccba:allow-raw-model
+            "gemini-embedding-2": {"rpm": 100, "tpm": 30000, "rpd": 1000, "role": "RAG Vector Search"},  # ccba:allow-raw-model
             "antigravity-agents": {"rpm": 60, "tpm": 100000, "rpd": 100, "role": "Antigravity Agent Workflows"},
             "imagen-4-fast": {"daily_generate": 25, "role": "SOP & Diagram Generation"},
             "search-grounding": {"rpd": 1500, "role": "Web Search Knowledge Fallback"}

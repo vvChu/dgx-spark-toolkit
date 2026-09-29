@@ -900,7 +900,7 @@ def test_execute_shell_job_two_phase_termination_sigkill_escalation():
 
             mock_proc.wait = mock_wait
 
-            with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_subproc, \
+            with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_subproc, \
                  patch("os.getpgid", return_value=99999):
                 mock_subproc.return_value = mock_proc
 
@@ -963,7 +963,7 @@ def test_execute_shell_job_suspicious_success_warning(tmp_path, monkeypatch):
 
             mock_proc.communicate = mock_communicate
 
-            with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_subproc:
+            with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_subproc:
                 mock_subproc.return_value = mock_proc
 
                 await daemon.execute_shell_job(

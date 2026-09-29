@@ -92,6 +92,8 @@ class AdvancedGraphRAG:
         4. Trình bày bằng tiếng Việt, rõ ràng, dễ hiểu.
         """
 
+        realtime_model = os.getenv("REALTIME_CHAT_MODEL", "fast-realtime")
+        realtime_timeout = float(os.getenv("TIMELINE_TIMEOUT_SECONDS", "5.0"))
         try:
             raw_summary = await self.ai_client.complete(
                 [
@@ -105,9 +107,9 @@ class AdvancedGraphRAG:
                     },
                     {"role": "user", "content": prompt}
                 ],
-                model="claude-haiku-4",
-                model_chain=["claude-haiku-4", "rag-core"],
-                timeout=5.0,
+                model=realtime_model,
+                model_chain=[realtime_model, "rag-core"],
+                timeout=realtime_timeout,
             )
             from ingestion.normalizers.boilerplate import strip_ai_monologue
             return strip_ai_monologue(raw_summary)

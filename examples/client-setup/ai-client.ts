@@ -21,7 +21,7 @@ import 'dotenv/config';
 
 // --- Initialize client ---
 export const ai = new OpenAI({
-  baseURL: process.env.AI_GATEWAY_URL || 'http://100.83.192.30:8090/v1',
+  baseURL: process.env.AI_GATEWAY_URL || 'http://127.0.0.1:8090/v1',
   apiKey: process.env.AI_GATEWAY_KEY || process.env.OPENAI_API_KEY || '',
 });
 

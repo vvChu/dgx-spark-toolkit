@@ -18,7 +18,7 @@ import requests
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-spark-secure-key-2026")
-GATEWAY_PROXY_URL = os.environ.get("GATEWAY_PROXY_URL", "http://100.83.192.30:8045")  # ccba:allow-raw-ip
+GATEWAY_PROXY_URL = os.environ.get("GATEWAY_PROXY_URL", "http://127.0.0.1:8045")
 GATEWAY_PROXY_KEY = os.environ.get("GATEWAY_PROXY_KEY", "")
 GATEWAY_ADMIN_PASSWORD = os.environ.get("GATEWAY_ADMIN_PASSWORD") or GATEWAY_PROXY_KEY
 
@@ -29,7 +29,7 @@ last_digest_date: Optional[str] = None
 
 
 # ChatOps Gateway Integration
-CHATOPS_GATEWAY_URL = os.environ.get("CHATOPS_GATEWAY_URL", "http://172.21.0.1:8095")
+CHATOPS_GATEWAY_URL = os.environ.get("CHATOPS_GATEWAY_URL", "http://172.21.0.1:8095")  # ccba:allow-raw-ip
 CHATOPS_INTERNAL_SECRET = os.environ.get("CHATOPS_INTERNAL_SECRET", "").strip()
 
 
@@ -838,7 +838,7 @@ def get_gateway_telemetry_digest() -> str:
             for t_line in [row.strip() for row in top_output.strip().splitlines() if row.strip()][1:]:
                 t_parts = t_line.split(",")
                 if len(t_parts) >= 3:
-                    m_name = t_parts[0].replace("openai/", "").replace("gemini/", "")
+                    m_name = t_parts[0].replace("openai/", "").replace("gemini/", "")  # ccba:allow-raw-model
                     m_tok = int(t_parts[2]) if t_parts[2] else 0
                     m_tok_str = f"{m_tok / 1000000:.1f}M" if m_tok >= 1000000 else (f"{m_tok / 1000:.1f}k" if m_tok >= 1000 else str(m_tok))
                     top_items.append(f"{m_name} ({t_parts[1]} reqs, {m_tok_str})")

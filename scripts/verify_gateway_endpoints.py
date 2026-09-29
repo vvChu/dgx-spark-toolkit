@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ccba:allow-raw-model-file: Live verification script probes specific upstream models
 """
 Verify AI Gateway endpoints with correct master key and .env path.
 """

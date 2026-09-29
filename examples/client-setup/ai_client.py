@@ -27,7 +27,7 @@ load_dotenv()
 
 # --- Initialize client ---
 ai = OpenAI(
-    base_url=os.environ.get("AI_GATEWAY_URL", "http://100.83.192.30:8090/v1"),
+    base_url=os.environ.get("AI_GATEWAY_URL", "http://127.0.0.1:8090/v1"),
     api_key=os.environ.get("AI_GATEWAY_KEY", os.environ.get("OPENAI_API_KEY", "")),
     timeout=120.0,
 )

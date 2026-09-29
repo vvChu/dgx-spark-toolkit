@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 
 import httpx
@@ -41,21 +42,22 @@ async def rewrite_query(
         client = ai_client or get_ai_gateway_client(http_client)
 
         rewritten = ""
-        # Tier 1: gemini-3.5-flash-lite (1.8s timeout)
+        realtime_model = os.getenv("REALTIME_CHAT_MODEL", "fast-realtime")
+        realtime_timeout = float(os.getenv("REWRITE_TIMEOUT_SECONDS", "2.0"))
         try:
             rewritten = await asyncio.wait_for(
                 client.complete(
                     [{"role": "user", "content": prompt}],
-                    model="claude-haiku-4",
-                    model_chain=["claude-haiku-4", "rag-core"],
+                    model=realtime_model,
+                    model_chain=[realtime_model, "rag-core"],
                     temperature=0.0,
                     max_tokens=256,
-                    timeout=2.0,
+                    timeout=realtime_timeout,
                 ),
-                timeout=2.0,
+                timeout=realtime_timeout,
             )
         except (asyncio.TimeoutError, Exception) as e:
-            logger.debug(f"Query rewrite (claude-haiku-4 -> rag-core) skipped/timed out: {e}")
+            logger.debug(f"Query rewrite ({realtime_model} -> rag-core) skipped/timed out: {e}")
 
         if rewritten and rewritten.strip():
             # Strip reasoning/thought traces
