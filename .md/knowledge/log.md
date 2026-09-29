@@ -2,6 +2,25 @@
 
 Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật và chuẩn hóa tri thức tại repository `dgx-spark-toolkit`.
 
+## [2026-09-29] [feat/skills-and-antigravity-pool] | Skill Evolution v1.3/v1.5 & Antigravity Pool Triage v1.2.0 (PR #87 & PR #88 Merged)
+
+- **Nhiệm vụ**: Tiến hóa trực tiếp 2 Kernel Skills (`ccba-create-pr` v1.3.0 và `ccba-llm-pipeline-patterns` v1.5.0 Pattern 17) tại PR #87; nâng cấp cơ chế bảo vệ tài khoản Google qua Antigravity Tools và tối ưu hóa hiển thị ChatOps Triage tại PR #88.
+- **Thành phần**:
+  - `Skill Evolution (PR #87)`:
+    - `ccba-create-pr` v1.3.0: Bổ sung Bước 0.4 Read-Only Discovery Router và Dirty Tree Guard, tuyệt đối không tự push hoặc kích hoạt vòng lặp tự sửa lỗi (Step 4 self-healing) khi đứng trên nhánh mặc định (`master`/`main`).
+    - `ccba-llm-pipeline-patterns` v1.5.0: Chuẩn hóa Pattern 17 (Subprocess CLI Isolation & Mutex Lock) với `fcntl.flock(LOCK_NB)`, chuẩn hóa đường dẫn cha `Path.resolve()`, và `start_new_session=True` dọn theo nhóm tiến trình (`os.killpg`).
+  - `Antigravity Pool Triage & Google Account Protection (PR #88)`:
+    - Bóc tách 1-click Google validation URL qua regex `extract_validation_url()` và render nút liên kết trực tiếp trên thông báo Telegram.
+    - Phân loại tài khoản bị chặn thành 3 nhóm rõ ràng: Browser Challenge (cần giải captcha/challenge), Manual Disabled (tắt thủ công), Quota Cooldown (tạm khóa hạn mức).
+    - Refine Stage 1 Health Probe: Tách biệt tài khoản tắt thủ công với vi phạm bảo mật, cho phép tài khoản `is_manual_disabled` vượt Stage 1 để kiểm tra hạn mức Google upstream tại Stage 2 Quota Probe trước khi kích hoạt lại (`toggle-proxy`).
+    - Bổ sung thanh trực quan trạng thái tài khoản `render_health_bar()` (Unicode block bar) và 4 unit tests mới (`tests/test_chatops.py`, 62/62 tests pass).
+    - Cập nhật skill `ccba-infrastructure-manager` lên v1.2.0 và restart `dgx-chatops.service`.
+- **Xác thực**:
+  - Unit tests: 62/62 chatops tests passed (bao gồm 4 tests mới cho URL parser, blocked breakdown, health bar, manual disabled Stage 1 bypass).
+  - Validation: 100% skills vượt qua `python scripts/validate_skills.py` (GPI >= 12.0).
+  - Production Daemon: `dgx-chatops.service` running active (PID 580462).
+  - Release: Squash & Merge thành công PR #87 (`76f964f`) và PR #88 (`d7eb3ff`).
+
 ## [2026-09-29] [fix/chatops-and-watchdog] | Khắc Phục Lỗi P0 Schema, Triển Khai Watchdog Auto-Healing & Phát Hành PR #79 / #80 (FINAL ACCEPT)
 
 - **Nhiệm vụ**: Khắc phục triệt để lỗi P0 flat schema trong quota probe, xây dựng vòng lặp Watchdog Healer tự phục hồi tài khoản hết quota tạm thời, cô lập Redis DB 5, đồng bộ số liệu Quota Pool 4 cờ, vượt qua 2 vòng phản biện đối kháng của Grok 4.7 xhigh (FINAL ACCEPT), phát hành thành công PR #79 và PR #80 vào `master`.
