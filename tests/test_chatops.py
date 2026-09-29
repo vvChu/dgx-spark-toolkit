@@ -939,6 +939,55 @@ def test_execute_shell_job_two_phase_termination_sigkill_escalation():
     asyncio.run(_test())
 
 
+def test_execute_shell_job_suspicious_success_warning(tmp_path, monkeypatch):
+    """Verify execute_shell_job marks suspicious success with warning when exit is 0 but errors appear."""
+    monkeypatch.setattr(daemon, "LOG_DIR", tmp_path)
+
+    async def _test():
+        with patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.send_telegram_document", new_callable=AsyncMock) as mock_doc, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+
+            mock_proc = MagicMock()
+            mock_proc.pid = 88888
+            mock_proc.returncode = 0
+
+            error_output = (
+                b"Starting boost optimization...\n"
+                b"[ERROR] ccba.eval.ratchet: Error restoring disk file: [Errno 17] File exists\n"
+                b"\xe2\x9d\x8c L\xe1\xbb\x97i trong qu\xc3\xa1 tr\xc3\xacnh t\xe1\xbb\x91i \xc6\xb0u ccba-skill-repair\n"
+            )
+
+            async def mock_communicate():
+                return error_output, b""
+
+            mock_proc.communicate = mock_communicate
+
+            with patch("asyncio.create_subprocess_shell", new_callable=AsyncMock) as mock_subproc:
+                mock_subproc.return_value = mock_proc
+
+                await daemon.execute_shell_job(
+                    cmd="bash boost.sh",
+                    job_id="job_suspicious_1",
+                    chat_id=daemon.ADMIN_USER_ID,
+                    status_msg_id=123,
+                    title="🚀 /boost ccba-skill-repair",
+                    timeout=60,
+                )
+
+            assert mock_edit.call_count >= 1
+            last_edit_text = mock_edit.call_args[0][2]
+            assert "⚠️ *[CẢNH BÁO (CÓ LỖI XUẤT HIỆN TRONG LOG)]*" in last_edit_text
+            assert "Exit: `0`" in last_edit_text
+            mock_doc.assert_called_once()
+
+            mock_audit.assert_called_once()
+            args, kwargs = mock_audit.call_args
+            assert args[4] == "WARNING"  # audit_status must be WARNING, not SUCCESS
+
+    asyncio.run(_test())
+
+
 def test_main_dashboard_markup_12_buttons():
     """Verify main dashboard markup has 12 buttons across 6 rows (2 per row)."""
     markup = daemon.get_main_dashboard_markup()

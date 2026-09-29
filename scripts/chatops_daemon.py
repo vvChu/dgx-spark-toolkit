@@ -1186,11 +1186,28 @@ async def execute_shell_job(
         with open(log_file, "w", encoding="utf-8") as f:
             f.write(f"Command: {cmd}\nExit Code: {exit_code}\nDuration: {duration_ms}ms\n\n{full_output}")
 
-        status_icon = "✅" if exit_code == 0 else "❌"
-        status_text = "THÀNH CÔNG" if exit_code == 0 else f"THẤT BẠI (Exit {exit_code})"
+        # Guard against swallowed errors (Exit 0 but fatal error markers present)
+        is_suspicious_success = (
+            exit_code == 0
+            and any(
+                marker in full_output
+                for marker in [
+                    "[ERROR] ccba.eval",
+                    "❌ Lỗi trong quá trình",
+                    "Traceback (most recent call last):",
+                ]
+            )
+        )
+
+        if is_suspicious_success:
+            status_icon = "⚠️"
+            status_text = "CẢNH BÁO (CÓ LỖI XUẤT HIỆN TRONG LOG)"
+        else:
+            status_icon = "✅" if exit_code == 0 else "❌"
+            status_text = "THÀNH CÔNG" if exit_code == 0 else f"THẤT BẠI (Exit {exit_code})"
 
         # Two-Tier Output Logic
-        if len(full_output) <= 2000 and exit_code == 0:
+        if len(full_output) <= 2000 and exit_code == 0 and not is_suspicious_success:
             res_msg = (
                 f"{status_icon} *[{status_text}]* `{title}`\n"
                 f"• Thời gian: `{duration_ms/1000:.1f}s` | Exit: `{exit_code}`\n\n"
@@ -1208,7 +1225,8 @@ async def execute_shell_job(
             await edit_telegram_msg(chat_id, status_msg_id, res_msg)
             await send_telegram_document(chat_id, log_file, caption=f"Log chi tiết: {title} (Job: {job_id})")
 
-        append_audit_log("exec", cmd, {"job_id": job_id}, ADMIN_USER_ID, "SUCCESS" if exit_code == 0 else "FAILED", duration_ms, exit_code, full_output[:200])
+        audit_status = "WARNING" if is_suspicious_success else ("SUCCESS" if exit_code == 0 else "FAILED")
+        append_audit_log("exec", cmd, {"job_id": job_id}, ADMIN_USER_ID, audit_status, duration_ms, exit_code, full_output[:200])
 
     except Exception as e:
         dur = int((time.time() - start_time) * 1000)
