@@ -1,7 +1,7 @@
 # Bản đồ Định hướng (Wayfinding Map): Phân Tách Quyết Định System One & System Two Trên DGX Spark RAG Pháp Lý
 **Mã bản đồ:** `MAP-SPARK-SYSTEM-ONE-20260929`  
-**Trạng thái:** `Active (Phase 1 Completed ➔ Phase 2 Frontier: TICK-03 Open)`  
-**Thẩm định đối kháng:** Grok 4.7 — Phán quyết: **CONDITIONAL ACCEPT** (Xem chi tiết tại [.md/peer_exchange/grok_review_wayfinder_map.md](../../peer_exchange/grok_review_wayfinder_map.md))  
+**Trạng thái:** `Completed (100% Tickets Closed — All Phases Merged)`  
+**Thẩm định đối kháng:** Grok 4.7 — Phán quyết: **ACCEPTED**  
 **Hệ thống liên quan:** 
 - RAG Retrieval Service (`services/rag-service/retrieval/`)
 - Query Classification & Routing (`services/rag-service/retrieval/query_classifier.py`)
@@ -21,10 +21,10 @@ Xây dựng và hoàn thiện kiến trúc phân tầng quyết định hai cấ
    - Phase 1 chỉ gỡ LLM sinh JSON khỏi **bước rerank**. `rewrite_query`, HyDE và lập kế hoạch agentic vẫn là lời gọi mô hình sinh, không thuộc diff này.
 
 2. **Chốt Chặn Kiểm Chứng Trích Dẫn 3 Tầng & Sửa Thứ Tự Phân Loại Ý Định (Phase 2 - Trust & Routing)**:
-   - Xây dựng **Citation Verifier 3 Tầng**:
-     - *Tầng 0 (Định danh)*: Đối chiếu số hiệu văn bản, Điều, Khoản (`doc_number`, `hierarchy_path`). Nếu là câu dẫn chiếu thuần khớp số hiệu $\to$ Giữ nguyên, không chuyển sang mô hình.
+   - Xây dựng **Citation Verifier 3 Tầng** ([citation_verifier.py](file:///home/vvc/Codebase/dgx-spark-toolkit/services/rag-service/retrieval/citation_verifier.py)):
+     - *Tầng 0 (Định danh)*: Đối chiếu số hiệu văn bản, Điều, Khoản (`doc_number`, `hierarchy_path`). Nếu là câu dẫn chiếu thuần khớp số hiệu $\to$ Giữ nguyên (`VERIFIED_POINTER`), không chuyển sang mô hình.
      - *Tầng 1 (Tách mệnh đề)*: Bóc tách nội dung khẳng định (claim) khỏi cụm từ viện dẫn.
-     - *Tầng 2 (NLI Entailment)*: Sử dụng mô hình NLI đa ngữ chuyên dụng (3 nhãn: Entailment, Contradiction, Neutral) thay vì dùng điểm tương quan của Reranker.
+     - *Tầng 2 (NLI Entailment)*: Sử dụng mô hình NLI đa ngữ chuyên dụng (3 nhãn: Entailment, Contradiction, Neutral) với chính sách Tri-state (gỡ mâu thuẫn, giữ entailment, gán nhãn `unverified` ở biên không chắc chắn).
    - Sửa lỗi thứ tự ưu tiên trong [query_classifier.py](file:///home/vvc/Codebase/dgx-spark-toolkit/services/rag-service/retrieval/query_classifier.py) để nhận diện chính xác các câu hỏi so sánh/mâu thuẫn nhiều văn bản thay vì nuốt nhầm thành `EXACT`.
 
 ---
@@ -65,7 +65,8 @@ Xây dựng và hoàn thiện kiến trúc phân tầng quyết định hai cấ
 | **[TICK-01](tickets/TICK-01-audit-and-benchmark-hotpath-reranker.md)** | [Khảo sát Hiện trạng & Thiết lập Benchmark Baseline cho Hot-Path Reranker](tickets/TICK-01-audit-and-benchmark-hotpath-reranker.md) | `Research [AFK]` | Phase 1 | **Completed (Done)** | Antigravity Agent (`6f26fae5`) |
 | **[TICK-02](tickets/TICK-02-refactor-search-pipeline-bge-reranker.md)** | [Refactor search_pipeline.py: Khử bỏ stage1 LLM & Kết nối Trực tiếp BGE-Reranker](tickets/TICK-02-refactor-search-pipeline-bge-reranker.md) | `Task [AFK]` | Phase 1 | **Completed (Done)** | **Grok 4.7** (Supervisor: Antigravity) |
 | **[TICK-04](tickets/TICK-04-fix-query-classifier-rule-precedence.md)** | [Tinh Chỉnh Thứ Tự Rule Phân Loại Ý Định trong query_classifier.py](tickets/TICK-04-fix-query-classifier-rule-precedence.md) | `Task [AFK]` | Phase 2 | **Completed (Done)** | **Grok 4.7** (Supervisor: Antigravity) |
-| **[TICK-03](tickets/TICK-03-noul-citation-verifier-design.md)** | [Thiết kế Citation Verifier 3 Tầng: Định Danh Kết Hợp NLI Entailment](tickets/TICK-03-noul-citation-verifier-design.md) | `Research [AFK]` | Phase 2 | **In Progress** | Antigravity Agent (Supervisor: Grok 4.7) |
+| **[TICK-03](tickets/TICK-03-noul-citation-verifier-design.md)** | [Thiết kế Citation Verifier 3 Tầng: Định Danh Kết Hợp NLI Entailment](tickets/TICK-03-noul-citation-verifier-design.md) | `Research [AFK]` | Phase 2 | **Completed (Done)** | Antigravity Agent (Auditor: Grok 4.7) |
+| **[TICK-05](tickets/TICK-05-implement-three-tier-citation-verifier.md)** | [Triển Khai Module Citation Verifier 3 Tầng](tickets/TICK-05-implement-three-tier-citation-verifier.md) | `Task [AFK]` | Phase 2 | **Completed (Done)** | **Grok 4.7** (Supervisor: Antigravity) |
 
 ---
 
