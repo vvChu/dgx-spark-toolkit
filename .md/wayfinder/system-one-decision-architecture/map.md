@@ -64,14 +64,14 @@ Xây dựng và hoàn thiện kiến trúc phân tầng quyết định hai cấ
 | :--- | :--- | :---: | :---: | :---: | :---: |
 | **[TICK-01](tickets/TICK-01-audit-and-benchmark-hotpath-reranker.md)** | [Khảo sát Hiện trạng & Thiết lập Benchmark Baseline cho Hot-Path Reranker](tickets/TICK-01-audit-and-benchmark-hotpath-reranker.md) | `Research [AFK]` | Phase 1 | **Completed (Done)** | Antigravity Agent (`6f26fae5`) |
 | **[TICK-02](tickets/TICK-02-refactor-search-pipeline-bge-reranker.md)** | [Refactor search_pipeline.py: Khử bỏ stage1 LLM & Kết nối Trực tiếp BGE-Reranker](tickets/TICK-02-refactor-search-pipeline-bge-reranker.md) | `Task [AFK]` | Phase 1 | **Completed (Done)** | **Grok 4.7** (Supervisor: Antigravity) |
-| **[TICK-03](tickets/TICK-03-noul-citation-verifier-design.md)** | [Thiết kế Citation Verifier 3 Tầng: Định Danh Kết Hợp NLI Entailment](tickets/TICK-03-noul-citation-verifier-design.md) | `Research [AFK]` | Phase 2 | **Open (Frontier)** | *Unassigned* |
+| **[TICK-04](tickets/TICK-04-fix-query-classifier-rule-precedence.md)** | [Tinh Chỉnh Thứ Tự Rule Phân Loại Ý Định trong query_classifier.py](tickets/TICK-04-fix-query-classifier-rule-precedence.md) | `Task [AFK]` | Phase 2 | **Completed (Done)** | **Grok 4.7** (Supervisor: Antigravity) |
+| **[TICK-03](tickets/TICK-03-noul-citation-verifier-design.md)** | [Thiết kế Citation Verifier 3 Tầng: Định Danh Kết Hợp NLI Entailment](tickets/TICK-03-noul-citation-verifier-design.md) | `Research [AFK]` | Phase 2 | **In Progress** | Antigravity Agent (Supervisor: Grok 4.7) |
 
 ---
 
 ## 5. Sương mù chiến trận / Chưa xác định rõ (Not yet specified)
 
 - **[FOG-01] Quy Chuẩn Tập Dữ Liệu Gán Nhãn Cho NLI Verifier**: Cần tập gán nhãn gồm $\approx 600$ cặp (200 entailment, 200 không chống đỡ/mâu thuẫn, 200 hard negative cùng văn bản/điều kề bên, cộng lớp con trỏ dẫn chiếu thuần) để hiệu chuẩn Temperature Scaling trên tập giữ lại độc lập.
-- **[FOG-02] Tinh Chỉnh Thứ Tự Rule Phân Loại Ý Định trong `query_classifier.py`**: Khắc phục hiện tượng câu hỏi so sánh nhiều nghị định bị nuốt thành `EXACT` do rule `Điều|Khoản` đứng trước rule so sánh. Thực hiện trực tiếp bằng refactor regex và đo confusion matrix trên tập truy vấn thực tế, không dùng thêm LLM hay mở bake-off mô hình.
 
 ---
 
