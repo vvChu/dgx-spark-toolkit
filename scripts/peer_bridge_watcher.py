@@ -11,9 +11,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from urllib.parse import quote
+
 WORKSPACE_DIR = Path(__file__).resolve().parent.parent
 PEER_EXCHANGE_DIR = WORKSPACE_DIR / ".md" / "peer_exchange"
-GROK_SESSIONS_BASE = Path("/home/vvc/.grok/sessions/%2Fhome%2Fvvc%2FCodebase%2Fdgx-spark-toolkit")
+GROK_SESSIONS_BASE = Path.home() / ".grok/sessions" / quote(str(WORKSPACE_DIR), safe="")
 REPORT_PATH = WORKSPACE_DIR / "docs" / "architecture_audit_report.md"
 
 
@@ -114,7 +116,7 @@ def sync_peer_exchange(info: Dict[str, Any]) -> None:
         "peers": {
             "antigravity": {
                 "name": "Antigravity (Pair Architect)",
-                "plan_path": "/home/vvc/.gemini/antigravity/brain/be0a11ab-f001-4bd6-99fa-0910bbea473d/implementation_plan.md",
+                "plan_path": os.environ.get("ANTIGRAVITY_PLAN_PATH"),
                 "status": "ready"
             },
             "grok": {

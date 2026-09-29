@@ -31,12 +31,12 @@ AUTORESEARCH_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Source PDF directories
 PDF_SOURCE_DIRS = [
-    "/home/vvc/Public/QCVN",
-    "/home/vvc/Public/VB phap quy",
+    str(Path.home() / "Public/QCVN"),
+    str(Path.home() / "Public/VB phap quy"),
 ]
 
 # Export directories (where optimize_rag.py writes output)
-EXPORT_DIR = "/home/vvc/Public/exports"
+EXPORT_DIR = os.environ.get("EXPORT_DIR", str(Path.home() / "Public/exports"))
 EXPORT_JSON_DIR = os.path.join(EXPORT_DIR, "json")
 EXPORT_MD_DIR = os.path.join(EXPORT_DIR, "markdown")
 

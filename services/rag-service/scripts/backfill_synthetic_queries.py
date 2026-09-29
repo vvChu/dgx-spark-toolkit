@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 EXPORT_JSON_DIR = os.environ.get(
     "EXPORT_JSON_DIR",
-    "/app/exports/json" if os.path.exists("/app/exports/json") else "/home/vvc/Public/exports/json"
+    "/app/exports/json" if os.path.exists("/app/exports/json") else str(Path.home() / "Public/exports/json")
 )
 BACKFILL_LIMIT = int(os.environ.get("BACKFILL_LIMIT", "0"))
 DRY_RUN = os.environ.get("BACKFILL_DRY_RUN", "0") == "1"

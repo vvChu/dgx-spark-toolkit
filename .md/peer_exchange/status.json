@@ -1,36 +1,26 @@
 {
-  "timestamp": "2026-09-29 23:08:00",
+  "timestamp": "2026-09-30 05:16:00 +07",
+  "measured_at": "2026-09-29 22:11:43 UTC",
   "peers": {
     "antigravity": {
       "name": "Antigravity (Pair Architect)",
-      "plan_path": "/home/vvc/.gemini/antigravity/brain/a11cee36-4c2c-4313-9c24-7773bcdb0d65/plan_parameter_externalization_and_dynamic_scale.md",
-      "status": "plan_revised_revision_2",
-      "prompt_path": ".md/peer_exchange/prompt_grok_review_parameter_externalization.md"
+      "plan_path": ".md/wayfinder/hermes-executive-ops-architecture/map.md",
+      "status": "demand_driven_architecture_proposed",
+      "prompt_path": ".md/peer_exchange/prompt_grok_review_demand_driven_architecture.md"
     },
     "grok": {
       "name": "Grok 4.7 (Auditor & Peer Reviewer)",
-      "session_id": "01a0ecd4-a595-7241-af17-c730166e67f5",
-      "status": "complete",
-      "verdict": "REVISE_PLAN",
-      "report_path": ".md/peer_exchange/grok_cross_review_parameter_externalization.md",
-      "scorecard": {
-        "defense_robustness": "3/10",
-        "operational_usability": "4/10",
-        "KISS_compliance": "4/10",
-        "feasibility": "5/10"
+      "status": "review_complete",
+      "report_path": ".md/peer_exchange/grok_review_demand_driven_architecture.md",
+      "verdict": "CONDITIONAL_ACCEPT",
+      "scores": {
+        "defense_robustness": 6,
+        "operational_usability": 5,
+        "resource_efficiency": 4,
+        "kiss_compliance": 4
       },
-      "key_directives": [
-        "Defaults in Spoke code must be aliases (ocr-primary, ocr-fallback, fast-realtime, text-auto), not provider model names",
-        "One variable, one default: match Settings defaults with os.getenv fallback",
-        "Preserve existing 3-hop and OCR cascade chains in table processing",
-        "Fix 100% of call sites including vision.py:452, 468, timeline, backfill",
-        "Declare fast-realtime alias in Gateway litellm_config.yaml pointing to Claude Haiku",
-        "Replace version regex with AST keyword 'model' inspector and ipaddress parser catching URL IPs",
-        "Expand linter scope to services/ excluding venv, site-packages, tests",
-        "Remove literal IP defaults from operational scripts, fallback to 127.0.0.1 or stop with error",
-        "Directly invoke check_spoke_cleanliness in Spoke CI rather than relying on verify-patch presets",
-        "Decouple exit-code criteria: prove model/IP detector via dedicated test fixtures"
-      ]
+      "accepted_scope": "corrected_pdf_text_layer_sensor_only",
+      "deferred": ["tier_2_on_demand_worker", "tier_3_telemetry_sdlc", "FOG-01", "FOG-03", "FOG-04"]
     }
   }
 }

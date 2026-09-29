@@ -208,7 +208,7 @@ def clean_single_query(text: str) -> str:
 def get_export_dirs():
     if os.path.exists("/app/exports/json"):
         return Path("/app/exports/json"), Path("/app/exports/markdown")
-    return Path("/home/vvc/Public/exports/json"), Path("/home/vvc/Public/exports/markdown")
+    return Path.home() / "Public/exports/json", Path.home() / "Public/exports/markdown"
 
 
 def clean_target_json_files(json_dir: Path):

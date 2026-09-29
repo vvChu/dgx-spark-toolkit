@@ -11,7 +11,7 @@ from core.config import get_settings
 from core.logging_config import setup_logging
 from api.routers import search, chat, admin, analysis
 from api.routers import stats, graph, preview, evaluation
-from api.routers import chat_stream, traces
+from api.routers import chat_stream, traces, embeddings
 
 __version__ = "2.0.0"
 
@@ -53,6 +53,7 @@ app.add_middleware(
 
 # Mount Routers
 app.include_router(search.router)
+app.include_router(embeddings.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
 app.include_router(analysis.router)
@@ -62,6 +63,7 @@ app.include_router(preview.router)
 app.include_router(evaluation.router)
 app.include_router(chat_stream.router)
 app.include_router(traces.router)
+
 
 # Rate Limiting
 from core.rate_limiter import RateLimitMiddleware

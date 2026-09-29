@@ -1436,9 +1436,12 @@ def get_restart_service_markup() -> Dict[str, Any]:
 
 
 def get_boost_skills_markup(
-    escalations_dir: str = "/home/vvc/ccba/ccba-agent-platform/.md/knowledge/escalations",
+    escalations_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Builds single-column mobile-friendly keyboard for top 6 plateau skills."""
+    if escalations_dir is None:
+        hub_base = os.environ.get("CCBA_HUB_PATH", str(Path.home() / "ccba/ccba-agent-platform"))
+        escalations_dir = os.path.join(hub_base, ".md", "knowledge", "escalations")
     p_dir = Path(escalations_dir)
     keyboard = []
     if p_dir.exists() and p_dir.is_dir():
@@ -1534,11 +1537,11 @@ async def probe_rag_state() -> str:
 async def probe_autotuner_status() -> str:
     """Probes CCBA Nightly Auto-Tuner status via Hub Monorepo CLI."""
     lines = []
-    hub_python = "/home/vvc/ccba/ccba-agent-platform/.venv/bin/python"
+    hub_dir = os.environ.get("CCBA_HUB_PATH", str(Path.home() / "ccba/ccba-agent-platform"))
+    hub_python = os.path.join(hub_dir, ".venv/bin/python")
     if not os.path.exists(hub_python):
         hub_python = sys.executable
-    hub_script = "/home/vvc/ccba/ccba-agent-platform/scripts/eval/check_nightly_status.py"
-    hub_dir = "/home/vvc/ccba/ccba-agent-platform"
+    hub_script = os.path.join(hub_dir, "scripts/eval/check_nightly_status.py")
 
     if not os.path.exists(hub_script):
         return f"❌ *Lỗi Cấu Hình:* Không tìm thấy script `{hub_script}`!"
@@ -2700,11 +2703,13 @@ async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Opti
 
         nonce = hashlib.sha256(f"{cmd}_{time.time()}_{uuid.uuid4().hex[:6]}".encode()).hexdigest()[:8]
         reg_timeout = cmd_def.get("timeout_seconds", 120)
+        act_timeout = act.get("timeout")
+        effective_timeout = min(int(act_timeout), reg_timeout) if act_timeout is not None else None
         action_cache[nonce] = {
             "command": cmd,
             "params": params,
             "title": server_title,
-            "timeout": reg_timeout,
+            "timeout": effective_timeout,
             "expires": time.time() + min(act.get("ttl_seconds", 3600), 7200),
         }
         inline_keyboard.append([{"text": server_label, "callback_data": f"act:{nonce}"}])
@@ -2716,7 +2721,7 @@ async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Opti
             if any(btn.get("callback_data") == f"act:{nonce}" for row in inline_keyboard for btn in row):
                 cmd_id = entry["command"]
                 cmd_def = registry.get(cmd_id, {})
-                display_timeout = entry["timeout"]
+                display_timeout = entry["timeout"] if entry["timeout"] is not None else cmd_def.get("timeout_seconds", 120)
                 action_summaries.append(
                     f"• *Mã lệnh:* `{cmd_id}`\n"
                     f"  *Mô tả:* {cmd_def.get('description', cmd_id)}\n"

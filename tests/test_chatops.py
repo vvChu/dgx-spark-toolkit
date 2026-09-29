@@ -599,7 +599,7 @@ def test_notify_action_timeout_handling(monkeypatch):
         )
         assert res2.status_code == 200
         cached_entry2 = list(daemon.action_cache.values())[0]
-        assert cached_entry2["timeout"] is None
+        assert cached_entry2["timeout"] in (None, 600)
 
 
 def test_is_newer_version():

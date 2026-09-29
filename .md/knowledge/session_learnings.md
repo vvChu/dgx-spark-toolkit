@@ -34,7 +34,7 @@
 ## Miền 2: Code Quality & Testing
 
 - `RULE-2.1 (Null Content in Thinking Models)`: Thinking models trả `content = None` khi reasoning hết quota. Parser dùng `(msg.get("content") or "").strip()` và `max_tokens >= 256` tránh lỗi `NoneType`.
-- `RULE-2.2 (Spoke Cleanliness Guard)`: Thư mục `scripts/` khống chế $\le 15$ tệp hợp lệ. Script legacy lưu vào `.md/archive/legacy_scripts/`.
+- `RULE-2.2 (Spoke Cleanliness Guard)`: `scripts/` tối đa 15 tệp đếm. Daemon, MCP và crontab ở lại `scripts/`. One-off vào `.md/archive/legacy_scripts/`. Xem `platform_aware_kiss_standard.md`.
 - `RULE-2.3 (Shift-Left Determinism)`: Trước commit/release, bắt buộc chạy `.venv/bin/python -m ccba_harness verify-patch` với 4 chốt chặn (Cleanliness, Import Depth, Flake8, Gateway Endpoints).
 - `RULE-2.4 (Poison Budget in Gemini 3.x)`: `thinking_budget < 2048` làm tắt luồng suy luận. Đặt `control_source = "gateway"` để gateway tự chuẩn hóa ($\ge 10001$ Pro, $\ge 16384$ Flash High).
 - `RULE-2.5 (Vector DB Parity Lock)`: Kiểm toán RAG bắt buộc chốt Parity: `set(exported_doc_ids) - set(indexed_doc_ids) == empty`.
@@ -42,7 +42,7 @@
 - `RULE-2.7 (Vite Build & Zombie Pruning)`: Tách vendor bằng `manualChunks` hạ bundle < 300 kB. CI/Local Gate cấu hình `"typecheck": "tsc --noEmit"`. Định kỳ gỡ zombie dependencies.
 - `RULE-2.8 (Fast-Path Chunker Online LLM Isolation)`: Fast-Path nạp tài liệu sạch tắt sửa bảng/tóm tắt LLM (`TABLE_CORRECT_ENABLED = False`), hạ độ trễ từ 80s+ xuống < 1s.
 - `RULE-2.9 (Dynamic Catalog Sizing Invariant)`: Unit test kho tri thức cấm assert kích thước cố định (`assert len == 60`), bắt buộc dùng kiểm tra cận dưới (`assert len >= 60`).
-- `RULE-2.10 (KISS Function Limit)`: Hàm pipeline chính $\le 50$ dòng, tách sub-functions rõ nghĩa để AI agents dễ đọc, giảm attention drift.
+- `RULE-2.10 (KISS Function Limit)`: Complexity cảnh báo từ 10, lỗi review từ 15. SLOC > 80 là câu review. Xem `platform_aware_kiss_standard.md`.
 - `RULE-2.11 (URL-Encoded Path IDs)`: Endpoint REST/MCP nhận mã văn bản qua path (`/graph/neighbors/{node_id}`), số hiệu pháp lý có `/` bắt buộc `quote(so_hieu, safe="")`.
 
 ---

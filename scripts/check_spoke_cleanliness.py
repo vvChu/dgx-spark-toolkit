@@ -340,10 +340,26 @@ def scan_spoke_cleanliness(
 
         if count > max_scripts:
             has_errors = True
+
+            def _get_role(name: str) -> str:
+                if name in {"chatops_daemon.py", "smart_watchdog.py", "model_auto_updater.py", "peer_bridge_watcher.py"}:
+                    return "daemon"
+                if name in {"hermes_executive_mcp.py", "mcp_server.py"}:
+                    return "mcp"
+                if name in {"prune_spend_logs.py"}:
+                    return "cron"
+                if name.startswith("benchmark_"):
+                    return "benchmark"
+                if name.startswith("verify_"):
+                    return "verify"
+                return "one-off"
+
+            file_roles = [f"{f.name} ({_get_role(f.name)})" for f in sorted(counted_scripts, key=lambda x: x.name)]
             messages.append(
                 f"❌ [Script Budget Vượt Ngưỡng] Thư mục 'scripts/' có {count} tệp (tối đa cho phép: {max_scripts}).\n"
-                f"   Các file đang đếm ({count}): {', '.join(sorted(f.name for f in counted_scripts))}\n"
-                "   💡 Giải pháp: Di chuyển các script one-off cũ vào '.md/archive/legacy_scripts/' hoặc '.md/scratch/'."
+                f"   Các file đang đếm ({count}): {', '.join(file_roles)}\n"
+                "   💡 Giải pháp: Chỉ di chuyển các script một lần (one-off) vào '.md/archive/legacy_scripts/' hoặc '.md/scratch/'. "
+                "Tuyệt đối không di chuyển daemon, mcp server hoặc script cron (chatops_daemon, smart_watchdog, hermes_executive_mcp, mcp_server, model_auto_updater, peer_bridge_watcher, prune_spend_logs)."
             )
         else:
             messages.append(
