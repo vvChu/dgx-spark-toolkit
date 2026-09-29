@@ -2703,13 +2703,11 @@ async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Opti
 
         nonce = hashlib.sha256(f"{cmd}_{time.time()}_{uuid.uuid4().hex[:6]}".encode()).hexdigest()[:8]
         reg_timeout = cmd_def.get("timeout_seconds", 120)
-        act_timeout = act.get("timeout")
-        effective_timeout = min(int(act_timeout), reg_timeout) if act_timeout is not None else None
         action_cache[nonce] = {
             "command": cmd,
             "params": params,
             "title": server_title,
-            "timeout": effective_timeout,
+            "timeout": reg_timeout,
             "expires": time.time() + min(act.get("ttl_seconds", 3600), 7200),
         }
         inline_keyboard.append([{"text": server_label, "callback_data": f"act:{nonce}"}])
