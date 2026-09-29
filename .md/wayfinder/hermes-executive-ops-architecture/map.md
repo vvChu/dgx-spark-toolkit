@@ -73,3 +73,36 @@ Xây dựng và hoàn thiện cấu hình kiến trúc tổng quát cho Hermes A
 - **Phán quyết độc lập của Grok 4.7**:
   - Tệp báo cáo: `.md/peer_exchange/grok_final_acceptance.md`
   - Kết luận: **`ACCEPTED`** (Nghiệm thu toàn diện Bản đồ Wayfinder `MAP-HERMES-EXECUTIVE-OPS-20260929`).
+
+---
+
+## 5. Sương mù chiến trận / Chưa xác định rõ (Fog of War)
+
+- **[FOG-01] Cửa sổ Race Condition TOCTOU (Time-of-Check to Time-of-Use) trên Thao Tác Tệp Cache**:
+  - *Hiện trạng*: Hàm `_validate_safe_path` thực hiện chuỗi kiểm tra đa tầng (`lstat` $\to$ `is_symlink` $\to$ `st_nlink > 1` $\to$ `resolve` $\to$ `is_relative_to`), sau đó mới mở tệp (`docx.Document` hoặc gọi `soffice`).
+  - *Sương mù / Ranh giới*: Trong hệ điều hành POSIX, tồn tại khoảng trễ vi giây (microsecond window) giữa lúc kiểm tra xong và lúc tiến trình thực sự mở tệp. Nếu có tiến trình độc hại chạy cùng quyền người dùng (`uid 1000: vvc`), về mặt lý thuyết nó có thể tráo đổi inode bằng symlink swap ngay trong khoảnh khắc đó.
+  - *Đánh giá*: Hiện tại rủi ro bằng 0 trong thực tế vì toàn bộ host DGX Spark chỉ chạy các daemon nội bộ dưới tài khoản duy nhất `vvc`. Khi mở rộng đa người dùng hoặc gắn volume chia sẻ, cần giải quyết bằng File Descriptor Pinning (`open(O_NOFOLLOW | O_CLOEXEC)`) hoặc thư mục sandbox cô lập theo từng phiên.
+
+- **[FOG-02] Trích Xuất Dữ Liệu Tài Liệu Scan (Scanned PDF / Ảnh Bảng Biểu Phức Tạp) Trong Báo Cáo Của Lãnh Đạo**:
+  - *Hiện trạng*: Công cụ `read_cached_document` sử dụng PyMuPDF (`fitz`) / `pypdf` để bóc tách văn bản dạng text stream.
+  - *Sương mù / Ranh giới*: Với các văn bản hành chính scan ảnh (không có text layer) hoặc bảng biểu phức tạp có chữ ký/dấu đỏ, công cụ sẽ trả về văn bản trống hoặc rời rạc.
+  - *Đánh giá*: Nền tảng đã có sẵn Deep Seam `surya-ocr` và skill `multimodal-ocr`. Tuy nhiên, nếu nhúng trực tiếp OCR nặng vào stdio fast-path MCP sẽ làm bùng nổ latency (> 60 giây, gây timeout Hermes/Telegram). Cần một kiến trúc offload bất đồng bộ sang Worker Queue (theo mẫu `BLUEPRINT-01-ocr-worker-isolation`) khi phát hiện tệp scan.
+
+- **[FOG-03] Tính Bền Vững (Persistence) Của Thẻ Phê Duyệt Telegram Khi Daemon Khởi Động Lại**:
+  - *Hiện trạng*: `action_cache[nonce]` được lưu trong bộ nhớ RAM (`dict`) của `chatops_daemon.py` với TTL mặc định 7200s (2 giờ).
+  - *Sương mù / Ranh giới*: Nếu `dgx-chatops.service` bị khởi động lại (do watchdog hoặc cập nhật code) trong lúc Thẻ phê duyệt đang chờ Lãnh đạo nhấn nút trên điện thoại, toàn bộ `action_cache` trong RAM sẽ mất. Khi bấm nút, hệ thống báo lỗi hết hạn.
+  - *Đánh giá*: Hiện tại daemon chạy rất ổn định và ít khi restart. Tuy nhiên, nếu chu kỳ duyệt lệnh của Lãnh đạo kéo dài qua nhiều giờ, cần nghiên cứu chuyển `action_cache` sang Redis DB 5 (State Store có sẵn) hoặc SQLite cục bộ để thẻ phê duyệt sống sót xuyên suốt quá trình restart của dịch vụ.
+
+- **[FOG-04] Chiều Sâu Mở Rộng Của Đồ Thị Dẫn Chiếu Pháp Lý (Deep Legal Graph Traversal & Invalidation)**:
+  - *Hiện trạng*: `validate_legal_citation` truy vấn 1-hop trực tiếp (`MATCH (d)-[r]-(n)`) trên Neo4j để lấy văn bản căn cứ, hướng dẫn hoặc bãi bỏ.
+  - *Sương mù / Ranh giới*: Phả hệ pháp lý Việt Nam thường có quan hệ bắc cầu 3-4 tầng (Thông tư $\to$ Nghị định $\to$ Luật $\to$ Luật sửa đổi, bổ sung $\to$ Bãi bỏ từng phần). Việc giới hạn 1-hop là cực kỳ an toàn và súc tích cho Telegram, nhưng có thể bỏ sót trường hợp văn bản gốc còn hiệu lực nhưng điều khoản căn cứ cấp trên đã bị vô hiệu hóa một phần. Ngược lại, nếu quét sâu $k$-hop sẽ gây bùng nổ dữ liệu đồ thị, tràn context window của Telegram.
+  - *Đánh giá*: Cần giải pháp nén đường dẫn pháp lý trọng yếu (Critical Path Pruning) hoặc trích xuất subgraph có điều kiện dựa trên trạng thái hiệu lực (`VALIDITY_STATUS`), chỉ cảnh báo các nút có cờ `EXPIRED` hoặc `PARTIALLY_EXPIRED`.
+
+---
+
+## 6. Ngoài phạm vi của Bản đồ này (Out of scope)
+
+- **Cấp quyền Shell / Terminal thô trực tiếp trên Telegram**: Vi phạm nguyên tắc bảo mật cốt lõi [DEC-01]. Mọi thao tác vận hành bắt buộc phải đi qua Thẻ đề xuất phê duyệt có kiểm soát.
+- **Tự động thực thi đột biến hệ thống không có sự phê duyệt của con người**: Tuân thủ nguyên tắc Zero Autonomous Host Mutation — Hermes chỉ đề xuất, con người (Lãnh đạo) luôn là người bấm nút duyệt cuối cùng.
+- **Thay đổi kiến trúc Vector DB / Graph DB cơ bản**: Giữ nguyên Milvus `legal_docs_v11` và Neo4j `5.26.25` hiện hành để bảo toàn tính toàn vẹn dữ liệu.
+- **Truy cập tệp nằm ngoài thư mục Cache Tài liệu được ủy quyền**: Mọi thao tác đọc văn bản chỉ được phép diễn ra trong `DOCS_CACHE_DIR` đã cấu hình.
