@@ -2177,3 +2177,144 @@ def test_message_reenable_account():
             assert "Cú pháp: `/reenable_account <account_id>`" in mock_send.call_args[0][1]
 
     asyncio.run(_test())
+
+
+def test_extract_validation_url_variants():
+    """Verify extract_validation_url correctly parses direct URLs and regex from raw reasons."""
+    # 1. Direct validation_url
+    assert daemon.extract_validation_url({"validation_url": "https://accounts.google.com/signin/continue?flow=1"}) == "https://accounts.google.com/signin/continue?flow=1"
+
+    # 2. Regex from proxy_disabled_reason with escaped unicode amp
+    raw_str = (
+        'Forbidden (403): {"error": {"message": "Verify your account", '
+        '"metadata": {"validation_url": "https://accounts.google.com/signin/continue?sarp=1\\u0026scc=1"}}}'
+    )
+    extracted = daemon.extract_validation_url({"proxy_disabled_reason": raw_str})
+    assert extracted == "https://accounts.google.com/signin/continue?sarp=1&scc=1"
+
+    # 3. None when no challenge URL
+    assert daemon.extract_validation_url({"proxy_disabled_reason": "quota fetch denied (403)"}) is None
+    assert daemon.extract_validation_url({}) is None
+
+
+def test_render_health_bar():
+    """Verify render_health_bar renders proper Unicode blocks and percentages."""
+    # 7 active out of 11 total (~64%)
+    bar_7_11 = daemon.render_health_bar(7, 11)
+    assert "7/11" in bar_7_11
+    assert "64%" in bar_7_11
+    assert "🟩" in bar_7_11 and "🟥" in bar_7_11
+
+    # 10 out of 10 (100%)
+    bar_10_10 = daemon.render_health_bar(10, 10)
+    assert bar_10_10 == "[🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩] `10/10` (100%)"
+
+    # 0 out of 5 (0%)
+    bar_0_5 = daemon.render_health_bar(0, 5)
+    assert bar_0_5 == "[🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥] `0/5` (0%)"
+
+    # 0 total
+    assert daemon.render_health_bar(0, 0) == "[⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛]"
+
+
+def test_format_blocked_accounts_and_probe_status():
+    """Verify probe_antigravity_status groups blocked accounts into Challenge, Manual, and Cooldown."""
+    async def _test():
+        mock_accs = {
+            "accounts": [
+                {"id": "a1", "email": "active@example.com"},
+                {
+                    "id": "a2",
+                    "email": "challenge@example.com",
+                    "proxy_disabled": True,
+                    "validation_url": "https://accounts.google.com/signin/continue?sarp=1",
+                    "proxy_disabled_reason": "Verify your account",
+                },
+                {
+                    "id": "a3",
+                    "email": "manual@example.com",
+                    "proxy_disabled": True,
+                    "proxy_disabled_reason": "Disabled manually by user",
+                },
+                {
+                    "id": "a4",
+                    "email": "cooldown@example.com",
+                    "proxy_disabled": True,
+                    "proxy_disabled_reason": "403 Forbidden quota exhaustion",
+                },
+            ]
+        }
+        mock_client = AsyncMock()
+        mock_health_res = MagicMock()
+        mock_health_res.status_code = 200
+        mock_acc_res = MagicMock()
+        mock_acc_res.status_code = 200
+        mock_acc_res.json.return_value = mock_accs
+
+        mock_client.get.side_effect = [mock_health_res, mock_acc_res]
+
+        with patch("httpx.AsyncClient") as mock_http_cls:
+            mock_http_cls.return_value.__aenter__.return_value = mock_client
+            status_text = await daemon.probe_antigravity_status()
+
+            assert "HỒ BƠI TÀI KHOẢN ANTIGRAVITY TOOLS" in status_text
+            assert "1/4" in status_text  # 1 active out of 4
+            assert "Cần xác minh danh tính (Browser Challenge):" in status_text
+            assert "[🔗 Xác minh ngay](https://accounts.google.com/signin/continue?sarp=1)" in status_text
+            assert "Đang tắt thủ công:" in status_text
+            assert "Dùng `/reenable_account a3`" in status_text
+            assert "Đang hạ nhiệt Quota:" in status_text
+            assert "cooldown@example.com" in status_text
+
+    asyncio.run(_test())
+
+
+def test_reenable_antigravity_account_manual_disabled_passes_stage1():
+    """Verify an account disabled manually passes Stage 1 and enters Stage 2 Quota Probe Gate."""
+    async def _test():
+        mock_client = AsyncMock()
+        mock_accs_resp = MagicMock()
+        mock_accs_resp.status_code = 200
+        mock_accs_resp.json.return_value = {
+            "accounts": [
+                {
+                    "id": "acc_manual",
+                    "email": "manual@example.com",
+                    "disabled": False,
+                    "proxy_disabled": True,
+                    "validation_blocked": False,
+                    "proxy_disabled_reason": "Disabled manually by user",
+                }
+            ]
+        }
+        # Stage 2 quota returns is_forbidden = True (quota not yet clean)
+        mock_quota_resp = MagicMock()
+        mock_quota_resp.status_code = 200
+        mock_quota_resp.json.return_value = {
+            "is_forbidden": True,
+            "forbidden_reason": "Quota cooldown in effect",
+        }
+
+        mock_client.get.side_effect = [mock_accs_resp, mock_quota_resp]
+
+        with patch("scripts.chatops_daemon.get_http_client", return_value=mock_client), \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+            mock_edit.return_value = True
+
+            success = await daemon.reenable_antigravity_account("acc_manual", daemon.ADMIN_USER_ID, 1234)
+
+            assert success is False
+            # Crucial assertion: Stage 1 did NOT reject it! Both GET /api/accounts and GET /quota were called.
+            assert mock_client.get.call_count == 2
+            assert mock_client.post.call_count == 0  # Proxy toggle NOT called because quota probe rejected
+
+            mock_edit.assert_called_once()
+            edit_text = mock_edit.call_args[0][2]
+            assert "HEALTH PROBE THẤT BẠI (GOOGLE UPSTREAM REJECTED)" in edit_text
+            assert "Google Cloud Code vẫn chặn" in edit_text
+
+            mock_audit.assert_called_once()
+            assert mock_audit.call_args[0][4] == "PROBE_FAILED"
+
+    asyncio.run(_test())

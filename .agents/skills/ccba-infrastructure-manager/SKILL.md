@@ -9,7 +9,7 @@ bundle: _software
 tier: domain
 command: /ccba-infrastructure-manager
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   author: "CCBA Hub"
 gpi:
   s: 3.0
@@ -141,13 +141,14 @@ Hệ thống ChatOps và Smart Watchdog áp dụng quy trình kiểm soát 4 gia
 
 ```
 [Stage 1: Pre-Classification]
-  ├── Challenge / Manual (validation_blocked, invalid_grant) ──► BÁO LỖI & DỪNG
-  └── Quota-Exhausted Candidate ──► Chuyển sang Stage 2
+  ├── Challenge (validation_blocked, invalid_grant, Verify account) ──► TỪ CHỐI & GỬI 1-CLICK URL
+  ├── Manual Disabled (proxy_disabled do user) ──► Chuyển sang Stage 2 (Kiểm tra Quota Google)
+  └── Quota-Exhausted Candidate (Hạ nhiệt >= 60 phút) ──► Chuyển sang Stage 2
                                         │
                                         ▼
 [Stage 2: Quota Probe Gate] (GET /api/accounts/{id}/quota)
   ├── HTTP non-200 / Malformed JSON / Flag True ──► PROBE_FAILED & DỪNG
-  └── Dual-Level Predicate PASS (RULE-1.17) ──► Chuyển sang Stage 3
+  └── Dual-Level Predicate PASS (RULE-1.17: is_forbidden == False) ──► Chuyển sang Stage 3
                                         │
                                         ▼
 [Stage 3: Proxy Activation] (POST /api/accounts/{id}/toggle-proxy {"enable": true})
@@ -159,17 +160,26 @@ Hệ thống ChatOps và Smart Watchdog áp dụng quy trình kiểm soát 4 gia
   └── Ghi log băm xích SHA-256 (SUCCESS / PRE_CHECK_REJECTED / PROBE_FAILED / ENABLE_FAILED / ERROR)
 ```
 
+### Cơ Chế Trích Xuất Google Validation URL (1-Click Verification)
+- Hàm `extract_validation_url(account_data: dict) -> Optional[str]` tự động quét trường `validation_url` và biểu thức chính quy `https://accounts\.google\.com/signin/continue[^\s\"']+` từ các lỗi trả về bởi Google Cloud Code.
+- Khi Stage 1 phát hiện cờ Challenge, ChatOps lập tức định dạng liên kết trực tiếp `[🔗 Nhấp để xác minh tài khoản](<url>)` gửi về Telegram, cho phép quản trị viên mở và giải Captcha/SMS ngay trên thiết bị cá nhân mà không cần SSH hay mở log máy chủ.
+- **Ranh giới an toàn cho tài khoản Tắt Thủ Công**: Tài khoản có lý do `disabled manually by user` (không vướng Challenge) được phép tiến vào Stage 2 để kiểm tra quota. Hệ thống chỉ kích hoạt lại khi và chỉ khi Google xác nhận hạn mức đã sạch (`is_forbidden == False`).
+
 ---
 
-## 5. Thống Nhất Chỉ Số Quota Pool 4 Cờ (`is_account_blocked`)
+## 5. Thống Nhất Chỉ Số Quota Pool & Báo Cáo Trực Quan (`/antigravity`)
 
 Để đảm bảo các lệnh ChatOps `/stats`, `/antigravity`, Watchdog Quorum, và Telegram Daily Digest thống kê chính xác tuyệt đối:
-* Hàm `is_account_blocked(account: dict)` kiểm tra truthiness của **đủ 4 cờ**:
+* **Hàm `is_account_blocked(account: dict)`** kiểm tra truthiness của **đủ 4 cờ**:
   1. `account.get("proxy_disabled")`
   2. `account.get("disabled")`
   3. `account.get("validation_blocked")`
   4. `account.get("quota", {}).get("is_forbidden")`
 * **Lưu ý Schema**: Cờ lồng `quota.is_forbidden` là cấu trúc đối tượng tài khoản lấy từ `GET /api/accounts`. Schema phẳng (`is_forbidden` ở root) chỉ xuất hiện trong body kết quả của `GET /api/accounts/{id}/quota`.
+* **Thanh Trực Quan (Visual Health Bar)**: Lệnh `/antigravity` hiển thị thanh tiến trình Unicode trực quan (ví dụ: `[🟩🟩🟩🟩🟩🟩🟥🟥🟥🟥] 7/11 (64%)`) và phân nhóm tài khoản bị khóa thành 3 danh mục rõ rệt:
+  - 🟡 **Cần xác minh danh tính (Browser Challenge)**: Kèm siêu liên kết 1-click mở trang xác thực Google.
+  - ⚪ **Đang tắt thủ công**: Kèm gợi ý lệnh `/reenable_account <id>`.
+  - 🔴 **Đang hạ nhiệt Quota**: Hiển thị chi tiết lỗi cạn hạn mức (Warmup / 403 Forbidden).
 
 ---
 
