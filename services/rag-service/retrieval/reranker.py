@@ -17,6 +17,8 @@ class Reranker:
         self.model_name = model_name
         self.model = None
         self._load_lock = threading.Lock()
+        # CrossEncoder.predict is not safe for concurrent CUDA calls on this singleton.
+        self._predict_lock = threading.Lock()
         import torch
         self.device = "cuda" if (torch.cuda.is_available() and os.getenv("FORCE_CPU_RERANKER") != "1") else "cpu"
 
@@ -33,18 +35,34 @@ class Reranker:
                         self.model = CrossEncoder(self.model_name, device=self.device)
 
     def rerank_sync(self, query: str, docs: list[str], top_k: int = 5):
-        """Synchronous reranking (internal)."""
+        """Score docs with the local cross-encoder.
+
+        Returns ``(text, score, original_idx)`` sorted by score descending.
+        ``original_idx`` is the position in ``docs`` so identical text does not collapse.
+        On predict failure, returns the original order with score 0.0 instead of raising.
+        """
         self.load_model()
         if not docs:
             return []
 
-        # Truncate doc text to 1500 chars to avoid unnecessary tokenizer overhead
+        # Truncate only the model input. The returned text stays the original string.
         pairs = [[query, doc[:1500]] for doc in docs]
-        scores = self.model.predict(pairs, batch_size=32)
+        try:
+            with self._predict_lock:
+                scores = self.model.predict(pairs, batch_size=32)
+            indexed = [(docs[i], float(scores[i]), i) for i in range(len(docs))]
+        except Exception as e:
+            logger.warning(
+                "Reranker predict failed (%s). Falling back to original candidate order with score 0.0.",
+                e,
+            )
+            limit = max(0, top_k)
+            return [(docs[i], 0.0, i) for i in range(min(limit, len(docs)))]
 
-        doc_scores = list(zip(docs, scores))
-        doc_scores.sort(key=lambda x: x[1], reverse=True)
-        return doc_scores[:top_k]
+        indexed.sort(key=lambda item: item[1], reverse=True)
+        if top_k < 0:
+            return []
+        return indexed[:top_k]
 
     async def rerank(self, query: str, docs: list[str], top_k: int = 5):
         """Asynchronous reranking using thread pool to avoid blocking the event loop."""

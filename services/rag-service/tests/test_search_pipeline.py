@@ -1,7 +1,18 @@
 """Unit tests for SearchPipeline and SearchContext."""
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from retrieval.search_pipeline import SearchPipeline, SearchContext
+import pytest
+
+from core.config import Settings, get_settings
+from retrieval.query_classifier import QueryIntent
+from retrieval.query_tracer import QueryTracer
+from retrieval.search_pipeline import (
+    RERANK_CANDIDATES,
+    RERANK_LATENCY,
+    SearchContext,
+    SearchPipeline,
+)
 
 
 class TestSearchPipeline:
@@ -239,5 +250,316 @@ class TestSearchPipeline:
             assert isinstance(res, dict)
             assert len(res["results"]) == 1
             assert res["results"][0]["text"] == "Nội dung gốc"
+
+
+def _histogram_count(metric) -> float:
+    total = 0.0
+    for family in metric.collect():
+        for sample in family.samples:
+            if sample.name.endswith("_count"):
+                total += sample.value
+    return total
+
+
+def _hit(
+    text: str,
+    *,
+    chunk_id: str,
+    doc_number: str,
+    hop: int = 1,
+    score: float = 0.5,
+    page: int = 1,
+    validity: str = "ACTIVE",
+    is_table: bool = False,
+) -> dict:
+    return {
+        "score": score,
+        "hop": hop,
+        "entity": {
+            "text": text,
+            "chunk_id": chunk_id,
+            "doc_number": doc_number,
+            "page": page,
+            "chunk_type": "parent",
+            "validity_status": validity,
+            "is_table": is_table,
+            "source": f"{doc_number}.pdf",
+        },
+    }
+
+
+def _pipeline_with_ai():
+    milvus = MagicMock()
+    milvus.hybrid_search = AsyncMock(return_value=[[]])
+    milvus.get_parent_chunks = AsyncMock(return_value=[])
+    neo4j = MagicMock()
+    neo4j.driver = None
+    neo4j._driver = None
+    neo4j.find_document_status = AsyncMock(return_value={})
+    ai = MagicMock()
+    ai.complete_json = AsyncMock(return_value={"top_indices": [1]})
+    ai.extract_json = AsyncMock(return_value={})
+    pipeline = SearchPipeline(milvus, neo4j, ai_client=ai)
+    return pipeline, ai
+
+
+def _ctx(hits, *, limit: int = 10, intent: QueryIntent = QueryIntent.SEMANTIC, ai=None) -> SearchContext:
+    ctx = SearchContext(
+        raw_query="Quy định phòng cháy",
+        limit=limit,
+        use_reranker=True,
+        use_cache=False,
+        raw_hits=hits,
+        intent=intent,
+        ai_client=ai,
+    )
+    ctx.tracer = QueryTracer(ctx.raw_query)
+    return ctx
+
+
+class TestStageRerankAndScore:
+    """Border cases for direct bge-reranker scoring without the LLM stage."""
+
+    def test_rerank_empty_hits(self):
+        pipeline, ai = _pipeline_with_ai()
+        before_candidates = _histogram_count(RERANK_CANDIDATES)
+        with patch("retrieval.search_pipeline.get_reranker") as mock_get:
+            mock_reranker = MagicMock()
+            mock_reranker.rerank = AsyncMock(return_value=[])
+            mock_get.return_value = mock_reranker
+
+            for raw_hits in ([], None):
+                ctx = _ctx(raw_hits, ai=ai)
+                asyncio.run(pipeline._stage_rerank_and_score(ctx))
+                assert ctx.top_results == []
+
+            mock_reranker.rerank.assert_not_called()
+        ai.complete_json.assert_not_called()
+        assert _histogram_count(RERANK_CANDIDATES) == before_candidates
+
+    def test_rerank_single_hit(self):
+        pipeline, ai = _pipeline_with_ai()
+        hit = _hit("Điều 5.", chunk_id="doc::p1::art_5", doc_number="01/2024/TT-BXD", score=0.5, page=3)
+        ctx = _ctx([hit], ai=ai)
+        before_latency = _histogram_count(RERANK_LATENCY)
+
+        async def _rerank(query, docs, top_k=5):
+            assert query == ctx.raw_query
+            assert docs == ["Điều 5."]
+            assert top_k == 1
+            return [("Điều 5.", 0.95, 0)]
+
+        with patch("retrieval.search_pipeline.get_reranker") as mock_get:
+            mock_reranker = MagicMock()
+            mock_reranker.rerank = AsyncMock(side_effect=_rerank)
+            mock_get.return_value = mock_reranker
+            asyncio.run(pipeline._stage_rerank_and_score(ctx))
+
+        assert len(ctx.top_results) == 1
+        assert ctx.top_results[0]["doc_number"] == "01/2024/TT-BXD"
+        assert ctx.top_results[0]["page"] == 3
+        assert ctx.top_results[0]["text"] == "Điều 5."
+        settings = get_settings()
+        expected = (
+            (0.95 * settings.RERANK_WEIGHT)
+            + (0.5 * settings.MILVUS_WEIGHT)
+            + settings.VALIDITY_BOOST_ACTIVE
+        )
+        assert ctx.top_results[0]["score"] == pytest.approx(expected)
+        rerank_steps = [step for step in ctx.tracer.steps if step.get("action") == "rerank"]
+        assert rerank_steps[-1]["input_count"] == 1
+        assert rerank_steps[-1]["output_count"] == 1
+        assert _histogram_count(RERANK_LATENCY) == before_latency + 1
+
+    def test_rerank_safety_cap_60(self):
+        assert Settings.model_fields["RERANK_MAX_CANDIDATES"].default == 60
+        pipeline, ai = _pipeline_with_ai()
+        texts = [f"chunk-text-{i}" for i in range(65)]
+        hits = [
+            _hit(text, chunk_id=f"chunk-{i}", doc_number=f"{i}/2024/TT-BXD", score=1.0 - (i / 1000))
+            for i, text in enumerate(texts)
+        ]
+        ctx = _ctx(hits, ai=ai, intent=QueryIntent.SEMANTIC)
+        captured = {}
+
+        async def _rerank(query, docs, top_k=5):
+            captured["docs"] = list(docs)
+            captured["top_k"] = top_k
+            return [(doc, 0.5, i) for i, doc in enumerate(docs)]
+
+        with patch("retrieval.search_pipeline.get_reranker") as mock_get:
+            mock_reranker = MagicMock()
+            mock_reranker.rerank = AsyncMock(side_effect=_rerank)
+            mock_get.return_value = mock_reranker
+            asyncio.run(pipeline._stage_rerank_and_score(ctx))
+
+        assert captured["docs"] == texts[:60]
+        assert captured["top_k"] == 60
+        for dropped in texts[60:]:
+            assert dropped not in captured["docs"]
+        assert len(ctx.top_results) == ctx.limit
+
+    def test_rerank_exact_intent_uses_narrow_cap(self):
+        assert Settings.model_fields["RERANK_EXACT_CANDIDATES"].default == 20
+        pipeline, ai = _pipeline_with_ai()
+        texts = [f"exact-text-{i}" for i in range(25)]
+        hits = [_hit(text, chunk_id=f"exact-{i}", doc_number=f"{i}/2024/NĐ-CP") for i, text in enumerate(texts)]
+        ctx = _ctx(hits, ai=ai, intent=QueryIntent.EXACT)
+        captured = {}
+
+        async def _rerank(query, docs, top_k=5):
+            captured["docs"] = list(docs)
+            return [(doc, 0.4, i) for i, doc in enumerate(docs)]
+
+        with patch("retrieval.search_pipeline.get_reranker") as mock_get:
+            mock_reranker = MagicMock()
+            mock_reranker.rerank = AsyncMock(side_effect=_rerank)
+            mock_get.return_value = mock_reranker
+            asyncio.run(pipeline._stage_rerank_and_score(ctx))
+
+        assert captured["docs"] == texts[:20]
+        assert texts[20] not in captured["docs"]
+
+    def test_rerank_duplicate_text_different_metadata(self):
+        pipeline, ai = _pipeline_with_ai()
+        shared = "Điều 12. Chiều cao công trình tối đa là 50 mét."
+        hits = [
+            _hit(shared, chunk_id="law-a::p1::art_12", doc_number="01/2024/TT-BXD", page=1, score=0.4),
+            _hit(shared, chunk_id="law-b::p4::art_12", doc_number="02/2024/TT-BXD", page=4, score=0.4),
+        ]
+        ctx = _ctx(hits, ai=ai)
+
+        async def _rerank(query, docs, top_k=5):
+            assert docs == [shared, shared]
+            return [(docs[1], 0.9, 1), (docs[0], 0.2, 0)]
+
+        with patch("retrieval.search_pipeline.get_reranker") as mock_get:
+            mock_reranker = MagicMock()
+            mock_reranker.rerank = AsyncMock(side_effect=_rerank)
+            mock_get.return_value = mock_reranker
+            asyncio.run(pipeline._stage_rerank_and_score(ctx))
+
+        assert [row["doc_number"] for row in ctx.top_results] == ["02/2024/TT-BXD", "01/2024/TT-BXD"]
+        assert [row["page"] for row in ctx.top_results] == [4, 1]
+        assert ctx.top_results[0]["text"] == shared
+        assert ctx.top_results[1]["text"] == shared
+
+    def test_rerank_dedup_same_chunk_id(self):
+        pipeline, ai = _pipeline_with_ai()
+        hits = [
+            _hit("alpha", chunk_id="dup", doc_number="01/2024/TT-BXD"),
+            _hit("beta", chunk_id="dup", doc_number="02/2024/TT-BXD"),
+            _hit("gamma", chunk_id="other", doc_number="03/2024/TT-BXD"),
+        ]
+        ctx = _ctx(hits, ai=ai)
+        captured = {}
+
+        async def _rerank(query, docs, top_k=5):
+            captured["docs"] = list(docs)
+            return [(doc, 0.5, i) for i, doc in enumerate(docs)]
+
+        with patch("retrieval.search_pipeline.get_reranker") as mock_get:
+            mock_reranker = MagicMock()
+            mock_reranker.rerank = AsyncMock(side_effect=_rerank)
+            mock_get.return_value = mock_reranker
+            asyncio.run(pipeline._stage_rerank_and_score(ctx))
+
+        assert captured["docs"] == ["alpha", "gamma"]
+        assert [row["doc_number"] for row in ctx.top_results] == ["01/2024/TT-BXD", "03/2024/TT-BXD"]
+
+    def test_rerank_preserves_agentic_hop2(self):
+        assert Settings.model_fields["RERANK_AGENTIC_HOP2_MIN_QUOTA"].default == 20
+        pipeline, ai = _pipeline_with_ai()
+        hop1 = [
+            _hit(f"hop1-{i}", chunk_id=f"h1-{i}", doc_number=f"H1-{i}", hop=1, score=0.9)
+            for i in range(50)
+        ]
+        hop2 = [
+            _hit(f"hop2-{i}", chunk_id=f"h2-{i}", doc_number=f"H2-{i}", hop=2, score=0.2)
+            for i in range(15)
+        ]
+        ctx = _ctx(hop1 + hop2, ai=ai, intent=QueryIntent.COMPLEX)
+        captured = {}
+
+        async def _rerank(query, docs, top_k=5):
+            captured["docs"] = list(docs)
+            return [(doc, 0.3, i) for i, doc in enumerate(docs)]
+
+        with patch("retrieval.search_pipeline.get_reranker") as mock_get:
+            mock_reranker = MagicMock()
+            mock_reranker.rerank = AsyncMock(side_effect=_rerank)
+            mock_get.return_value = mock_reranker
+            asyncio.run(pipeline._stage_rerank_and_score(ctx))
+
+        docs = captured["docs"]
+        assert len(docs) == 60
+        assert sum(text.startswith("hop2-") for text in docs) == 15
+        assert sum(text.startswith("hop1-") for text in docs) == 45
+        for i in range(15):
+            assert f"hop2-{i}" in docs
+        for i in range(45, 50):
+            assert f"hop1-{i}" not in docs
+
+    def test_rerank_does_not_call_complete_json(self):
+        import retrieval.search_pipeline as search_pipeline_module
+
+        assert not hasattr(search_pipeline_module, "stage1_fast_batch_rerank")
+        pipeline, ai = _pipeline_with_ai()
+        hits = [
+            _hit(f"bulk-{i}", chunk_id=f"bulk-{i}", doc_number=f"B-{i}")
+            for i in range(65)
+        ]
+        ctx = _ctx(hits, ai=ai)
+
+        async def _rerank(query, docs, top_k=5):
+            return [(doc, 0.2, i) for i, doc in enumerate(docs[:top_k])]
+
+        with patch("retrieval.search_pipeline.get_reranker") as mock_get:
+            mock_reranker = MagicMock()
+            mock_reranker.rerank = AsyncMock(side_effect=_rerank)
+            mock_get.return_value = mock_reranker
+            asyncio.run(pipeline._stage_rerank_and_score(ctx))
+
+        ai.complete_json.assert_not_called()
+        ai.complete_json.assert_not_awaited()
+
+    def test_rerank_fallback_scores_keep_candidate_order(self):
+        pipeline, ai = _pipeline_with_ai()
+        hits = [
+            _hit("first", chunk_id="a", doc_number="A", score=0.1),
+            _hit("second", chunk_id="b", doc_number="B", score=0.2),
+            _hit("third", chunk_id="c", doc_number="C", score=0.9),
+        ]
+        ctx = _ctx(hits, ai=ai)
+
+        async def _rerank(query, docs, top_k=5):
+            return [(doc, 0.0, i) for i, doc in enumerate(docs)]
+
+        with patch("retrieval.search_pipeline.get_reranker") as mock_get:
+            mock_reranker = MagicMock()
+            mock_reranker.rerank = AsyncMock(side_effect=_rerank)
+            mock_get.return_value = mock_reranker
+            asyncio.run(pipeline._stage_rerank_and_score(ctx))
+
+        assert [row["doc_number"] for row in ctx.top_results] == ["A", "B", "C"]
+        rerank_steps = [step for step in ctx.tracer.steps if step.get("action") == "rerank"]
+        assert rerank_steps[-1]["fallback"] is True
+
+    def test_rerank_exception_keeps_candidate_order(self):
+        pipeline, ai = _pipeline_with_ai()
+        hits = [
+            _hit("first", chunk_id="a", doc_number="A", score=0.1),
+            _hit("second", chunk_id="b", doc_number="B", score=0.2),
+            _hit("third", chunk_id="c", doc_number="C", score=0.9),
+        ]
+        ctx = _ctx(hits, ai=ai)
+
+        with patch("retrieval.search_pipeline.get_reranker") as mock_get:
+            mock_reranker = MagicMock()
+            mock_reranker.rerank = AsyncMock(side_effect=RuntimeError("CUDA out of memory"))
+            mock_get.return_value = mock_reranker
+            asyncio.run(pipeline._stage_rerank_and_score(ctx))
+
+        assert [row["doc_number"] for row in ctx.top_results] == ["A", "B", "C"]
 
 

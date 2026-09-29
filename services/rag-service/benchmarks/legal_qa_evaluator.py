@@ -312,38 +312,76 @@ class LegalRAGEvaluator:
 
 # ── CLI / Standalone runner ───────────────────────────────────────────────────
 
-async def _run_standalone(dataset_path: str, output_path: str | None = None):
-    """Standalone evaluation runner without full FastAPI stack."""
-    import os, sys
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    os.environ.setdefault("PYTHONPATH", str(Path(__file__).parent.parent))
+def _load_repo_env() -> None:
+    """Fill missing process env from the repo `.env` without overriding explicit exports."""
+    import os
+    env_path = Path(__file__).resolve().parents[3] / ".env"
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
-    # Lazy import to avoid heavy deps at import time
-    from services.retrieval_service import RetrievalService
+
+async def _run_standalone(
+    dataset_path: str,
+    output_path: str | None = None,
+    candidate_cap: int | None = None,
+    retrieval_only: bool = False,
+):
+    """Standalone evaluation runner without the full FastAPI stack."""
+    import datetime
+    import os
+    import sys
+
+    _load_repo_env()
+    rag_root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(rag_root))
+    os.environ.setdefault("PYTHONPATH", str(rag_root))
+
+    from core.config import get_settings
+    from neo4j import AsyncGraphDatabase
+    from pymilvus import AsyncMilvusClient
     from repositories.milvus_repo import MilvusRepository
     from repositories.neo4j_repo import Neo4jRepository
-    from pymilvus import AsyncMilvusClient
-    from core.config import get_settings
+    from retrieval.search_pipeline import SearchPipeline
 
     settings = get_settings()
+    if candidate_cap is not None:
+        # The sweep ceiling has to apply to EXACT as well, otherwise document-number
+        # questions stay on RERANK_EXACT_CANDIDATES and the three runs do not differ.
+        settings.RERANK_MAX_CANDIDATES = candidate_cap
+        settings.RERANK_EXACT_CANDIDATES = candidate_cap
+        logger.info(
+            "Candidate cap override: RERANK_MAX_CANDIDATES=%s RERANK_EXACT_CANDIDATES=%s",
+            candidate_cap,
+            candidate_cap,
+        )
+
     milvus_client = AsyncMilvusClient(uri=f"http://{settings.MILVUS_HOST}:{settings.MILVUS_PORT}")
-    from neo4j import AsyncGraphDatabase
     neo4j_driver = AsyncGraphDatabase.driver(
         settings.NEO4J_URI,
-        auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD.get_secret_value())
+        auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD.get_secret_value()),
     )
+    pipeline = SearchPipeline(MilvusRepository(milvus_client), Neo4jRepository(neo4j_driver))
+    evaluator = LegalRAGEvaluator(retrieval_fn=pipeline.search, qa_dataset_path=dataset_path)
 
-    milvus_repo = MilvusRepository(milvus_client)
-    neo4j_repo = Neo4jRepository(neo4j_driver)
-    svc = RetrievalService(milvus_repo, neo4j_repo)
+    if retrieval_only:
+        items = evaluator.load_dataset()
+        metrics, failed = await evaluator.evaluate_retrieval(items)
+        report = EvaluationReport(
+            retrieval=metrics,
+            failed_queries=failed,
+            evaluated_at=datetime.datetime.now().isoformat(),
+            dataset_size=len(items),
+        )
+    else:
+        report = await evaluator.run_full_evaluation()
 
-    evaluator = LegalRAGEvaluator(
-        retrieval_fn=svc.search,
-        qa_dataset_path=dataset_path,
-    )
-    report = await evaluator.run_full_evaluation()
     evaluator.print_report(report)
-
     if output_path:
         evaluator.save_report(report, output_path)
 
@@ -357,5 +395,21 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Legal RAG Evaluation")
     parser.add_argument("--dataset", required=True, help="Path to QA dataset (.jsonl)")
     parser.add_argument("--output", help="Path to save JSON report")
+    parser.add_argument(
+        "--candidate-cap",
+        type=int,
+        default=None,
+        help="Temporarily set both rerank ceilings to this value for the run",
+    )
+    parser.add_argument(
+        "--retrieval-only",
+        action="store_true",
+        help="Score retrieval once. Skip the per-category second pass",
+    )
     args = parser.parse_args()
-    asyncio.run(_run_standalone(args.dataset, args.output))
+    asyncio.run(_run_standalone(
+        args.dataset,
+        args.output,
+        candidate_cap=args.candidate_cap,
+        retrieval_only=args.retrieval_only,
+    ))

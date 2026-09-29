@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     VALIDITY_BOOST_ACTIVE: float = 0.15
     VALIDITY_PENALTY_OUTDATED: float = -0.3
 
+    # Cross-encoder candidate caps. 60 is temporary until MRR is measured at 30/60/100.
+    RERANK_MAX_CANDIDATES: int = 60
+    RERANK_EXACT_CANDIDATES: int = 20
+    RERANK_AGENTIC_HOP2_MIN_QUOTA: int = 20
+
     # Context Lake: Session Memory
     SESSION_MEMORY_TTL: int = 7200  # 2 hours
 

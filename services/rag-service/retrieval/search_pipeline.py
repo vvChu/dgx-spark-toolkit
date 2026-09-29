@@ -1,8 +1,10 @@
 """Deep SearchPipeline module for hybrid vector search, reranking, and Graph RAG enrichment."""
 import asyncio
+import hashlib
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 import numpy as np
@@ -33,6 +35,16 @@ HYBRID_RECALL_10 = Counter('rag_hybrid_recall_top10_total', 'Total hybrid search
 GRAPH_TIMELINE_HOPS = Histogram('rag_graph_timeline_hops_total', 'Number of hops in timeline traversal', buckets=(1, 2, 3, 5, 10))
 TIMELINE_GEN_COUNT = Counter('rag_timeline_generated_total', 'Total legal timelines generated')
 QUERY_INTENT_COUNTER = Counter('rag_query_intent_total', 'Query intents classified', ['intent'])
+RERANK_LATENCY = Histogram(
+    'rag_rerank_latency_seconds',
+    'Latency of the cross-encoder rerank step',
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 3, 5, 10),
+)
+RERANK_CANDIDATES = Histogram(
+    'rag_rerank_candidates',
+    'Number of unique candidates sent to the reranker',
+    buckets=(1, 5, 10, 20, 30, 40, 60, 80, 100),
+)
 
 _FILTER_UNSAFE = re.compile(r'["\\\\\\x00-\\x1f]')
 _BBOX_FALLBACK = [0, 0, 1000, 1000]
@@ -63,6 +75,166 @@ def _get_hit_score(hit: Any) -> float:
     if isinstance(hit, dict):
         return float(hit.get("score", 0.0))
     return 0.0
+
+
+def _entity_get(hit: Any, key: str, default: Any = None) -> Any:
+    ent = _get_hit_entity(hit)
+    getter = getattr(ent, "get", None)
+    if not callable(getter):
+        return default
+    try:
+        value = getter(key, default)
+    except TypeError:
+        try:
+            value = getter(key)
+        except Exception:
+            return default
+    return default if value is None else value
+
+
+def _hit_text(hit: Any) -> str:
+    text = _entity_get(hit, "text", "")
+    return text if isinstance(text, str) else ""
+
+
+def _hit_chunk_id(hit: Any) -> str:
+    chunk_id = _entity_get(hit, "chunk_id", "")
+    if not isinstance(chunk_id, str):
+        return ""
+    return chunk_id.strip()
+
+
+def _hit_dedup_key(hit: Any) -> str:
+    chunk_id = _hit_chunk_id(hit)
+    if chunk_id:
+        return "chunk:" + chunk_id
+    digest = hashlib.sha256(_hit_text(hit).encode("utf-8", errors="replace")).hexdigest()
+    return "text:" + digest
+
+
+def _dedup_hits(hits: list) -> list:
+    selected = []
+    seen: set[str] = set()
+    for hit in hits:
+        key = _hit_dedup_key(hit)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(hit)
+    return selected
+
+
+def _coerce_hop(raw: Any) -> Optional[int]:
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float) and raw.is_integer():
+        return int(raw)
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return int(raw.strip())
+    return None
+
+
+def _get_hit_hop(hit: Any) -> int:
+    raw = None
+    if isinstance(hit, dict):
+        raw = hit.get("hop")
+        ent = hit.get("entity")
+        if _coerce_hop(raw) is None and isinstance(ent, dict):
+            raw = ent.get("hop")
+    else:
+        explicit = getattr(hit, "__dict__", {})
+        if isinstance(explicit, dict) and "hop" in explicit:
+            raw = explicit.get("hop")
+        ent = _get_hit_entity(hit)
+        if _coerce_hop(raw) is None and isinstance(ent, dict):
+            raw = ent.get("hop")
+    hop = _coerce_hop(raw)
+    if hop is None or hop < 1:
+        return 1
+    return hop
+
+
+def _mark_hit_hop(hit: Any, hop: int) -> None:
+    if isinstance(hit, dict):
+        hit["hop"] = hop
+        ent = hit.get("entity")
+        if isinstance(ent, dict):
+            ent["hop"] = hop
+        return
+    try:
+        setattr(hit, "hop", hop)
+    except Exception:
+        logger.debug("Unable to stamp hop on %s", type(hit).__name__)
+    ent = _get_hit_entity(hit)
+    if isinstance(ent, dict):
+        ent["hop"] = hop
+
+
+def _select_rerank_candidates(hits: list, max_candidates: int, hop2_quota: int) -> list:
+    """Keep at most ``max_candidates`` hits. Reserve hop-2 slots when both hops are present."""
+    max_candidates = max(0, int(max_candidates))
+    hop2_quota = max(0, int(hop2_quota))
+    if max_candidates == 0 or not hits:
+        return []
+    hop2 = [hit for hit in hits if _get_hit_hop(hit) == 2]
+    earlier = [hit for hit in hits if _get_hit_hop(hit) != 2]
+    if not hop2 or not earlier:
+        return hits[:max_candidates]
+    hop2_kept = hop2[:min(len(hop2), hop2_quota, max_candidates)]
+    earlier_kept = earlier[:max(0, max_candidates - len(hop2_kept))]
+    selected = {id(hit) for hit in hop2_kept}
+    selected.update(id(hit) for hit in earlier_kept)
+    return [hit for hit in hits if id(hit) in selected]
+
+
+def _unpack_rerank_item(item: Any) -> tuple[str, float, Optional[int]]:
+    if not isinstance(item, (list, tuple)) or len(item) < 2:
+        raise ValueError("rerank item must be (text, score) or (text, score, index)")
+    text = item[0] if isinstance(item[0], str) else str(item[0])
+    score = float(item[1])
+    original_idx = None
+    if len(item) >= 3 and item[2] is not None:
+        original_idx = int(item[2])
+    return text, score, original_idx
+
+
+def _is_rerank_fallback(reranked: list) -> bool:
+    """Predict failed when every row is score 0.0 and indices are the original prefix."""
+    if not reranked:
+        return False
+    indices: list[int] = []
+    for item in reranked:
+        if not isinstance(item, (list, tuple)) or len(item) < 3:
+            return False
+        try:
+            score = float(item[1])
+            idx = int(item[2])
+        except (TypeError, ValueError):
+            return False
+        if score != 0.0:
+            return False
+        indices.append(idx)
+    return indices == list(range(len(reranked)))
+
+
+def _resolve_candidate_hit(
+    candidate_hits: list,
+    doc_text: str,
+    original_idx: Optional[int],
+    used: set[int],
+) -> Any:
+    if original_idx is not None and 0 <= original_idx < len(candidate_hits) and original_idx not in used:
+        used.add(original_idx)
+        return candidate_hits[original_idx]
+    for idx, hit in enumerate(candidate_hits):
+        if idx in used:
+            continue
+        if _hit_text(hit) == doc_text:
+            used.add(idx)
+            return hit
+    return None
 
 
 def _build_result_item(entity: dict, text: str, score: float) -> dict:
@@ -173,57 +345,6 @@ class SearchContext:
     reasoning: str = ""
     is_sufficient: bool = True
     confidence: float = 1.0
-
-
-async def stage1_fast_batch_rerank(query: str, docs: List[str], top_k: int = 10, ai_client: Optional[AIGatewayClient] = None) -> List[str]:
-    """Stage 1: Fast batch filtering using Gemini 3.5 Flash Lite (250K TPM) with Gemma 4 fallback."""
-    if len(docs) <= top_k:
-        return docs
-
-    try:
-        client = ai_client or get_ai_gateway_client()
-
-        doc_entries = [f"[{i+1}] {text[:250]}" for i, text in enumerate(docs[:30])]
-        prompt = (
-            f"Query: {query}\n\n"
-            f"Evaluate and rank the following document chunks by legal relevance to the query.\n"
-            f"Return a JSON object with key 'top_indices' containing an array of 1-based integer indices of top {top_k} most relevant chunks.\n\n"
-            f"Chunks:\n" + "\n".join(doc_entries)
-        )
-        messages = [{"role": "user", "content": prompt}]
-        res_data = await client.complete_json(
-            messages,
-            model="claude-haiku-4",
-            model_chain=["claude-haiku-4", "rag-core"],
-            timeout=4.0,
-            retries=1,
-        )
-        if isinstance(res_data, list):
-            indices = res_data
-        elif isinstance(res_data, dict):
-            indices = res_data.get("top_indices", res_data.get("indices", []))
-        else:
-            indices = []
-
-        filtered_docs = []
-        if isinstance(indices, list):
-            for item in indices:
-                idx = item.get("index") if isinstance(item, dict) else item
-                if isinstance(idx, int) and 1 <= idx <= len(docs):
-                    filtered_docs.append(docs[idx - 1])
-        if filtered_docs:
-            for d in docs:
-                if len(filtered_docs) >= top_k:
-                    break
-                if d not in filtered_docs:
-                    filtered_docs.append(d)
-    except Exception as e:
-        logger.warning(
-            "Stage 1 Fast Batch Rerank skipped (%s). Using raw candidate set.", e
-        )
-        return docs
-
-    return filtered_docs if filtered_docs else docs
 
 
 class SearchPipeline:
@@ -575,6 +696,7 @@ class SearchPipeline:
                     txt = _get_hit_entity(hit).get("text", "")[:200]
                     if txt and txt not in seen_texts:
                         seen_texts.add(txt)
+                        _mark_hit_hop(hit, 2)
                         all_hits.append(hit)
                 ctx.sub_queries.append(follow_up)
                 ctx.raw_hits = all_hits
@@ -594,50 +716,83 @@ class SearchPipeline:
         if not ctx.raw_hits:
             return
 
-        if ctx.use_reranker:
-            ctx.tracer.start_step("rerank")
-            docs = [_get_hit_entity(hit).get("text", "") for hit in ctx.raw_hits]
-
-            # Stage 1: Fast batch filtering using Flash Lite when candidate set is exceptionally large
-            if len(docs) > 60:
-                candidate_docs = await stage1_fast_batch_rerank(
-                    ctx.raw_query, docs, top_k=30, ai_client=ctx.ai_client
-                )
-            else:
-                candidate_docs = docs
-
-            # Stage 2: Deep Local Reranking (CrossEncoder)
-            reranker = get_reranker()
-            reranked = await reranker.rerank(ctx.raw_query, candidate_docs, top_k=max(ctx.limit * 2, 10))
-
-            hit_map = {}
-            for hit in ctx.raw_hits:
-                t = _get_hit_entity(hit).get("text", "")
-                if t not in hit_map:
-                    hit_map[t] = hit
-
-            settings = get_settings()
-            for doc_text, score in reranked:
-                hit = hit_map.get(doc_text)
-                if hit is None:
-                    continue
-                ent = _get_hit_entity(hit)
-                table_boost = settings.TABLE_BOOST if ent.get("is_table", False) else 0.0
-                status = ent.get("validity_status", "ACTIVE")
-                validity_boost = (
-                    settings.VALIDITY_BOOST_ACTIVE if status == "ACTIVE"
-                    else (settings.VALIDITY_PENALTY_OUTDATED if status == "OUTDATED" else 0.0)
-                )
-                hybrid_score = (float(score) * settings.RERANK_WEIGHT) + (_get_hit_score(hit) * settings.MILVUS_WEIGHT) + table_boost + validity_boost
-                ctx.top_results.append(_build_result_item(ent, doc_text, hybrid_score))
-
-            ctx.top_results.sort(key=lambda x: x["score"], reverse=True)
-            ctx.top_results = ctx.top_results[:ctx.limit]
-            ctx.tracer.end_step(input_count=len(docs), output_count=len(ctx.top_results))
-        else:
+        if not ctx.use_reranker:
             for hit in ctx.raw_hits:
                 ent = _get_hit_entity(hit)
                 ctx.top_results.append(_build_result_item(ent, ent.get("text", ""), _get_hit_score(hit)))
+            return
+
+        settings = get_settings()
+        deduped = _dedup_hits(list(ctx.raw_hits))
+        if ctx.intent == QueryIntent.EXACT:
+            max_candidates = settings.RERANK_EXACT_CANDIDATES
+        else:
+            max_candidates = settings.RERANK_MAX_CANDIDATES
+        candidate_hits = _select_rerank_candidates(
+            deduped,
+            max_candidates=max_candidates,
+            hop2_quota=settings.RERANK_AGENTIC_HOP2_MIN_QUOTA,
+        )
+        candidate_docs = [_hit_text(hit) for hit in candidate_hits]
+
+        if ctx.tracer is not None:
+            ctx.tracer.start_step("rerank")
+        RERANK_CANDIDATES.observe(len(candidate_hits))
+        started = time.perf_counter()
+        preserve_order = False
+        reranked: list = []
+        try:
+            if candidate_docs:
+                reranker = get_reranker()
+                # Score the whole capped set. ctx.limit is applied after hybrid_score sort.
+                reranked = await reranker.rerank(
+                    ctx.raw_query,
+                    candidate_docs,
+                    top_k=len(candidate_docs),
+                )
+                preserve_order = _is_rerank_fallback(reranked)
+        except Exception as e:
+            logger.warning("Rerank failed (%s). Keeping truncated candidate order.", e)
+            reranked = [(doc, 0.0, idx) for idx, doc in enumerate(candidate_docs)]
+            preserve_order = True
+        finally:
+            RERANK_LATENCY.observe(time.perf_counter() - started)
+
+        scored_rows: list[dict] = []
+        used_indices: set[int] = set()
+        for item in reranked:
+            try:
+                doc_text, score, original_idx = _unpack_rerank_item(item)
+            except (TypeError, ValueError) as unpack_err:
+                logger.warning("Skipping malformed rerank item (%s).", unpack_err)
+                continue
+            hit = _resolve_candidate_hit(candidate_hits, doc_text, original_idx, used_indices)
+            if hit is None:
+                continue
+            ent = _get_hit_entity(hit)
+            table_boost = settings.TABLE_BOOST if ent.get("is_table", False) else 0.0
+            status = ent.get("validity_status", "ACTIVE")
+            validity_boost = (
+                settings.VALIDITY_BOOST_ACTIVE if status == "ACTIVE"
+                else (settings.VALIDITY_PENALTY_OUTDATED if status == "OUTDATED" else 0.0)
+            )
+            hybrid_score = (
+                (float(score) * settings.RERANK_WEIGHT)
+                + (_get_hit_score(hit) * settings.MILVUS_WEIGHT)
+                + table_boost
+                + validity_boost
+            )
+            scored_rows.append(_build_result_item(ent, _hit_text(hit) or doc_text, hybrid_score))
+
+        if not preserve_order:
+            scored_rows.sort(key=lambda row: row["score"], reverse=True)
+        ctx.top_results = scored_rows[:ctx.limit]
+        if ctx.tracer is not None:
+            ctx.tracer.end_step(
+                input_count=len(candidate_hits),
+                output_count=len(ctx.top_results),
+                fallback=preserve_order,
+            )
 
     async def _inject_graph_status(self, top_results: list[dict]) -> None:
         unique_sources = list(set(r["source"] for r in top_results if r.get("source")))
