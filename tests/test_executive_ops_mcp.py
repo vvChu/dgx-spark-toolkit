@@ -207,15 +207,13 @@ class TestCitationValidation:
         assert len(matching) >= 1
 
     def test_suffix_injection_rejection(self):
-        """Verifies that suffix sub-strings like 0/2021/NĐ-CP or NĐ-CP do NOT match 10/2021/NĐ-CP."""
-        for bad_id in ["0/2021/NĐ-CP", "2021/NĐ-CP", "NĐ-CP"]:
+        """Verifies that suffix sub-strings like 0/2021/NĐ-CP or NĐ-CP do NOT match 10/2021/NĐ-CP and return empty graph."""
+        for bad_id in ["0/2021/NĐ-CP", "2021/NĐ-CP", "NĐ-CP", "1/2021/NĐ-CP"]:
             res_raw = validate_legal_citation(bad_id)
             assert res_raw is not None
             data = json.loads(res_raw)
             assert "nodes" in data
-            # Must NOT match VBPL/10/2021/NĐ-CP
-            matching = [n for n in data["nodes"] if n.get("id") == "VBPL/10/2021/NĐ-CP"]
-            assert len(matching) == 0, f"Suffix match error: '{bad_id}' wrongly matched 'VBPL/10/2021/NĐ-CP'!"
+            assert len(data["nodes"]) == 0, f"Suffix match error: '{bad_id}' returned non-empty nodes: {data['nodes']}!"
 
 
 # =============================================================================
@@ -405,6 +403,31 @@ class TestActionProposalHardening:
             assert "Khong co thay doi he thong" not in sent_text
             assert "system.deps.upgrade" in sent_text
             assert "300s" in sent_text
+
+        # 3. Client sends low timeout=1 -> Server still enforces registry timeout (300s) and does NOT show 1s
+        payload_low = {
+            "title": "Low Timeout Request",
+            "body": "Spoofed low timeout",
+            "actions": [
+                {
+                    "action_id": "upgrade_low",
+                    "command": "system.deps.upgrade",
+                    "params": {"tier": "patch"},
+                    "timeout": 1,
+                }
+            ],
+        }
+        with patch.object(cd, "send_telegram_msg", new_callable=AsyncMock) as mock_send_low:
+            mock_send_low.return_value = 998878
+            res = asyncio.run(cd.handle_internal_notify(payload_low, x_chatops_secret=chatops_secret))
+            assert res["status"] == "dispatched"
+            upgrade_entries = [e for e in cd.action_cache.values() if e.get("command") == "system.deps.upgrade"]
+            latest_entry = upgrade_entries[-1]
+            assert latest_entry["timeout"] == 300
+            sent_text_low = mock_send_low.call_args[0][1]
+            assert " 1s" not in sent_text_low
+            assert "`1s`" not in sent_text_low
+            assert "300s" in sent_text_low
 
 
 # =============================================================================

@@ -2700,13 +2700,11 @@ async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Opti
 
         nonce = hashlib.sha256(f"{cmd}_{time.time()}_{uuid.uuid4().hex[:6]}".encode()).hexdigest()[:8]
         reg_timeout = cmd_def.get("timeout_seconds", 120)
-        act_timeout = act.get("timeout")
-        effective_timeout = min(int(act_timeout), reg_timeout) if act_timeout is not None else None
         action_cache[nonce] = {
             "command": cmd,
             "params": params,
             "title": server_title,
-            "timeout": effective_timeout,
+            "timeout": reg_timeout,
             "expires": time.time() + min(act.get("ttl_seconds", 3600), 7200),
         }
         inline_keyboard.append([{"text": server_label, "callback_data": f"act:{nonce}"}])
@@ -2718,7 +2716,7 @@ async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Opti
             if any(btn.get("callback_data") == f"act:{nonce}" for row in inline_keyboard for btn in row):
                 cmd_id = entry["command"]
                 cmd_def = registry.get(cmd_id, {})
-                display_timeout = entry["timeout"] if entry["timeout"] is not None else cmd_def.get("timeout_seconds", 120)
+                display_timeout = entry["timeout"]
                 action_summaries.append(
                     f"• *Mã lệnh:* `{cmd_id}`\n"
                     f"  *Mô tả:* {cmd_def.get('description', cmd_id)}\n"
