@@ -35,43 +35,152 @@ class AdvancedGraphRAG:
 
     async def get_legal_timeline(self, doc_number: str, max_hops: int = 10) -> list[dict]:
         """
-        Iterative Cypher traversal to retrieve the chain of amendments, replacements, and references.
+        Iterative Cypher traversal to retrieve comprehensive legal timeline for a document node.
+
+        Traverses:
+        - Promulgating circulars: (promulgator)-[:PROMULGATES]->(start)
+        - Outgoing promulgations: (start)-[:PROMULGATES]->(promulgated)
+        - Amending circulars: (amender)-[:AMENDS]->(start)
+        - Outgoing amendments: (start)-[:AMENDS]->(amended)
+        - Replacement chains: (start)-[:REPLACES*1..10]->(old)
+        - Superseding documents: (newer)-[:REPLACES]->(start)
         """
         if not doc_number or not self._driver:
             return []
 
         query = """
         MATCH (start:Document)
-        USING INDEX start:Document(doc_number)
         WHERE start.doc_number = $doc_number
            OR start.id = $doc_number
+           OR start.id = 'VBPL/' + $doc_number
            OR start.id = 'ROOT/' + $doc_number
            OR start.doc_number = replace($doc_number, 'ROOT/', '')
-        MATCH path = (start)-[:AMENDS|REPLACES|REFERENCES*0..10]->(current)
-        WITH path, current
-        ORDER BY length(path) DESC
-        LIMIT 1
-        RETURN
-            [i in range(0, length(path)) | {
-                doc_number: nodes(path)[i].doc_number,
-                id: nodes(path)[i].id,
-                effective_date: coalesce(nodes(path)[i].effective_date, nodes(path)[i].date, 'unknown'),
-                status: coalesce(nodes(path)[i].status, 'UNKNOWN'),
-                relation_to_next: CASE
-                    WHEN i < length(path) THEN type(relationships(path)[i])
-                    ELSE null
-                END
-            }] AS timeline
+        WITH start LIMIT 1
+        OPTIONAL MATCH (newer:Document)-[:REPLACES]->(start)
+        OPTIONAL MATCH (p:Document)-[:PROMULGATES]->(start)
+        OPTIONAL MATCH (start)-[:PROMULGATES]->(out_p:Document)
+        OPTIONAL MATCH (a:Document)-[:AMENDS]->(start)
+        OPTIONAL MATCH (start)-[:AMENDS]->(out_a:Document)
+        OPTIONAL MATCH path = (start)-[:REPLACES|REFERENCES*1..10]->(current)
+        WITH start,
+             collect(DISTINCT newer) AS superseding,
+             collect(DISTINCT p) AS promulgators,
+             collect(DISTINCT out_p) AS out_promulgates,
+             collect(DISTINCT a) AS amenders,
+             collect(DISTINCT out_a) AS out_amends,
+             collect(path) AS rep_paths
+        RETURN start, superseding, promulgators, out_promulgates, amenders, out_amends, rep_paths
         """
         try:
             async with self._driver.session() as session:
                 result = await session.run(query, doc_number=doc_number)
                 record = await result.single()
-                if record:
-                    return record["timeline"]
+                if not record or not record.get("start"):
+                    return []
+
+                start = record["start"]
+                superseding = record["superseding"]
+                promulgators = record["promulgators"]
+                out_promulgates = record["out_promulgates"]
+                amenders = record["amenders"]
+                out_amends = record["out_amends"]
+                rep_paths = record["rep_paths"]
+
+                timeline: list[dict] = []
+
+                # 1. Superseding documents
+                for n in superseding:
+                    timeline.append({
+                        "doc_number": n.get("doc_number") or n.get("id"),
+                        "id": n.get("id"),
+                        "effective_date": n.get("effective_date") or n.get("date") or "unknown",
+                        "status": n.get("status", "ACTIVE"),
+                        "relation_to_next": "REPLACES",
+                    })
+
+                # 2. Promulgating circulars
+                for p in promulgators:
+                    timeline.append({
+                        "doc_number": p.get("doc_number") or p.get("id"),
+                        "id": p.get("id"),
+                        "effective_date": p.get("effective_date") or p.get("date") or "unknown",
+                        "status": p.get("status", "ACTIVE"),
+                        "relation_to_next": "PROMULGATES",
+                    })
+
+                # 3. Amending circulars
+                for a in amenders:
+                    timeline.append({
+                        "doc_number": a.get("doc_number") or a.get("id"),
+                        "id": a.get("id"),
+                        "effective_date": a.get("effective_date") or a.get("date") or "unknown",
+                        "status": a.get("status", "ACTIVE"),
+                        "relation_to_next": "AMENDS",
+                    })
+
+                # 4. Longest replacement path
+                longest_path = None
+                if rep_paths:
+                    valid_paths = [p for p in rep_paths if p and hasattr(p, "relationships")]
+                    if valid_paths:
+                        longest_path = max(valid_paths, key=lambda p: len(p.relationships))
+
+                # Determine start's relation_to_next
+                start_rel = None
+                if out_promulgates:
+                    start_rel = "PROMULGATES"
+                elif out_amends:
+                    start_rel = "AMENDS"
+                elif longest_path and len(longest_path.relationships) > 0:
+                    start_rel = longest_path.relationships[0].type
+
+                timeline.append({
+                    "doc_number": start.get("doc_number") or start.get("id"),
+                    "id": start.get("id"),
+                    "effective_date": start.get("effective_date") or start.get("date") or "unknown",
+                    "status": start.get("status", "UNKNOWN"),
+                    "relation_to_next": start_rel,
+                })
+
+                # 5. Outgoing promulgations
+                for op in out_promulgates:
+                    timeline.append({
+                        "doc_number": op.get("doc_number") or op.get("id"),
+                        "id": op.get("id"),
+                        "effective_date": op.get("effective_date") or op.get("date") or "unknown",
+                        "status": op.get("status", "ACTIVE"),
+                        "relation_to_next": None,
+                    })
+
+                # 6. Outgoing amendments
+                for oa in out_amends:
+                    timeline.append({
+                        "doc_number": oa.get("doc_number") or oa.get("id"),
+                        "id": oa.get("id"),
+                        "effective_date": oa.get("effective_date") or oa.get("date") or "unknown",
+                        "status": oa.get("status", "ACTIVE"),
+                        "relation_to_next": None,
+                    })
+
+                # 7. Predecessors in replacement chain
+                if longest_path:
+                    path_nodes = list(longest_path.nodes)
+                    path_rels = list(longest_path.relationships)
+                    for i in range(1, len(path_nodes)):
+                        node = path_nodes[i]
+                        rel_type = path_rels[i].type if i < len(path_rels) else None
+                        timeline.append({
+                            "doc_number": node.get("doc_number") or node.get("id"),
+                            "id": node.get("id"),
+                            "effective_date": node.get("effective_date") or node.get("date") or "unknown",
+                            "status": node.get("status", "OUTDATED"),
+                            "relation_to_next": rel_type,
+                        })
+
+                return timeline
         except Exception as e:
             logger.error(f"Failed to retrieve legal timeline for {doc_number}: {e}")
-        return []
+            return []
 
     async def generate_timeline_summary(self, timeline: list, user_query: str) -> str:
         """

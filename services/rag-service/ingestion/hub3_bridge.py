@@ -77,6 +77,8 @@ class Hub3BundleInfo:
     guided_by: Optional[str] = None
     guides: List[str] = field(default_factory=list)
     canonical_guides: List[str] = field(default_factory=list)
+    promulgated_by: Optional[str] = None
+    canonical_promulgated_by: Optional[str] = None
     raw_metadata: Dict[str, Any] = field(default_factory=dict)
     canonical_id: str = ""
     file_name: str = ""
@@ -305,6 +307,23 @@ class Hub3Bridge:
 
             combined_raw = {**local_meta, **reg_item}
 
+            # Promulgated by (Circular / Decision that promulgates the standard)
+            promulgated_by = None
+            if isinstance(reg_item.get("relations"), dict) and reg_item["relations"].get("promulgated_by"):
+                promulgated_by = reg_item["relations"].get("promulgated_by")
+            elif isinstance(local_meta.get("relations"), dict) and local_meta["relations"].get("promulgated_by"):
+                promulgated_by = local_meta["relations"].get("promulgated_by")
+            elif local_meta.get("promulgated_by"):
+                promulgated_by = local_meta.get("promulgated_by")
+            elif local_meta.get("cong_bao_number"):
+                m_cb = re.search(r"(\d+/\d{4}/(?:TT|QĐ)-[A-ZĐ]+)", str(local_meta.get("cong_bao_number")))
+                if m_cb:
+                    promulgated_by = m_cb.group(1)
+            if not promulgated_by and local_meta.get("source_url"):
+                m_url = re.search(r"Thong-tu-(\d+)-(\d{4})-(TT-[A-ZĐ]+)", str(local_meta.get("source_url")), re.I)
+                if m_url:
+                    promulgated_by = f"{m_url.group(1)}/{m_url.group(2)}/{m_url.group(3).upper()}"
+
             bundle_info = Hub3BundleInfo(
                 slug=slug,
                 category=cat_name,
@@ -329,6 +348,7 @@ class Hub3Bridge:
                 references=references,
                 guided_by=str(guided_by) if guided_by else None,
                 guides=guides,
+                promulgated_by=promulgated_by,
                 raw_metadata=combined_raw,
                 canonical_id=canonical_id,
                 file_name=file_name,
@@ -362,6 +382,9 @@ class Hub3Bridge:
             if b.guided_by and not resolved_guides:
                 resolved_guides.add(self.resolve_canonical_id(b.guided_by, canonical_map))
             b.canonical_guides = sorted(resolved_guides)
+
+            if b.promulgated_by:
+                b.canonical_promulgated_by = self.resolve_canonical_id(b.promulgated_by, canonical_map)
 
         if limit:
             bundles = bundles[:limit]
@@ -502,6 +525,23 @@ class Hub3Bridge:
             legacy_id = f"{b.namespace}/{b.document_number}_{clean_fn}"
             legacy_sanitized = re.sub(r"[^\w\d\-_/.]", "_", legacy_id)
             mapping[legacy_sanitized] = cid
+
+        # Explicit Circular & Amendment Aliases (Grok Invariant 1)
+        amendment_aliases = {
+            "SD1-2023-QCVN-06": "VBPL/09/2023/TT-BXD",
+            "09/2023/TT-BXD": "VBPL/09/2023/TT-BXD",
+            "09/2023/tt-bxd": "VBPL/09/2023/TT-BXD",
+            "06/2022/TT-BXD": "VBPL/06/2022/TT-BXD",
+            "06/2022/tt-bxd": "VBPL/06/2022/TT-BXD",
+            "SD1-2026-QCVN-04": "VBPL/31/2026/TT-BXD",
+            "31/2026/TT-BXD": "VBPL/31/2026/TT-BXD",
+            "31/2026/tt-bxd": "VBPL/31/2026/TT-BXD",
+            "03/2021/TT-BXD": "VBPL/03/2021/TT-BXD",
+            "03/2021/tt-bxd": "VBPL/03/2021/TT-BXD",
+            "3621/QĐ-BKHCN": "VBPL/3621/QĐ-BKHCN",
+            "3621/qd-bkhcn": "VBPL/3621/QĐ-BKHCN",
+        }
+        mapping.update(amendment_aliases)
 
         return mapping
 
@@ -1018,6 +1058,16 @@ class Hub3Bridge:
         # If already starts with VBPL/
         if clean.startswith("VBPL/"):
             return re.sub(r"[^\w\d\-_/.]", "_", clean)
+
+        # Match Amendment prefixes
+        if "SD1-2023" in clean or "09/2023" in clean:
+            return "VBPL/09/2023/TT-BXD"
+        if "SD1-2026" in clean or "31/2026" in clean:
+            return "VBPL/31/2026/TT-BXD"
+        if "06/2022" in clean:
+            return "VBPL/06/2022/TT-BXD"
+        if "03/2021" in clean:
+            return "VBPL/03/2021/TT-BXD"
 
         # Match QCVN: e.g. QCVN 06:2020/BXD or QCVN-01-2019-BXD
         m_qcvn = re.search(r"QCVN[-_\s]*(\d+)[:\-_/](\d{4})[-_\s/]*([A-Z]+)", clean, re.IGNORECASE)

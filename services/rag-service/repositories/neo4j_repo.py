@@ -42,39 +42,143 @@ class Neo4jRepository:
                 logger.debug(f"Error closing Neo4j driver: {e}")
 
     async def get_legal_timeline(self, doc_number: str, max_hops: int = 10) -> list[dict]:
-        """Iterative Cypher traversal to retrieve legal timeline for a document node."""
+        """Iterative Cypher traversal to retrieve comprehensive legal timeline for a document node."""
         if not doc_number or not self._driver:
             return []
 
         query = """
         MATCH (start:Document)
-        USING INDEX start:Document(doc_number)
-        WHERE start.doc_number = $doc_number OR start.id = $doc_number
-        MATCH path = (start)-[:AMENDS|REPLACES|REFERENCES*0..10]->(current)
-        WITH path, current
-        ORDER BY length(path) DESC
-        LIMIT 1
-        RETURN
-            [i in range(0, length(path)) | {
-                doc_number: nodes(path)[i].doc_number,
-                id: nodes(path)[i].id,
-                effective_date: coalesce(nodes(path)[i].effective_date, nodes(path)[i].date, 'unknown'),
-                status: coalesce(nodes(path)[i].status, 'UNKNOWN'),
-                relation_to_next: CASE
-                    WHEN i < length(path) THEN type(relationships(path)[i])
-                    ELSE null
-                END
-            }] AS timeline
+        WHERE start.doc_number = $doc_number
+           OR start.id = $doc_number
+           OR start.id = 'VBPL/' + $doc_number
+           OR start.id = 'ROOT/' + $doc_number
+           OR start.doc_number = replace($doc_number, 'ROOT/', '')
+        WITH start LIMIT 1
+        OPTIONAL MATCH (newer:Document)-[:REPLACES]->(start)
+        OPTIONAL MATCH (p:Document)-[:PROMULGATES]->(start)
+        OPTIONAL MATCH (start)-[:PROMULGATES]->(out_p:Document)
+        OPTIONAL MATCH (a:Document)-[:AMENDS]->(start)
+        OPTIONAL MATCH (start)-[:AMENDS]->(out_a:Document)
+        OPTIONAL MATCH path = (start)-[:REPLACES|REFERENCES*1..10]->(current)
+        WITH start,
+             collect(DISTINCT newer) AS superseding,
+             collect(DISTINCT p) AS promulgators,
+             collect(DISTINCT out_p) AS out_promulgates,
+             collect(DISTINCT a) AS amenders,
+             collect(DISTINCT out_a) AS out_amends,
+             collect(path) AS rep_paths
+        RETURN start, superseding, promulgators, out_promulgates, amenders, out_amends, rep_paths
         """
         try:
             async with self._driver.session() as session:
                 result = await session.run(query, doc_number=doc_number)
                 record = await result.single()
-                if record and "timeline" in record:
-                    return record["timeline"]
+                if not record or not record.get("start"):
+                    return []
+
+                start = record["start"]
+                superseding = record["superseding"]
+                promulgators = record["promulgators"]
+                out_promulgates = record["out_promulgates"]
+                amenders = record["amenders"]
+                out_amends = record["out_amends"]
+                rep_paths = record["rep_paths"]
+
+                timeline: list[dict] = []
+
+                # 1. Superseding documents
+                for n in superseding:
+                    timeline.append({
+                        "doc_number": n.get("doc_number") or n.get("id"),
+                        "id": n.get("id"),
+                        "effective_date": n.get("effective_date") or n.get("date") or "unknown",
+                        "status": n.get("status", "ACTIVE"),
+                        "relation_to_next": "REPLACES",
+                    })
+
+                # 2. Promulgating circulars
+                for p in promulgators:
+                    timeline.append({
+                        "doc_number": p.get("doc_number") or p.get("id"),
+                        "id": p.get("id"),
+                        "effective_date": p.get("effective_date") or p.get("date") or "unknown",
+                        "status": p.get("status", "ACTIVE"),
+                        "relation_to_next": "PROMULGATES",
+                    })
+
+                # 3. Amending circulars
+                for a in amenders:
+                    timeline.append({
+                        "doc_number": a.get("doc_number") or a.get("id"),
+                        "id": a.get("id"),
+                        "effective_date": a.get("effective_date") or a.get("date") or "unknown",
+                        "status": a.get("status", "ACTIVE"),
+                        "relation_to_next": "AMENDS",
+                    })
+
+                # 4. Longest replacement path
+                longest_path = None
+                if rep_paths:
+                    valid_paths = [p for p in rep_paths if p and hasattr(p, "relationships")]
+                    if valid_paths:
+                        longest_path = max(valid_paths, key=lambda p: len(p.relationships))
+
+                # Determine start's relation_to_next
+                start_rel = None
+                if out_promulgates:
+                    start_rel = "PROMULGATES"
+                elif out_amends:
+                    start_rel = "AMENDS"
+                elif longest_path and len(longest_path.relationships) > 0:
+                    start_rel = longest_path.relationships[0].type
+
+                timeline.append({
+                    "doc_number": start.get("doc_number") or start.get("id"),
+                    "id": start.get("id"),
+                    "effective_date": start.get("effective_date") or start.get("date") or "unknown",
+                    "status": start.get("status", "UNKNOWN"),
+                    "relation_to_next": start_rel,
+                })
+
+                # 5. Outgoing promulgations
+                for op in out_promulgates:
+                    timeline.append({
+                        "doc_number": op.get("doc_number") or op.get("id"),
+                        "id": op.get("id"),
+                        "effective_date": op.get("effective_date") or op.get("date") or "unknown",
+                        "status": op.get("status", "ACTIVE"),
+                        "relation_to_next": None,
+                    })
+
+                # 6. Outgoing amendments
+                for oa in out_amends:
+                    timeline.append({
+                        "doc_number": oa.get("doc_number") or oa.get("id"),
+                        "id": oa.get("id"),
+                        "effective_date": oa.get("effective_date") or oa.get("date") or "unknown",
+                        "status": oa.get("status", "ACTIVE"),
+                        "relation_to_next": None,
+                    })
+
+                # 7. Predecessors in replacement chain
+                if longest_path:
+                    path_nodes = list(longest_path.nodes)
+                    path_rels = list(longest_path.relationships)
+                    for i in range(1, len(path_nodes)):
+                        node = path_nodes[i]
+                        rel_type = path_rels[i].type if i < len(path_rels) else None
+                        timeline.append({
+                            "doc_number": node.get("doc_number") or node.get("id"),
+                            "id": node.get("id"),
+                            "effective_date": node.get("effective_date") or node.get("date") or "unknown",
+                            "status": node.get("status", "OUTDATED"),
+                            "relation_to_next": rel_type,
+                        })
+
+                return timeline
         except Exception as e:
             logger.error(f"Failed to retrieve legal timeline for {doc_number}: {e}")
-        return []
+            return []
 
     async def get_document_relations(self, doc_id: str):
         query = """
@@ -230,6 +334,15 @@ class Neo4jRepository:
 
         try:
             async with self._driver.session() as session:
+                # Step 0: Cleanup legacy / orphan amendment nodes
+                await session.run(
+                    """
+                    MATCH (d:Document)
+                    WHERE d.id IN ['VBPL/1/2023/QCVN-06', 'VBPL/1/2026/QCVN-04']
+                    DETACH DELETE d
+                    """
+                )
+
                 # Step 1: Upsert Document nodes
                 for b in bundles:
                     doc_id = (
@@ -363,17 +476,36 @@ class Neo4jRepository:
                         seen_amends.add(amd_id)
 
                         amd_title = amd.get("title", "") if isinstance(amd, dict) else ""
+                        amd_doc_num = (
+                            amd.get("document_number", "")
+                            if isinstance(amd, dict)
+                            else ""
+                        )
+                        if not amd_doc_num:
+                            m_num = re.search(r"(\d+/\d{4}/(?:TT|QĐ)-[A-ZĐ]+)", amd_id) or re.search(r"(\d+/\d{4}/(?:TT|QĐ)-[A-ZĐ]+)", amd_title)
+                            if m_num:
+                                amd_doc_num = m_num.group(1)
+                            else:
+                                amd_doc_num = amd_title
+
+                        doc_type = "Thông tư" if "TT-" in amd_doc_num else ("Quyết định" if "QĐ-" in amd_doc_num else "Sửa đổi bổ sung")
+
                         await session.run(
                             """
                             MERGE (amending:Document {id: $amd_id})
                             ON CREATE SET amending.status = 'ACTIVE',
-                                          amending.doc_type = 'Sửa đổi bổ sung',
-                                          amending.doc_number = $amd_title
+                                          amending.doc_type = $doc_type,
+                                          amending.doc_number = $amd_doc_num,
+                                          amending.title = $amd_title
+                            ON MATCH SET amending.doc_number = CASE WHEN amending.doc_number IS NULL OR amending.doc_number = '' OR amending.doc_number CONTAINS 'Sửa đổi' THEN $amd_doc_num ELSE amending.doc_number END,
+                                         amending.doc_type = CASE WHEN amending.doc_type IS NULL OR amending.doc_type = '' OR amending.doc_type = 'Sửa đổi bổ sung' THEN $doc_type ELSE amending.doc_type END
                             MERGE (base:Document {id: $base_id})
                             MERGE (amending)-[:AMENDS]->(base)
                             """,
                             amd_id=amd_id,
                             base_id=base_id,
+                            amd_doc_num=amd_doc_num,
+                            doc_type=doc_type,
                             amd_title=amd_title,
                         )
                         amends_created += 1
@@ -406,6 +538,53 @@ class Neo4jRepository:
                             target_id=target_id,
                         )
                         amends_created += 1
+
+                # Step 3.5: Create [:PROMULGATES] relationships (Circular/Decision -> Technical Regulation/Standard)
+                promulgates_created = 0
+                for b in bundles:
+                    base_id = (
+                        getattr(b, "canonical_id", None)
+                        or getattr(b, "id", None)
+                        or (b.get("canonical_id") if isinstance(b, dict) else None)
+                        or (b.get("id") if isinstance(b, dict) else None)
+                    )
+                    prom_raw = (
+                        getattr(b, "canonical_promulgated_by", None)
+                        or getattr(b, "promulgated_by", None)
+                        or (b.get("canonical_promulgated_by") if isinstance(b, dict) else None)
+                        or (b.get("promulgated_by") if isinstance(b, dict) else None)
+                    )
+                    if not prom_raw or not base_id:
+                        continue
+
+                    prom_id = self._canonicalize_doc_id(str(prom_raw), id_map)
+                    if not prom_id or prom_id == base_id:
+                        continue
+
+                    m_num = re.search(r"(\d+/\d{4}/(?:TT|QĐ)-[A-ZĐ]+)", prom_id) or re.search(r"(\d+/\d{4}/(?:TT|QĐ)-[A-ZĐ]+)", str(prom_raw))
+                    prom_doc_num = m_num.group(1) if m_num else str(prom_raw)
+                    doc_type = "Thông tư" if "TT-" in prom_doc_num else ("Quyết định" if "QĐ-" in prom_doc_num else "Văn bản QPPL")
+                    prom_title = f"{doc_type} {prom_doc_num} ban hành {getattr(b, 'document_number', base_id)}"
+
+                    await session.run(
+                        """
+                        MERGE (promulgator:Document {id: $prom_id})
+                        ON CREATE SET promulgator.status = 'ACTIVE',
+                                      promulgator.doc_type = $doc_type,
+                                      promulgator.doc_number = $prom_doc_num,
+                                      promulgator.title = $prom_title
+                        ON MATCH SET promulgator.doc_number = CASE WHEN promulgator.doc_number IS NULL OR promulgator.doc_number = '' THEN $prom_doc_num ELSE promulgator.doc_number END,
+                                     promulgator.doc_type = CASE WHEN promulgator.doc_type IS NULL OR promulgator.doc_type = '' THEN $doc_type ELSE promulgator.doc_type END
+                        MERGE (base:Document {id: $base_id})
+                        MERGE (promulgator)-[:PROMULGATES]->(base)
+                        """,
+                        prom_id=prom_id,
+                        base_id=base_id,
+                        prom_doc_num=prom_doc_num,
+                        doc_type=doc_type,
+                        prom_title=prom_title,
+                    )
+                    promulgates_created += 1
 
                 # Step 4: Create [:GUIDES] relationships
                 guides_created = 0
@@ -460,6 +639,7 @@ class Neo4jRepository:
             "nodes_synced": nodes_synced,
             "replaces_created": replaces_created,
             "amends_created": amends_created,
+            "promulgates_created": promulgates_created,
             "guides_created": guides_created,
         }
 
