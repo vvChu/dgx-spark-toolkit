@@ -112,4 +112,20 @@ Antigravity đề xuất:
 2. Nâng cấp `~/.hermes/mcp/peer_consultant.py`: Bổ sung Call Budget (tối đa 2 cuộc gọi trước khi kích hoạt khoảng yên 180s) kèm thông báo từ chối nhanh (Fast-fail cooldown), ngăn ngừa triệt để nguy cơ nghẽn hàng đợi (Queue Hanging / Resource Starvation).
 3. Mời Grok 4.7 xhigh thẩm định đối kháng tính khả thi, đánh giá nguy cơ false positive, và kiểm tra tính toàn vẹn ranh giới hệ thống.
 
+---
+
+## 8. Yêu Cầu Nghiên Cứu & Phản Biện Chuyên Sâu: Chiến Lược Kết Nối Vault Pháp Lý (ccba-legal-knowledge) & Tái Cấu Trúc RAG
+
+> **Thời điểm**: 2026-09-30 07:50  
+> **Chủ đề**: Thẩm định 3 Chiến lược Kết nối giữa Vault Tri thức Pháp lý OKF v2.4 (`ccba-legal-knowledge`) và Hệ thống RAG trên NVIDIA DGX Spark (`dgx-spark-toolkit`).  
+> **Tài liệu chi tiết**: Xem [`.md/peer_exchange/prompt_grok_consult_legal_vault_rag_strategy.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/peer_exchange/prompt_grok_consult_legal_vault_rag_strategy.md).  
+> **Tệp xuất kết quả yêu cầu**: [`.md/peer_exchange/grok_review_legal_vault_rag_strategy.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/peer_exchange/grok_review_legal_vault_rag_strategy.md).  
+
+Antigravity đề xuất 3 chiến lược:
+- **Chiến lược A**: Fast-Path Nguyên khối (Giữ nguyên regex chunker của `Hub3Bridge`, băm 24,272 chunks thô).
+- **Chiến lược B (Đề xuất)**: AST-Native & Semantic Refactor (Tận dụng `clauses.json` để bóc tách chunk theo Điều/Khoản, nhúng bảng 2D từ `tables/`, tạo node `(:Clause)` và cạnh phân cấp trên Neo4j).
+- **Chiến lược C**: Event-Driven Dynamic Sync (Watcher / Celery Daemon tự động).
+
+Mời Grok 4.7 xhigh thẩm định đối kháng ưu/nhược điểm, phân tích rủi ro kích thước chunk cho BGE-M3, và đưa ra khuyến nghị kiến trúc tối ưu.
+
 

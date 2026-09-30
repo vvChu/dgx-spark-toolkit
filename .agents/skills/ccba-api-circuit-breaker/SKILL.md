@@ -30,9 +30,6 @@ triggers:
 - retry
 - auto downgrade
 - soft cooldown
-- quota probe
-- fail closed
-- account re-enable
 ---
 
 # API Circuit Breaker
@@ -107,12 +104,22 @@ LLM Agents hoặc debugger tự động (`mock-debugger`) có thể parse trực
 1. Đọc trường `recovery_suggestion` để biết cách xử lý tiếp theo.
 2. Tự động chuyển đổi model LLM dự phòng hoặc trì hoãn/tắt luồng an toàn.
 
+### Cơ chế Kháng lỗi Ngân sách LiteLLM & Local Fallback (RULE-2.12)
+LiteLLM Gateway v1.83+ trên Server Spark trả về ngoại lệ ngân sách đa định dạng (cả JSON structured `{"type": "budget_exceeded"}` lẫn chuỗi thô `Budget has been exceeded! ...`). Circuit Breaker nhận diện chuẩn xác thông qua kiểm tra đồng thời:
+```python
+is_budget_error = "budget" in str(e).lower() and "exceeded" in str(e).lower()
+```
+Khi phát hiện lỗi ngân sách:
+- **Fast-Fail tức thì:** Circuit lập tức ngắt sang `CircuitState.OPEN` mà không chờ số lần lỗi đạt `failure_threshold`, đồng thời bỏ qua thời gian `backoff_seconds`.
+- **Cảnh báo chuẩn:** Xuất JSON mã lỗi `CCBAErrorCode.CIRCUIT_BREAKER_OPEN` ra `stderr` khuyến nghị chuyển đổi sang mô hình cục bộ không tốn phí (`qwen-local-primary` / Ollama Qwen 35B).
+- **Chống Retry vô hạn:** Kết hợp `cache_rejected()` để bỏ qua item gây cạn quota ở các vòng lặp tiếp theo.
+
 ---
 
 ## Centralized Gateway (:8090) & Soft Cooldown Auto-Downgrade Pattern
 
 ### Kiến trúc Tập Trung tại Gateway Cổng :8090
-Toàn bộ danh mục mô hình phục vụ ứng dụng người dùng (kể cả Gemini Flash High, Claude Sonnet 4.6 Thinking, Claude Opus 4.6 Thinking và local Qwen) được cung cấp **tập trung tại Gateway duy nhất cổng `:8090`** trên Server Spark (`http://100.83.192.30:8090/v1`). Dịch vụ Antigravity Proxy (cổng `:8045`) đóng vai trò là upstream quota pool provider cho các tài khoản Gemini, được quản lý và bảo vệ tự động bởi ChatOps và Smart Watchdog.
+Toàn bộ danh mục mô hình (kể cả Gemini Flash High, Claude Sonnet 4.6 Thinking, Claude Opus 4.6 Thinking và local Qwen) được cung cấp **tập trung tại Gateway duy nhất cổng `:8090`** trên Server Spark (`http://100.83.192.30:8090/v1` <!-- ccba:allow-raw-ip -->). Không còn phân tách endpoint hay proxy phụ trợ trên cổng `:8045`.
 
 ### Bối cảnh & Vấn đề
 Khi một pipeline LLM gọi các mô hình reasoning chuyên biệt (như `claude-opus-4-6`, `claude-sonnet-4-6-thinking`) qua AI Gateway:
@@ -180,68 +187,8 @@ Khi cờ `was_downgraded == True`, lớp điều phối (Coordinator/UI) BẮT B
 ### Ưu điểm Cốt Lõi
 1. **Zero User Interruption**: Người dùng không bao giờ nhận lỗi 503/429 hay màn hình trắng; luôn có phản hồi trong 2-4 giây.
 2. **Self-Healing Loop**: Ngay khi hết 30 giây cooldown, request tiếp theo sẽ tự động thăm dò lại mô hình chính trên Cổng `:8090` mà không cần người dùng can thiệp thủ công.
-3. **Unified Application Gateway**: Toàn bộ lưu lượng ứng dụng đi qua cổng `:8090`, với Antigravity Proxy cổng `:8045` hoạt động như một upstream pool được giám sát chặt chẽ.
+3. **Unified Single Gateway**: Toàn bộ lưu lượng đi qua cổng duy nhất `:8090`, loại bỏ hoàn toàn việc phân mảnh proxy hoặc phụ thuộc vào port 8045.
 4. **Auditability**: Mọi sự kiện giáng cấp đều được ghi log rõ ràng kèm lý do mã lỗi HTTP.
-
----
-
-## Dual-Level Quota Schema & Fail-Closed Predicate (RULE-1.17)
-
-### Bối cảnh & Rủi ro Fail-Open
-Khi thăm dò hạn mức tài khoản qua Admin API (`GET /api/accounts/{id}/quota`), phản hồi JSON có thể mang schema phẳng `QuotaData` (cờ `is_forbidden` ở root level) hoặc schema lồng `{"quota": {"is_forbidden": ...}}`. Nếu kiểm tra thiếu chặt chẽ hoặc duyệt từng tầng rồi trả về `True` ngay khi gặp `False` đầu tiên, hệ thống sẽ rơi vào lỗ hổng **Fail-Open** đối với payload xung đột như `{"is_forbidden": true, "quota": {"is_forbidden": false}}`.
-
-### Predicate Tất Định (Strict Fail-Closed Contract)
-Hàm kiểm định `quota_probe_allows_toggle` được chuẩn hóa và thực thi đồng nhất trong cả ChatOps Daemon (`scripts/chatops_daemon.py`) và Smart Watchdog (`scripts/smart_watchdog.py`):
-
-```python
-from typing import Any
-
-def quota_probe_allows_toggle(body: Any) -> bool:
-    """Validates quota probe response under dual-level schema.
-    
-    Precondition: Caller MUST ensure HTTP 200 OK and valid JSON parsing.
-    Contract:
-    1. Gathers all 'is_forbidden' values (root level and nested quota dict).
-    2. If NO 'is_forbidden' keys exist -> returns False (fail-closed).
-    3. If ANY 'is_forbidden' is True or not a strict boolean -> returns False.
-    4. Returns True ONLY if at least one explicit boolean False was found.
-    """
-    if not isinstance(body, dict) or not body:
-        return False
-
-    flags = []
-    # Root level check
-    if "is_forbidden" in body:
-        flags.append(body.get("is_forbidden"))
-
-    # Nested quota level check
-    quota = body.get("quota")
-    if isinstance(quota, dict) and "is_forbidden" in quota:
-        flags.append(quota.get("is_forbidden"))
-
-    if not flags:
-        return False
-
-    for flag in flags:
-        if flag is True or not isinstance(flag, bool):
-            return False
-
-    return any(flag is False for flag in flags)
-```
-
-### Ngữ Nghĩa Upstream Quota Probe
-* `GET /api/accounts/{id}/quota` là thao tác kích hoạt Antigravity-Manager gọi trực tiếp tới Google upstream để truy vấn trạng thái hạn mức mới nhất.
-* Antigravity-Manager CHỈ ghi `is_forbidden = false` khi bản thân Google phản hồi hạn mức sạch.
-* `GET /quota` là lệnh thăm dò Google, **tuyệt đối không phải là lệnh xóa cờ**. Chỉ khi Google xác nhận tài khoản đã sạch thì cờ mới được cập nhật.
-
-### Điều Phối Hạ Tầng & Quy Trình 4 Giai Đoạn (KISS Separation)
-Để tuân thủ nguyên tắc KISS và tránh trùng lặp tài liệu:
-* Toàn bộ quy trình **4-Stage Health Probe Gate** (Pre-classification $\to$ Quota Probe $\to$ Proxy Activation $\to$ Audit Telemetry),
-* Các rào chắn rate limit thực tế (1 account/cycle, cooldown 3600s, max 3 lần/24h, quorum guard dừng healer khi `active_count <= 2` hoặc `failed_ratio >= 0.5`),
-* Quy trình socket daemon 8045 và phân vùng Redis DB 5
-được quản lý và quy chuẩn tập trung tại kỹ năng chuyên trách hạ tầng:
-👉 **[ccba-infrastructure-manager](../ccba-infrastructure-manager/SKILL.md)**.
-
 
 ---
 
@@ -289,3 +236,9 @@ for item in items:
 * **Vòng 1 (Code-First Research):** Luôn đọc implementation thực tế và kiểm tra data flow end-to-end trước khi sửa đổi. Không suy đoán hành vi từ tên hàm hay docstring.
 * **Vòng 2 (Self-Adversarial Review):** Tự đặt câu hỏi: *Đề xuất này có thể SAI ở đâu?* Kiểm chứng tối thiểu 3 giả định cốt lõi bằng dữ liệu và kiểm thử thực tế trước khi bàn giao.
 * **Bảo tồn Invariants:** Không bao giờ xóa hoặc nới lỏng (weaken) các bài test hiện có để làm cho bài test vượt qua.
+
+## Chuẩn Mực Thiết Kế Mã Nguồn: KISS, Idempotency & Error Handling
+* **KISS (Keep It Simple, Stupid):** Ưu tiên giải pháp đơn giản nhất; không tạo abstraction/seam giả định khi chưa có ít nhất 2 adapter thực tế.
+* **Idempotency:** Mọi script thao tác tệp, database hay git worktree phải đảm bảo tính lũy kế an toàn (chạy nhiều lần cho ra cùng một kết quả vững chắc).
+* **Explicit Error Handling:** Xử lý ngoại lệ cụ thể (Specific Exceptions); nghiêm cấm sử dụng bare `except:` hoặc nuốt lỗi âm thầm.
+* **Type Hints & Docstrings:** Mọi hàm/phương thức public bắt buộc có type annotations đầy đủ và docstrings chuẩn mực.

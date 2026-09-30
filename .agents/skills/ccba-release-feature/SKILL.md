@@ -11,7 +11,7 @@ user-invocable: true
 disable-model-invocation: true
 command: /ccba-release-feature
 metadata:
-  version: "1.2.1"
+  version: "1.3.0"
   author: "CCBA Hub"
 triggers:
 - release
@@ -31,7 +31,15 @@ Quy trình tự động hóa tích hợp mã nguồn (merge), kiểm tra Copilot
      ```bash
      python scripts/validation/check_release_cleanliness.py --phase pre
      ```
-   - Nếu phát hiện tệp chưa commit, Agent **phải dừng quy trình ngay lập tức** để commit hoặc stash có chủ đích trước khi tiếp tục.
+   - Nếu phát hiện tệp chưa commit thuộc tác vụ song song khác:
+     1. Thực hiện stash có định danh rõ ràng kèm cả tệp untracked:
+        ```bash
+        git stash push -u -m "wip: concurrent work before release PR #[PR_NUMBER]"
+        ```
+     2. Xác nhận lại nhánh hiện tại trước khi kích hoạt Cổng 0.2:
+        ```bash
+        git branch --show-current
+        ```
 
 2. **Cổng 0.2 — Thực thi Kiểm thử Toàn diện Slow Integration Tests:**
    - **Tại Hub Platform (`ccba-agent-platform`):**
@@ -111,10 +119,22 @@ Quy trình tự động hóa tích hợp mã nguồn (merge), kiểm tra Copilot
      ```bash
      gh pr merge --squash --delete-branch
      ```
-   - *Tùy chọn Auto-Merge:* Nếu CI vẫn đang chạy nốt những giây cuối, có thể kích hoạt cờ tự động merge:
+   - *Cơ chế Xử lý Linh hoạt khi CI đang chạy:*
+     Kiểm tra thuộc tính `autoMergeAllowed` của repository trước khi áp dụng cờ `--auto`:
      ```bash
-     gh pr merge --squash --delete-branch --auto
+     # Bước 1: Tra cứu xem repo có cho phép auto-merge không:
+     gh repo view --json autoMergeAllowed --jq .autoMergeAllowed
      ```
+     - **Trường hợp A (Nếu kết quả là `true`):** Thực thi auto-merge:
+       ```bash
+       gh pr merge [PR_NUMBER] --squash --delete-branch --auto
+       ```
+     - **Trường hợp B (Nếu kết quả là `false` — như Hub hiện tại):** Giám sát CI qua Reactive Wakeup rồi merge:
+       ```bash
+       gh pr checks [PR_NUMBER] --watch
+       # Dừng gọi công cụ (End Turn). Khi Reactive Wakeup báo 100% checks xanh, thực hiện:
+       gh pr merge [PR_NUMBER] --squash --delete-branch
+       ```
    - Nếu `gh` chưa đăng nhập: Sử dụng `browser_subagent` truy cập trang PR, chờ CI và Review hoàn tất rồi chọn **Squash and merge** -> **Confirm squash and merge** -> **Delete branch**.
 
 ---
@@ -185,16 +205,42 @@ Quy trình tự động hóa tích hợp mã nguồn (merge), kiểm tra Copilot
    - Nếu PR giải quyết một issue cụ thể (ví dụ `#228`), kiểm tra tệp tin tương ứng tại `.md/knowledge/issues/issue-XXX.md`.
    - Cập nhật trường trạng thái trong metadata: `status: closed` (hoặc `state: closed`) kèm ghi chú liên kết PR đã merge.
 
-5. **Cập nhật Proposal Lifecycle & Compile Catalog (Post-Merge Governance):**
+5. **Cập nhật Proposal Lifecycle, Compile Catalog & Nộp PR Walkthrough (Post-Merge Governance):**
    - Nếu PR xuất phát từ một Proposal trong `.agents/proposals/`, cập nhật frontmatter tệp proposal tương ứng: `status: "merged"`, `merged_pr: "#[PR_NUMBER]"`, `merged_commit: "[HASH]"`, `merged_date: "[YYYY-MM-DD]"`.
    - Tái biên dịch Catalog SSoT:
      ```bash
      python scripts/governance/compile_catalog.py
      ```
-   - Commit cập nhật `walkthrough.md` và proposal lên `main`:
+   - *Quy trình Lưu trữ Walkthrough qua PR Riêng (Bắt buộc theo RULE-4.5 & Pre-Push Lock):*
+     Hook `pre-push` cấm tuyệt đối push trực tiếp lên `main` (`Direct push to 'main' is strictly prohibited!`). BẮT BUỘC lưu trữ tài liệu nghiệm thu qua nhánh và Pull Request riêng:
      ```bash
-     git add walkthrough.md .agents/proposals/ && git commit -m "docs(walkthrough): record release feature PR #[PR_NUMBER] completion and review matrix" && git push origin main
+     git checkout main && git pull origin main
+     git checkout -b docs/walkthrough-pr-[PR_NUMBER]
+     git add walkthrough.md .md/knowledge/reports/walkthrough.md .agents/proposals/
+     git commit -m "docs(walkthrough): record release feature PR #[PR_NUMBER] completion and review matrix"
+     git push origin docs/walkthrough-pr-[PR_NUMBER]
+     gh pr create --head docs/walkthrough-pr-[PR_NUMBER] --base main --title "docs(walkthrough): record release feature PR #[PR_NUMBER] completion" --body "Records the completion walkthrough for PR #[PR_NUMBER] into repository knowledge base."
+     # PR chỉ thay đổi tài liệu thuộc Two-way Door Fast-Path; chờ CI hoàn tất và merge:
+     gh pr checks --watch
+     gh pr merge --squash --delete-branch
+     git checkout main && git pull origin main
      ```
+
+6. **Khôi phục Tác Vụ Song Song Đã Stash (Guarded Post-Release Stash Recovery):**
+   - Kiểm tra xem Bước 0 có tạo stash cho PR hiện tại hay không:
+     ```bash
+     git stash list --grep="wip: concurrent work before release PR #[PR_NUMBER]"
+     ```
+   - Nếu tìm thấy mục stash tương ứng, xác định đúng chỉ mục định danh `stash@{N}` từ kết quả trên và khôi phục có rào chắn bảo vệ:
+     ```bash
+     git stash pop stash@{N}
+     ```
+     *(Lưu ý: Bắt buộc truyền rõ `stash@{N}` để tránh pop nhầm `stash@{0}` nếu danh sách có nhiều bản stash song song).*
+   - *Rào chắn chống xung đột (Conflict Escape Hatch):* Nếu `git stash pop stash@{N}` gặp xung đột merge (conflict), Agent **tuyệt đối không để working tree ở trạng thái unmerged hoặc chứa tệp untracked rò rỉ trên main**. BẮT BUỘC chạy ngay:
+     ```bash
+     git reset --merge && git clean -df
+     ```
+     Lệnh này sẽ dọn sạch cả xung đột file theo dõi và các tệp untracked vừa bung ra, khôi phục nhánh `main` về trạng thái sạch sẽ 100%, trong khi bản stash vẫn được giữ an toàn trong stash list. Sau đó, thông báo rõ ràng cho người dùng: *"Phát hiện xung đột khi pop stash lên main. Đã khôi phục trạng thái sạch của main bằng `git reset --merge && git clean -df`. Bản stash vẫn được bảo toàn; vui lòng tạo nhánh mới và áp dụng bằng `git checkout -b <branch> && git stash apply stash@{N}`"*.
 
 ---
 

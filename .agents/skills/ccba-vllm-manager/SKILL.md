@@ -2,14 +2,13 @@
 name: ccba-vllm-manager
 description: Quản trị mô hình vLLM trên DGX Spark Blackwell GB10, tối ưu hóa AOT Inductor cache, và cấu hình phân tách reasoning/tool parsers.
 applies_to:
-- Hạ tầng GPU
-- Mô hình cục bộ
-- Trích xuất dữ liệu
+- Phần mềm
+- Tác vụ Admin
 bundle: _software
 tier: domain
 command: /ccba-vllm-manager
 metadata:
-  version: "1.3.0"
+  version: "1.1.0"
   author: "CCBA Hub"
 gpi:
   s: 3.0
@@ -23,7 +22,6 @@ triggers:
 - inductor cache
 - dgx spark
 - local llm
-- thinking token
 ---
 
 # vLLM Manager
@@ -32,9 +30,9 @@ Kỹ năng này cung cấp cho Agents và Kỹ sư hạ tầng toàn bộ tri th
 
 | Model vật lý | Functional Alias | Port vLLM | Container | VRAM / RAM | Đặc tính kỹ thuật |
 |---|---|---|---|---|---|
-| Qwen3.6-35B-A3B-FP8 | `rag-core` / `local-coder` | 8004 | `qwen36b` | ~35GB (50G cap) | ✅ MoE + FlashInfer + Dual Parser (`qwen3` / `qwen3_coder` / auto-tool-choice) |
-| Qwen3.6-35B (Instruct) | `local-instruct` | 8090 (Gateway) | Via `qwen36b` | — | ✅ Forced `enable_thinking: False`, siêu tốc độ ~0.2s |
-| cyankiwi/Qwen3.5-9B-AWQ-4bit | `rag-light` | 8003 | `qwen3-9b` | ~10GB | ✅ Fast Fallback (AWQ 4-bit) |
+| Qwen3.6-35B-A3B-FP8 | `rag-core` / `local-coder` | 8004 | `qwen36b` | ~35GB (50G cap) | ✅ MoE + FlashInfer + Dual Parser (`qwen3` / `qwen3_coder`) |
+| Qwen3.6-35B (Instruct) | `local-instruct` | 8090 (Gateway) | Via `qwen36b` | — | ✅ Forced `enable_thinking: False`, siêu tốc độ ~0.4s |
+| Qwen2.5-Coder-7B AWQ | `rag-light` | 8003 | `qwen3-9b` | ~10GB | ✅ Fast Fallback (AWQ 4-bit) |
 
 > [!TIP]
 > **Quy tắc Bất Biến Routing**: LUÔN sử dụng functional aliases (`local-instruct`, `rag-core`, `local-coder`) thay vì nhúng tên mô hình vật lý trực tiếp vào mã nguồn.
@@ -46,7 +44,7 @@ Kỹ năng này cung cấp cho Agents và Kỹ sư hạ tầng toàn bộ tri th
 Dòng mô hình hybrid attention + MoE thế hệ mới (như Qwen 3.6) sử dụng `torch.compile` / Inductor graph để tăng tốc độ inference. Mỗi lần container vLLM khởi động lại, quá trình biên dịch đồ thị AOT mất từ **35 - 45 giây**.
 
 ### Chỉ dẫn Volume Mount Bắt Buộc
-BẮT BUỘC mount thư mục lưu trữ cache từ host vào container trong `docker-compose.yml`:
+BẮT BUỘC mount thư mục lưu trữ cache từ host vào container trong `docker-compose.yml` hoặc lệnh `docker run`:
 
 ```yaml
 # Trích đoạn docker-compose.yml dịch vụ vllm-36b
@@ -57,15 +55,18 @@ services:
     volumes:
       - /home/vvc/.cache/vllm:/root/.cache/vllm  # Persistent AOT Inductor Cache
       - /home/vvc/.cache/huggingface:/root/.cache/huggingface
-      - /home/vvc/models/Qwen3.6-35B-A3B-FP8:/models/model
     ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 ```
 
 > [!IMPORTANT]
-> **Quy tắc quyền sở hữu (UID & Cache Ownership)**:
-> - Container vLLM chạy dưới user `root`, nên các cây thư mục con do vLLM sinh ra bên trong `/home/vvc/.cache/vllm` (`torch_compile_cache`, `flashinfer_autotune_cache`, `modelinfos`) mang quyền `root:root 755`.
-> - User thường `vvc` (UID 1000) không thể dọn dẹp các tệp này nếu không có quyền `sudo`.
-> - **CẤM** chạy `chmod 777` lên thư mục cache. Khi thay đổi image digest (`docker pull`), hãy di chuyển thư mục cache cũ sang backup thay vì ghi đè trực tiếp.
+> Việc mount `/home/vvc/.cache/vllm:/root/.cache/vllm` giúp vLLM nạp lại đồ thị đã biên dịch ngay lập tức khi container khởi động lại, triệt tiêu thời gian chờ 40s.
 
 ---
 
@@ -74,30 +75,28 @@ services:
 Khi sử dụng Qwen 3.6 với cả khả năng suy luận (Reasoning CoT) và gọi công cụ (Tool / Function Calling), cấu hình parser phải tuân thủ nghiêm ngặt nguyên tắc phân định vai trò:
 
 ### Cấu hình phía vLLM Container
-Các tham số sống được quản trị tập trung tại `docker-compose.yml` (service `vllm-36b`) và file `.env` (`LOCAL_PRIMARY_MAX_MODEL_LEN=98304`, `LOCAL_PRIMARY_GPU_UTIL=0.60`).
-
-Bộ cờ bắt buộc cho vLLM 0.26+:
+Khởi động container với các cờ parser chuyên dụng:
 ```bash
---reasoning-parser qwen3 \
---tool-call-parser qwen3_coder \
---enable-auto-tool-choice \
---enable-prefix-caching \
---enable-chunked-prefill
+python3 -m vllm.entrypoints.openai.api_server \
+  --model /models/Qwen3.6-35B-A3B-FP8 \
+  --served-model-name qwen3.6-35b \
+  --reasoning-parser qwen3 \
+  --tool-call-parser qwen3_coder \
+  --max-model-len 24576 \
+  --gpu-memory-utilization 0.50 \
+  --kv-cache-dtype fp8
 ```
 
-> [!NOTE]
-> Bắt buộc phải có `--enable-auto-tool-choice` đi kèm `--tool-call-parser qwen3_coder` thì vLLM mới chấp nhận request có `tools`. Trong stream SSE, reasoning delta xuất hiện trước và tool calls delta xuất hiện sau khi thinking hoàn tất.
-
-### Vệ Sinh Tương Thích tại LiteLLM Gateway
-- LiteLLM chuyển tiếp các tham số lạ sang `extra_body`.
-- Khóa `tool_call_parser: openai` trong `litellm_config.yaml` là **dead config** đối với vLLM. Việc loại bỏ khóa này trên model `rag-core` là để bảo đảm vệ sinh tương thích phòng ngừa vLLM phiên bản sau kích hoạt `extra: forbid`.
+### Rào Chắn Tránh Xung Đột Double-Parser tại LiteLLM Gateway
+- Khi vLLM đã bật `--tool-call-parser qwen3_coder`, vLLM sẽ tự động bóc tách cú pháp gọi hàm `xml/hermes` và xuất ra JSON function calls chuẩn OpenAI.
+- **CẤM** cấu hình thêm `tool_call_parser: openai` tại file `config.yaml` của LiteLLM cho cùng endpoint vLLM này. Việc cấu hình trùng lặp sẽ gây xung đột kép (double-parser), làm méo mó schema tham số hàm trả về cho Client.
 
 ---
 
-## 3. Quản Lý Thinking Token & Phòng Thủ Cache
+## 3. Quản Lý Thinking Token & Fast Extraction
 
-Theo chuẩn mực **RULE-5.6**:
-- Khi cần trích xuất JSON hoặc sinh HyDE queries, BẮT BUỘC gọi qua alias `local-instruct` hoặc gửi:
+Theo chuẩn mực **RULE-5.8**:
+- Khi cần trích xuất JSON hoặc sinh HyDE queries (`max_tokens <= 512`), BẮT BUỘC gọi qua alias `local-instruct` hoặc gửi:
   ```json
   {
     "chat_template_kwargs": {
@@ -106,10 +105,6 @@ Theo chuẩn mực **RULE-5.6**:
   }
   ```
 - Không bao giờ dựa vào system prompt để yêu cầu mô hình reasoning ngừng suy nghĩ.
-
-> [!WARNING]
-> **Cảnh báo Bẫy Redis Cache**:
-> LiteLLM Redis Cache (DB 0, TTL 3600) **KHÔNG** đưa `chat_template_kwargs` vào khóa băm cache. Nếu một prompt vừa bị starvation dưới thinking bật, lần gọi sau dù đổi sang `enable_thinking: False` vẫn có thể trúng lại response rỗng cũ. Do đó, khi retry phải gửi kèm `caching: false` hoặc cơ chế cache-bust.
 
 ---
 
@@ -129,10 +124,10 @@ curl -s http://localhost:8090/v1/models -H "Authorization: Bearer $LITELLM_MASTE
 curl -s http://localhost:8004/metrics
 ```
 
-### Các chỉ số Prometheus chuẩn hóa (vLLM 0.26+)
+### Các chỉ số Prometheus trọng yếu
 - `vllm:num_requests_running`: Số lượng request đang xử lý đồng thời.
-- `vllm:kv_cache_usage_perc`: Tỷ lệ sử dụng bộ nhớ KV Cache (Gauge từ 0.0 đến 1.0, ngưỡng cảnh báo `0.95`).
-- `vllm:generation_tokens_total`: Tổng số tokens sinh ra (Counter tích lũy).
+- `vllm:gpu_cache_usage_perc`: Tỷ lệ sử dụng bộ nhớ KV Cache. Nếu $> 95\% \to$ có nguy cơ OOM hoặc trễ cao.
+- `vllm:avg_generation_throughput_toks_per_s`: Tốc độ sinh token thực tế (kỳ vọng $\ge 120-160$ tok/s trên Blackwell GB10).
 
 ---
 
@@ -142,10 +137,10 @@ curl -s http://localhost:8004/metrics
 ```bash
 # Khởi động lại container 35B để giải phóng KV cache
 docker restart qwen36b
-# Kiểm tra bộ nhớ thống nhất qua memory footprint
-nvidia-smi --query-compute-apps=process_name,used_memory --format=csv
+# Kiểm tra bộ nhớ thống nhất
+nvidia-smi
 ```
 
-### Sự cố 2: Thinking Token Starvation (JSON / Tool Call trả về rỗng)
-- **Hiện tượng**: `finish_reason: "length"`, `content: None` hoặc `""`, tool calls bị nuốt chửng do token reasoning dùng hết `max_tokens`.
-- **Khắc phục**: Chuyển sang gọi model alias `local-instruct` hoặc gửi `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` kèm `caching: false`.
+### Sự cố 2: Thinking Token Starvation (JSON trả về rỗng)
+- **Hiện tượng**: `finish_reason: "length"`, `content: None` hoặc `""`.
+- **Khắc phục**: Chuyển sang gọi model alias `local-instruct` hoặc thêm `"chat_template_kwargs": {"enable_thinking": false}`.
