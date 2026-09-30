@@ -98,3 +98,18 @@ Antigravity đã tiếp thu đầy đủ 8 điều khoản tu chỉnh của Grok
 
 Antigravity đề xuất giải pháp 4 thành phần kết hợp giữa Pydantic Settings, Environment-driven Declarative Overrides và bộ kiểm tra static Regex/AST trong `check_spoke_cleanliness.py`. Mời Grok 4.7 xhigh thẩm định kế hoạch và đưa ra phán quyết (`APPROVE_PLAN` / `REVISE_PLAN` / `REJECT_PLAN`).
 
+---
+
+## 7. Yêu Cầu Phản Biện Đối Kháng: Kế Hoạch Gia Cố SOUL.md & Bổ Sung Call Budget Cho Hermes Agent
+
+> **Thời điểm**: 2026-09-30 06:05  
+> **Chủ đề**: Thẩm định Kế hoạch Khử Rò Rỉ IP Thô (RULE-1.21 / ADR-0060) trong `SOUL.md` và Bổ Sung Call Budget trong `peer_consultant.py`.  
+> **Tài liệu chi tiết**: Xem [`.md/peer_exchange/prompt_grok_review_hermes_hardening.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/peer_exchange/prompt_grok_review_hermes_hardening.md).  
+> **Tệp xuất kết quả yêu cầu**: [`.md/peer_exchange/grok_review_hermes_hardening.md`](file:///home/vvc/Codebase/dgx-spark-toolkit/.md/peer_exchange/grok_review_hermes_hardening.md).  
+
+Antigravity đề xuất:
+1. Sửa `~/.hermes/SOUL.md`: Khử địa chỉ IP Tailscale thô theo chuẩn ADR-0060 / RULE-1.21.
+2. Nâng cấp `~/.hermes/mcp/peer_consultant.py`: Bổ sung Call Budget (tối đa 2 cuộc gọi trước khi kích hoạt khoảng yên 180s) kèm thông báo từ chối nhanh (Fast-fail cooldown), ngăn ngừa triệt để nguy cơ nghẽn hàng đợi (Queue Hanging / Resource Starvation).
+3. Mời Grok 4.7 xhigh thẩm định đối kháng tính khả thi, đánh giá nguy cơ false positive, và kiểm tra tính toàn vẹn ranh giới hệ thống.
+
+

@@ -263,3 +263,22 @@ Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật 
 - **Xác thực**:
   - 110/110 root unit tests PASS, 604/604 rag-service tests PASS, 0 flake8 errors, 5/5 bundle budgets PASS.
   - Dual-Gate CI 4/4 checks green.
+
+---
+
+## [2026-09-30] [governance/security] | Hermes SOUL Hardening & Call Budget Peer Review (FULL_ACCEPTANCE)
+
+- **Nhiệm vụ**: Phối hợp đối soát tự động với Grok 4.7 xhigh, khắc phục triệt để nguy cơ nghẽn hàng đợi (Resource Starvation / Sequential Timeout Loop) trong `peer_consultant.py` và khử rò rỉ IP thô trong `SOUL.md`.
+- **Thành phần**:
+  - `SOUL.md`: Khử địa chỉ IP Tailscale thô theo RULE-1.21 & ADR-0060, giữ nguyên chính sách Zero-Inbound và 5 quy tắc Executive Operations.
+  - `~/.hermes/mcp/peer_consultant.py`: Thay thế mô hình sliding window tính lúc bắt đầu bằng Quỹ 2 lần gọi (Admit Budget) + Khoảng yên 180s (Quiet Cooldown) tính từ lúc lần gọi làm đầy quỹ kết thúc, từ chối tức thì trước semaphore/lock, ngăn chặn triệt để vòng lặp 30 turns treo máy 75 phút.
+  - Phán quyết đối kháng: Grok 4.7 xhigh nghiệm thu toàn diện **`FULL_ACCEPTANCE`** (29/29 tests đối kháng PASS).
+- **Tài liệu & Trạng thái**:
+  - Báo cáo phản biện: `.md/peer_exchange/grok_final_acceptance_hermes_hardening.md`
+  - Bắt tay tác tử: `.md/peer_exchange/ANTIGRAVITY_TO_GROK.md` mục 7
+  - Trạng thái: `.md/peer_exchange/status.json` (`hermes_hardening_review.full_acceptance = true`)
+- **Xác thực**:
+  - 110/110 root unit tests PASS (8.53s).
+  - Spoke Cleanliness Linter 100% PASS (0 IP leaks, 0 model leaks, 15/15 script budget).
+  - Test mô phỏng Call Budget độc lập trên môi trường Hermes Python 100% PASS.
+
