@@ -238,6 +238,9 @@ def _resolve_candidate_hit(
     return None
 
 
+DEFAULT_TECHNICAL_EXCLUSION_FILTER: str = 'chunk_type not in ["amendment", "diff_matrix", "superseded", "instrument"]'
+
+
 def _build_result_item(entity: dict, text: str, score: float) -> dict:
     return {
         "text": text, "source": entity.get("source"), "page": entity.get("page", 0),
@@ -513,6 +516,12 @@ class SearchPipeline:
             filters.append(f'doc_date LIKE "{int(ctx.year)}%"')
         if ctx.doc_number:
             filters.append(f'doc_number == "{_sanitize_filter_value(ctx.doc_number)}"')
+
+        # Default exclusion filter for secondary/patch chunks to prevent technical corpus dilution
+        is_comparison_query = any(k in ctx.raw_query.lower() for k in ("so sánh", "đối chiếu", "thay đổi", "sửa đổi 1"))
+        if not is_comparison_query:
+            filters.append(DEFAULT_TECHNICAL_EXCLUSION_FILTER)
+
         ctx.filter_expr = " and ".join(filters) if filters else None
         ctx.cache_filter_key = ctx.filter_expr or ""
 

@@ -562,4 +562,28 @@ class TestStageRerankAndScore:
 
         assert [row["doc_number"] for row in ctx.top_results] == ["A", "B", "C"]
 
+    def test_prepare_intent_and_filters_chunk_type_exclusion(self):
+        milvus = MagicMock()
+        neo4j = MagicMock()
+        pipeline = SearchPipeline(milvus, neo4j)
+
+        # Standard technical query
+        ctx = SearchContext(raw_query="khoảng cách an toàn PCCC cho nhà cao tầng", use_cache=False)
+        pipeline._prepare_intent_and_filters(ctx)
+        assert ctx.filter_expr is not None
+        assert 'chunk_type not in ["amendment", "diff_matrix", "superseded", "instrument"]' in ctx.filter_expr
+        assert ctx.cache_filter_key == ctx.filter_expr
+
+    def test_prepare_intent_and_filters_comparison_query(self):
+        milvus = MagicMock()
+        neo4j = MagicMock()
+        pipeline = SearchPipeline(milvus, neo4j)
+
+        # Comparison query should NOT exclude amendments / diff matrices
+        ctx = SearchContext(raw_query="So sánh thay đổi giữa QCVN 06:2022 và Sửa đổi 1:2023", use_cache=False)
+        pipeline._prepare_intent_and_filters(ctx)
+        # Exclusion filter should not be present
+        if ctx.filter_expr:
+            assert 'chunk_type not in' not in ctx.filter_expr
+
 

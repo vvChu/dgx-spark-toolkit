@@ -184,8 +184,8 @@ class Neo4jRepository:
         query = """
         MATCH (d:Document)
         WHERE d.id CONTAINS $query_id
-        OPTIONAL MATCH (d)-[r:REPLACES|AMENDS|REFERENCES|GUIDES*1..3]->(target:Document)
-        OPTIONAL MATCH (source:Document)-[r2:REPLACES|AMENDS|GUIDES*1..3]->(d)
+        OPTIONAL MATCH (d)-[r:REPLACES|AMENDS|REFERENCES|GUIDES|PROMULGATES*1..3]->(target:Document)
+        OPTIONAL MATCH (source:Document)-[r2:REPLACES|AMENDS|REFERENCES|GUIDES|PROMULGATES*1..3]->(d)
         RETURN d.id as id,
                CASE WHEN d.status IS NOT NULL THEN d.status ELSE 'UNKNOWN' END as status,
                [rel in coalesce(r, []) | type(rel)] as out_rels, [t in coalesce(target, []) | t.id] as targets,

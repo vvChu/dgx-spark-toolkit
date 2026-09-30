@@ -9,7 +9,13 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from retrieval.embeddings.bge_m3_hybrid import BGE_M3_HybridEmbedding
-from retrieval.search_pipeline import SearchContext, SearchPipeline, get_tier0_cache, get_semantic_cache
+from retrieval.search_pipeline import (
+    DEFAULT_TECHNICAL_EXCLUSION_FILTER,
+    SearchContext,
+    SearchPipeline,
+    get_tier0_cache,
+    get_semantic_cache,
+)
 from retrieval.tier0_cache import Tier0ExactCache, compute_sha256_cache_key, format_redis_db3_url
 
 
@@ -180,7 +186,12 @@ class TestTier0SearchPipelineIntegration:
         tier0.clear()
 
         raw_query = "quy định chiều cao phòng cháy"
-        exact_key = compute_sha256_cache_key(raw_query, filter_expr=None, limit=5, use_reranker=True)
+        exact_key = compute_sha256_cache_key(
+            raw_query,
+            filter_expr=DEFAULT_TECHNICAL_EXCLUSION_FILTER,
+            limit=5,
+            use_reranker=True,
+        )
         cached_result = [{"text": "Điều 5", "score": 0.99, "source": "06_2022_QCVN"}]
         tier0.set(exact_key, cached_result)
 
@@ -210,12 +221,17 @@ class TestTier0SearchPipelineIntegration:
         semantic.clear()
 
         raw_query = "quy chuẩn xây dựng nhà chung cư"
-        exact_key = compute_sha256_cache_key(raw_query, filter_expr=None, limit=5, use_reranker=True)
+        exact_key = compute_sha256_cache_key(
+            raw_query,
+            filter_expr=DEFAULT_TECHNICAL_EXCLUSION_FILTER,
+            limit=5,
+            use_reranker=True,
+        )
         dummy_emb = np.array([0.1] * 1024, dtype=np.float32)
         cached_result = [{"text": "Điều 10", "score": 0.95, "source": "04_2021_QCVN"}]
 
-        # Seed semantic cache
-        semantic.set(raw_query, dummy_emb, cached_result)
+        # Seed semantic cache with exact filter key
+        semantic.set(raw_query, dummy_emb, cached_result, filter_key=DEFAULT_TECHNICAL_EXCLUSION_FILTER)
 
         milvus = MagicMock()
         neo4j = MagicMock()

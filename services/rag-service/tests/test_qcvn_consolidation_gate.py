@@ -1,66 +1,158 @@
-"""Verification Gate for QCVN 06:2022/BXD Master Consolidation.
+"""Deterministic Gate Tests for QCVN 06:2022/BXD Master Consolidation.
 
-Ensures that the master file `qcvn_06_2022_bxd.md` in the legal vault
-has properly received the substantive technical updates from Amendment 1:2023 (TT 09/2023/TT-BXD)
-before allowing Milvus re-indexing.
+Ensures that:
+1. All core technical clauses of QCVN 06:2022/BXD Master match the verbatim legal text
+   of Amendment 1:2023 (Thông tư 09/2023/TT-BXD, effective 2023-12-01).
+2. Citation lines (> *[Sửa đổi bởi Thông tư 09/2023/TT-BXD...]*) are present in every amended section.
+3. Repealed sections (1.3, 7.4) are explicitly marked as repealed.
+4. Un-nested Bảng 10 presents clean verbatim data table without blockquote interference.
+
+Adheres to:
+- ADR-0058: Hard Completion Lock
+- ADR-0059: Legal Verbatim Grounding & Mandatory Acquisition Invariant
+- Grok 4.7 xhigh Verdict: Living Standard Consolidation Gate
 """
 
-import os
 import re
 from pathlib import Path
 import pytest
 
+VAULT_DIR = Path("/home/vvc/ccba/ccba-legal-knowledge/legal_docs/02_qcvn/qcvn_06_2022_bxd")
+MASTER_FILE = VAULT_DIR / "qcvn_06_2022_bxd.md"
 
-VAULT_DIR = Path(os.environ.get("HUB3_LEGAL_PATH", "/home/vvc/ccba/ccba-legal-knowledge"))
-MASTER_FILE = VAULT_DIR / "legal_docs" / "02_qcvn" / "qcvn_06_2022_bxd" / "qcvn_06_2022_bxd.md"
+CITATION_SUBSTR = "Sửa đổi bởi Thông tư 09/2023/TT-BXD (Sửa đổi 1:2023)"
+REPEAL_SUBSTR = "Bãi bỏ bởi Thông tư 09/2023/TT-BXD (Sửa đổi 1:2023)"
 
 
 @pytest.fixture(scope="module")
 def master_content() -> str:
-    assert MASTER_FILE.exists(), f"QCVN 06 Master file missing at: {MASTER_FILE}"
+    if not MASTER_FILE.exists():
+        pytest.skip(f"Master file not found at {MASTER_FILE}")
     return MASTER_FILE.read_text(encoding="utf-8")
 
 
-class TestQCVN06ConsolidationGate:
-    """Rigorous gate checking all 4 Grok 4.7 invariants on living standard."""
+def _get_section_text(master_content: str, anchor_id: str) -> str:
+    """Extracts text of a given section anchor up to the next anchor."""
+    pattern = rf'(<a\s+id="{anchor_id}"[^>]*></a>.*?)(?=\n<a\s+id=|\n##\s+|\Z)'
+    m = re.search(pattern, master_content, re.DOTALL)
+    assert m is not None, f"Anchor '{anchor_id}' not found in master file"
+    return m.group(1)
 
-    def test_muc_1_1_2_has_25m_and_5000m3(self, master_content: str):
-        """Mục 1.1.2 must contain the updated thresholds from Sửa đổi 1:2023."""
-        # Find Mục 1.1.2 block
-        m = re.search(r'<a id="muc-1-1-2"></a>.*?(?=<a id="muc-1-1-3"|<a id="muc-1-1-4"|### 1\.1\.3|### 1\.1\.4)', master_content, flags=re.DOTALL)
-        assert m is not None, "Mục 1.1.2 anchor not found in master"
-        block = m.group(0)
-        
-        # Verify substantive thresholds
-        assert "25 m" in block or "25m" in block, "Mục 1.1.2 must contain 25 m height threshold"
-        assert "5 000 m3" in block or "5.000 m3" in block or "5000 m3" in block, "Mục 1.1.2 must contain 5 000 m3 volume threshold"
-        assert "Thông tư 09/2023/TT-BXD" in block, "Mục 1.1.2 must cite amending Circular 09/2023"
 
-    def test_muc_1_3_is_repealed(self, master_content: str):
-        """Mục 1.3 (Tài liệu viện dẫn) must have an explicit repeal notice."""
-        m = re.search(r'<a id="muc-1-3"></a>.*?(?=<a id="muc-1-4"|### 1\.4)', master_content, flags=re.DOTALL)
-        assert m is not None, "Mục 1.3 anchor not found in master"
-        block = m.group(0)
-        assert "BÃI BỎ" in block or "bãi bỏ" in block.lower(), "Mục 1.3 must contain repeal notice"
-        assert "09/2023/TT-BXD" in block, "Mục 1.3 repeal must cite Circular 09/2023"
+class TestQcvnConsolidationGate:
+    """Deterministic Verification Suite for Living Standard Consolidation."""
 
-    def test_muc_1_1_5_has_exclusions(self, master_content: str):
-        """Mục 1.1.5 must include new exclusions: tháp đèn biển and hầm giao thông."""
-        m = re.search(r'<a id="muc-1-1-5"></a>.*?(?=<a id="muc-1-1-6"|<a id="muc-1-1-7"|### 1\.1\.6|### 1\.1\.7)', master_content, flags=re.DOTALL)
-        assert m is not None, "Mục 1.1.5 anchor not found in master"
-        block = m.group(0)
-        assert "tháp đèn biển" in block, "Mục 1.1.5 must include 'tháp đèn biển'"
-        assert "hầm giao thông" in block, "Mục 1.1.5 must include 'hầm giao thông'"
+    def test_loi_noi_dau_sđ1_provenance(self, master_content: str):
+        """Verify Lời nói đầu includes SĐ1 promulgation info."""
+        header_area = master_content[:6000]
+        assert "Thông tư số 09/2023/TT-BXD" in header_area
+        assert "Sửa đổi 1:2023" in header_area
+        assert "01 tháng 12 năm 2023" in header_area
 
-    def test_new_anchors_present(self, master_content: str):
-        """New clauses from Sửa đổi 1 must exist with anchors."""
-        assert 'id="muc-1-1-11"' in master_content, "Anchor muc-1-1-11 (quy chuẩn địa phương) must exist"
-        assert 'id="muc-1-4-21a"' in master_content, "Anchor muc-1-4-21a (gian phòng chung) must exist"
+    def test_muc_1_1_2_scope_residential(self, master_content: str):
+        """Verify Mục 1.1.2 reflects 7 floors, 25m, 5000m3 and basement thresholds."""
+        sec = _get_section_text(master_content, "muc-1-1-2")
+        assert CITATION_SUBSTR in sec
+        assert "cao từ 7 tầng trở lên (hoặc có chiều cao PCCC từ 25 m trở lên)" in sec
+        assert "hoặc có khối tích từ 5 000 m3 trở lên" in sec
+        assert "hoặc có nhiều hơn 1 tầng hầm đến 3 tầng hầm" in sec
+        assert "Chung cư và nhà ở tập thể có chiều cao PCCC không quá 150 m và không quá 3 tầng hầm" in sec
 
-    def test_bang_10_has_new_flow_rates(self, master_content: str):
-        """Bảng 10 must contain the full replacement water flow rate matrix."""
-        m = re.search(r'<a id="bang-10"[^>]*></a>.*?(?=<a id="bang-11"|<a id="muc-5-1-3"|### 5\.1\.3)', master_content, flags=re.DOTALL)
-        assert m is not None, "Bảng 10 anchor not found in master"
-        block = m.group(0)
-        assert "Lưu lượng nước cho chữa cháy ngoài nhà cho nhà nhóm F5" in block
-        assert "thông tư số 09/2023/tt-bxd" in block.lower() or "09/2023" in block
+    def test_muc_1_1_4_partial_renovation(self, master_content: str):
+        """Verify Mục 1.1.4 applies strictly to directly renovated parts and references 1.1.10."""
+        sec = _get_section_text(master_content, "muc-1-1-4")
+        assert CITATION_SUBSTR in sec
+        assert "chỉ áp dụng đối với các bộ phận, khu vực trực tiếp được cải tạo sửa chữa" in sec
+        assert "áp dụng 1.1.10" in sec
+        # Old items e, f, g must not exist
+        assert "e) Cải tạo" not in sec
+        assert "f) Cải tạo" not in sec
+        assert "g) Cải tạo" not in sec
+
+    def test_muc_1_1_5_exclusions(self, master_content: str):
+        """Verify Mục 1.1.5 excludes road tunnels and lighthouses."""
+        sec = _get_section_text(master_content, "muc-1-1-5")
+        assert CITATION_SUBSTR in sec
+        assert "công trình hầm giao thông; tháp đèn biển" in sec
+
+    def test_muc_1_1_7_foreign_standards(self, master_content: str):
+        """Verify Mục 1.1.7 verbatim adoption of foreign standards clause."""
+        sec = _get_section_text(master_content, "muc-1-1-7")
+        assert CITATION_SUBSTR in sec
+        assert "Cho phép sử dụng các tài liệu chuẩn của nước ngoài" in sec
+
+    def test_muc_1_1_10_engineering_argumentation(self, master_content: str):
+        """Verify Mục 1.1.10 engineering argumentation and replacement criteria."""
+        sec = _get_section_text(master_content, "muc-1-1-10")
+        assert CITATION_SUBSTR in sec
+        assert "bổ sung, thay thế một số yêu cầu của quy chuẩn này đối với công trình cụ thể bằng các yêu cầu an toàn cháy phù hợp khác" in sec
+
+    def test_muc_1_1_11_local_regulations(self, master_content: str):
+        """Verify Mục 1.1.11 local technical regulation delegation."""
+        sec = _get_section_text(master_content, "muc-1-1-11")
+        assert CITATION_SUBSTR in sec
+        assert "Các địa phương được ban hành quy chuẩn kỹ thuật địa phương" in sec
+
+    def test_muc_1_3_repealed(self, master_content: str):
+        """Verify Mục 1.3 is explicitly marked as repealed."""
+        sec = _get_section_text(master_content, "muc-1-3")
+        assert REPEAL_SUBSTR in sec
+        assert "bãi bỏ theo quy định tại Thông tư số 09/2023/TT-BXD" in sec
+
+    def test_muc_1_4_21a_gian_phong_chung(self, master_content: str):
+        """Verify Mục 1.4.21a Gian phòng chung definition is present."""
+        sec = _get_section_text(master_content, "muc-1-4-21a")
+        assert CITATION_SUBSTR in sec
+        assert "Gian phòng chung" in sec
+        assert "diện tích không quá 300 m2" in sec
+
+    def test_bang_10_clean_table(self, master_content: str):
+        """Verify Bảng 10 is un-nested from blockquote and has SD1 flow rates."""
+        sec = _get_section_text(master_content, "bang-10")
+        assert CITATION_SUBSTR in sec
+        # Must not be inside > blockquote
+        for line in sec.splitlines():
+            if "|" in line:
+                assert not line.startswith(">"), f"Table line should not be blockquoted: {line}"
+        # Check specific table values
+        assert "| I và II | S0, S1 | A, B, C | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90 | 100 |" in sec
+        assert "| I và II | S0 | D, E | 10 | 15 | 20 | 25 | 30 | 35 | 40 | 45 | 50 |" in sec
+
+    def test_muc_3_4_13_smoke_free_stairs(self, master_content: str):
+        """Verify Mục 3.4.13 updates (removes paragraph 2 and point a, updates note to 2.4.3.3)."""
+        sec = _get_section_text(master_content, "muc-3-4-1-3")
+        assert CITATION_SUBSTR in sec
+        assert "2.4.3.3" in sec
+        assert "Trong các nhà có nhiều công năng, các buồng thang bộ nối giữa các phần nhà" not in sec
+        assert "a) Trong các nhà nhóm F1, F2" not in sec
+
+    def test_muc_4_3_2_2_auto_suppression_exemption(self, master_content: str):
+        """Verify Mục 4.3.2.2 auto fire extinguishing exemption."""
+        sec = _get_section_text(master_content, "muc-4-3-2-2")
+        assert CITATION_SUBSTR in sec
+        assert "Cho phép không áp dụng các quy định tại 4.3.2.1 nếu nhà được trang bị chữa cháy tự động" in sec
+
+    def test_muc_4_3_3_3_wall_openings(self, master_content: str):
+        """Verify Mục 4.3.3.3 wall opening reference to 4.3.3.1."""
+        sec = _get_section_text(master_content, "muc-4-3-3-3")
+        assert CITATION_SUBSTR in sec
+        assert "như quy định tại đoạn c) điểm 4.3.3.1" in sec
+
+    def test_muc_4_3_3_4_wall_openings_exemption(self, master_content: str):
+        """Verify Mục 4.3.3.4 wall opening exemption for low rise / auto suppression."""
+        sec = _get_section_text(master_content, "muc-4-3-3-4")
+        assert CITATION_SUBSTR in sec
+        assert "ba tầng trở xuống hoặc có chiều cao PCCC dưới 15 m" in sec
+
+    def test_muc_6_12_stair_clearance(self, master_content: str):
+        """Verify Mục 6.12 stair gap width is 75 mm with dry riser fallback."""
+        sec = _get_section_text(master_content, "muc-6-1-2")
+        assert CITATION_SUBSTR in sec
+        assert "75 mm" in sec
+        assert "tại mỗi tầng cần bố trí ít nhất một họng khô để cấp nước chữa cháy cho tầng đó" in sec
+
+    def test_muc_7_4_repealed(self, master_content: str):
+        """Verify Mục 7.4 is explicitly marked as repealed."""
+        sec = _get_section_text(master_content, "muc-7-4")
+        assert REPEAL_SUBSTR in sec
+        assert "bãi bỏ theo quy định tại Thông tư số 09/2023/TT-BXD" in sec

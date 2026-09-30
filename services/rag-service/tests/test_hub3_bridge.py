@@ -761,6 +761,39 @@ class TestNeo4jGraphIntegration:
         replaces_call = [c for c in all_calls if "[:REPLACES]" in str(c)][0]
         assert replaces_call[1]["target_id"] == "VBPL/TCVN_4601_1988"
 
+    def test_sync_hub3_topology_promulgates(self, mock_neo4j_repo):
+        """Verify sync_hub3_topology creates PROMULGATES relationships."""
+        repo, session = mock_neo4j_repo
+
+        bundle = Hub3BundleInfo(
+            slug="qcvn_06_2022_bxd",
+            category="02_qcvn",
+            registry_id="qcvn_06_2022_bxd",
+            document_number="QCVN 06:2022/BXD",
+            title="QCVN 06:2022/BXD",
+            doc_type="Quy chuẩn",
+            issued_by="BXD",
+            issued_date="2022-11-30",
+            effective_date="2023-01-16",
+            status="active",
+            validity_status="ACTIVE",
+            bundle_path="legal_docs/02_qcvn/qcvn_06_2022_bxd/",
+            bundle_dir="/tmp",
+            markdown_path="/tmp/qcvn06.md",
+            canonical_id="VBPL/QCVN_06_2022/BXD",
+            file_name="qcvn_06_2022_bxd.pdf",
+            promulgated_by="06/2022/TT-BXD",
+        )
+
+        res = asyncio.run(repo.sync_hub3_topology([bundle]))
+        assert res["nodes_synced"] == 1
+        assert res["promulgates_created"] == 1
+
+        all_calls = session.run.call_args_list
+        prom_calls = [c for c in all_calls if "[:PROMULGATES]" in str(c)]
+        assert len(prom_calls) == 1
+        assert "MERGE (promulgator)-[:PROMULGATES]->(base)" in str(prom_calls[0])
+
 
 # ---------------------------------------------------------------------------
 # Test Suite: IngestionQueue Integration
