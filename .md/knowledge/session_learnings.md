@@ -54,6 +54,7 @@
 
 - `RULE-3.1 (Verbatim Grounding & Provenance)`: Mọi knowledge bundle/văn bản pháp luật phải gắn mã băm SHA-256 đối chiếu công báo gốc, cấm sinh giả định/mock điều khoản.
 - `RULE-3.2 (Hard Cryptographic Ingestion Gate)`: Pipeline nạp văn bản (`ingest:queue` / Milvus) bắt buộc chặn mã băm SHA-256 (ADR-0059); chặn đứng gói `TAMPERED`.
+- `RULE-3.3 (Living Standard & Tri-Layer Isolation)`: Không gian vector kỹ thuật chỉ chứa một câu chữ đang có hiệu lực cho mỗi mục. Bản vá vi sai (amendment, diff_matrix) đứng ngoài tra cứu kỹ thuật qua bộ lọc mặc định và đồ thị `[:PROMULGATES|AMENDS]`.
 
 ---
 
