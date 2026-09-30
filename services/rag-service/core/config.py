@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # Milvus Configuration
     MILVUS_HOST: str = "milvus-standalone"
     MILVUS_PORT: int = 19530
-    MILVUS_COLLECTION: str = "legal_docs_v11"
+    MILVUS_COLLECTION: str = "legal_docs_v12_okf"
 
     # Neo4j Configuration
     # Accepts both NEO4J_PASSWORD and the legacy NEO4J_PASS env var name

@@ -7,6 +7,7 @@ services:
       - CORS_ALLOWED_ORIGINS=*
       - MILVUS_HOST=milvus-standalone
       - MILVUS_PORT=19530
+      - MILVUS_COLLECTION=${MILVUS_COLLECTION:-legal_docs_v12_okf}
       - VLLM_API_BASE=${VLLM_API_BASE:-http://ai-gateway:4000/v1}
       - VLLM_MODEL=${VLLM_MODEL_CORE:-rag-core}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
@@ -122,6 +123,7 @@ services:
       - SOURCE_DIR=${SOURCE_DIR:-/app/data/legal_test}
       - MILVUS_HOST=milvus-standalone
       - MILVUS_PORT=19530
+      - MILVUS_COLLECTION=${MILVUS_COLLECTION:-legal_docs_v12_okf}
       - EMBEDDING_MODEL=BAAI/bge-m3
       - VLLM_API_BASE=http://ai-gateway:4000/v1
       - OMP_NUM_THREADS=4

@@ -507,7 +507,8 @@ class TestProcessedDocumentConversion:
             assert proc_doc.metadata.doc_status == proc_doc.metadata.validity_status
             for idx, c in enumerate(proc_doc.chunks, start=1):
                 assert c.doc_id == b.canonical_id
-                assert c.chunk_id == f"{b.canonical_id}::p1::c{idx}"
+                assert c.chunk_id.startswith(f"{b.canonical_id}::p1::")
+                assert len(c.chunk_id) > len(f"{b.canonical_id}::p1::")
                 assert c.validity_status == proc_doc.metadata.validity_status
 
     def test_fast_path_chunker_no_llm_call(self, hub3_bridge: Hub3Bridge):
@@ -1171,4 +1172,94 @@ class TestSyncHub3BundlesCLI:
 
             ret = sync_cli.main(["--verify-sha", "--dry-run"])
             assert ret == 0
+
+
+# ---------------------------------------------------------------------------
+# Test Suite: Verdict B-Prime Chunking & Relationships
+# ---------------------------------------------------------------------------
+
+class TestVerdictBPrimeChunkingAndRelations:
+    """Tests specifically validating Grok 4.7 Verdict B-Prime implementation."""
+
+    def test_anchor_chunking_luat_xay_dung_hierarchy(self, hub3_bridge: Hub3Bridge):
+        """Verify Luat Xay dung 2025 chunks are split by HTML anchor and hierarchy parent_id is preserved."""
+        if not hub3_bridge.hub3_path.exists():
+            pytest.skip("Hub 3 path not present")
+
+        bundles = hub3_bridge.load_master_catalog()
+        lxd = next((b for b in bundles if "135_2025_qh15" in b.slug), None)
+        assert lxd is not None
+
+        proc_doc = hub3_bridge.convert_bundle_to_processed_doc(lxd)
+        assert len(proc_doc.chunks) > 100
+
+        chunk_map = {c.chunk_id: c for c in proc_doc.chunks}
+
+        # Check Dieu 1
+        dieu1_id = f"{lxd.canonical_id}::p1::dieu-1"
+        assert dieu1_id in chunk_map
+        c_dieu1 = chunk_map[dieu1_id]
+        assert "Phạm vi điều chỉnh" in c_dieu1.text
+        assert c_dieu1.chunk_type == "parent"
+        assert c_dieu1.parent_id == ""
+
+        # Check Dieu 3 Khoan 1
+        dieu3_k1_id = f"{lxd.canonical_id}::p1::dieu-3-khoan-1"
+        assert dieu3_k1_id in chunk_map
+        c_k1 = chunk_map[dieu3_k1_id]
+        assert "Hoạt động xây dựng gồm" in c_k1.text
+        assert c_k1.chunk_type == "child"
+        assert c_k1.parent_id == f"{lxd.canonical_id}::p1::dieu-3"
+
+    def test_anchor_chunking_tcvn_span1_preserves_body(self, hub3_bridge: Hub3Bridge):
+        """Verify TCVN with 1-line clauses.json span correctly captures body text until next anchor."""
+        if not hub3_bridge.hub3_path.exists():
+            pytest.skip("Hub 3 path not present")
+
+        bundles = hub3_bridge.load_master_catalog()
+        tcvn = next((b for b in bundles if "tcvn_7336_2021" in b.slug), None)
+        assert tcvn is not None
+
+        proc_doc = hub3_bridge.convert_bundle_to_processed_doc(tcvn)
+        chunk_map = {c.chunk_id: c for c in proc_doc.chunks}
+
+        # Check muc-1-1
+        muc_1_1_id = f"{tcvn.canonical_id}::p1::muc-1-1"
+        assert muc_1_1_id in chunk_map
+        c_muc = chunk_map[muc_1_1_id]
+        assert "chữa cháy tự động" in c_muc.text
+        assert len(c_muc.text) > 30
+
+    def test_qcvn04_content_fallback_chunking(self, hub3_bridge: Hub3Bridge):
+        """Verify QCVN 04 (lacking inline anchors) extracts chunks directly from clauses.json content."""
+        if not hub3_bridge.hub3_path.exists():
+            pytest.skip("Hub 3 path not present")
+
+        bundles = hub3_bridge.load_master_catalog()
+        qcvn04 = next((b for b in bundles if "qcvn_04_2021" in b.slug), None)
+        assert qcvn04 is not None
+
+        proc_doc = hub3_bridge.convert_bundle_to_processed_doc(qcvn04)
+        assert len(proc_doc.chunks) >= 100
+        first_chunk = proc_doc.chunks[0]
+        assert first_chunk.chunk_id.startswith(f"{qcvn04.canonical_id}::p1::")
+        assert len(first_chunk.text) > 0
+
+    def test_decrees_included_and_guided_by_populated(self, hub3_bridge: Hub3Bridge):
+        """Verify decrees section is loaded and relationships.guides is populated from guided_by."""
+        if not hub3_bridge.hub3_path.exists():
+            pytest.skip("Hub 3 path not present")
+
+        bundles = hub3_bridge.load_master_catalog()
+        assert len(bundles) == 70
+
+        # ND 217 guides Luat XD 2025
+        nd217 = next((b for b in bundles if "nghi_dinh_217_2026" in b.slug), None)
+        assert nd217 is not None
+        assert nd217.guided_by is not None or len(nd217.guides) > 0
+
+        proc_doc = hub3_bridge.convert_bundle_to_processed_doc(nd217)
+        assert len(proc_doc.relationships.guides) > 0
+        assert any("135/2025/QH15" in g or "Luat" in g for g in proc_doc.relationships.guides)
+
 

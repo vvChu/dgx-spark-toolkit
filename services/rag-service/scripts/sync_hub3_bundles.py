@@ -22,11 +22,17 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from dotenv import load_dotenv
 
 # Add service directory to sys.path
 SCRIPT_DIR = Path(__file__).resolve().parent
 SERVICE_DIR = SCRIPT_DIR.parent
+ROOT_DIR = SERVICE_DIR.parent.parent
+
+# Load local environment configuration
+load_dotenv()
+load_dotenv(ROOT_DIR / ".env")
+
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
@@ -84,6 +90,42 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Push bundles into Redis IngestionQueue",
     )
     parser.add_argument(
+        "--ingest-milvus",
+        action="store_true",
+        help="Embed and ingest chunks directly into Milvus collection (Verdict B')",
+    )
+    parser.add_argument(
+        "--milvus-collection",
+        default=os.getenv("MILVUS_OKF_COLLECTION", "legal_docs_v12_okf"),
+        help="Milvus collection name for OKF chunks (default: legal_docs_v12_okf)",
+    )
+    parser.add_argument(
+        "--milvus-host",
+        default=os.getenv("MILVUS_HOST", "127.0.0.1"),
+        help="Milvus host (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--milvus-port",
+        default=os.getenv("MILVUS_PORT", "19530"),
+        help="Milvus port (default: 19530)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size for embedding inference and Milvus insertion (default: 32)",
+    )
+    parser.add_argument(
+        "--force-cpu-embedding",
+        action="store_true",
+        help="Force CPU execution for BGE-M3 embedding",
+    )
+    parser.add_argument(
+        "--neo4j-uri",
+        default=os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687" if not os.path.exists("/.dockerenv") else NEO4J_URI),
+        help="Neo4j connection URI (default: bolt://127.0.0.1:7687 on host, bolt://neo4j-graph:7687 in container)",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose DEBUG logging",
@@ -91,26 +133,173 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     return parser.parse_args(args)
 
 
-async def sync_to_neo4j(bridge: Hub3Bridge, bundles: List[Hub3BundleInfo]) -> Dict[str, int]:
+async def sync_to_neo4j(
+    bridge: Hub3Bridge,
+    bundles: List[Hub3BundleInfo],
+    uri: Optional[str] = None,
+) -> Dict[str, int]:
     """Execute Neo4j synchronization with Neo4jRepository."""
     from neo4j import AsyncGraphDatabase
     from repositories.neo4j_repo import Neo4jRepository
 
-    logger.info("Connecting to Neo4j at %s ...", NEO4J_URI)
-    driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
+    target_uri = uri or NEO4J_URI
+    target_user = os.getenv("NEO4J_USER", NEO4J_USER) or "neo4j"
+    target_pass = os.getenv("NEO4J_PASSWORD") or NEO4J_PASS
+    logger.info("Connecting to Neo4j at %s (user: %s)...", target_uri, target_user)
+    driver = AsyncGraphDatabase.driver(target_uri, auth=(target_user, target_pass))
     try:
         repo = Neo4jRepository(driver)
         await repo.init_schema()
         result = await bridge.sync_topology_to_neo4j(bundles, repo)
         logger.info(
-            "Neo4j Topology Sync complete: %d nodes, %d replaces, %d amends",
+            "Neo4j Topology Sync complete: %d nodes, %d replaces, %d amends, %d guides",
             result["nodes_synced"],
             result["replaces_created"],
             result["amends_created"],
+            result.get("guides_created", 0),
         )
         return result
     finally:
         await driver.close()
+
+
+def run_ingest_milvus(
+    bridge: Hub3Bridge,
+    bundles: List[Hub3BundleInfo],
+    id_map: Dict[str, str],
+    args: argparse.Namespace,
+) -> Dict[str, Any]:
+    """Batch embed and ingest OKF chunks into dedicated Milvus collection (Verdict B')."""
+    import time
+    from pymilvus import MilvusClient, DataType
+    from retrieval.embeddings.bge_m3_hybrid import BGE_M3_HybridEmbedding
+
+    col_name = args.milvus_collection
+    milvus_uri = f"http://{args.milvus_host}:{args.milvus_port}"
+    logger.info("Connecting to Milvus at %s (target collection: %s)...", milvus_uri, col_name)
+    client = MilvusClient(uri=milvus_uri)
+
+    # 1. Ensure hybrid collection schema exists
+    if not client.has_collection(col_name):
+        logger.info("Creating Milvus collection '%s' with native hybrid schema...", col_name)
+        schema = MilvusClient.create_schema(auto_id=True, enable_dynamic_field=True)
+        schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
+        schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=1024)
+        schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
+
+        index_params = MilvusClient.prepare_index_params()
+        index_params.add_index(field_name="vector", metric_type="COSINE", index_type="AUTOINDEX")
+        index_params.add_index(field_name="sparse_vector", metric_type="IP", index_type="SPARSE_INVERTED_INDEX")
+
+        client.create_collection(
+            collection_name=col_name,
+            schema=schema,
+            index_params=index_params,
+        )
+        logger.info("Collection '%s' created successfully.", col_name)
+    else:
+        logger.info("Milvus collection '%s' already exists.", col_name)
+
+    # 2. Extract standardized OKF chunks from all bundles
+    logger.info("Chunking %d bundles using OKF Anchor-Based Chunker...", len(bundles))
+    t0_chunk = time.time()
+    bundle_chunks: List[tuple[Hub3BundleInfo, Any]] = []
+    total_raw_chunks = 0
+    for b in bundles:
+        proc_doc = bridge.convert_bundle_to_processed_doc(b, canonical_map=id_map)
+        for c in proc_doc.chunks:
+            bundle_chunks.append((b, c))
+        total_raw_chunks += len(proc_doc.chunks)
+
+    chunk_dur = time.time() - t0_chunk
+    logger.info("Extracted %d chunks from %d bundles in %.3f seconds.", total_raw_chunks, len(bundles), chunk_dur)
+
+    # 3. Initialize BGE-M3 Embedder
+    if args.force_cpu_embedding:
+        os.environ["FORCE_CPU_EMBEDDING"] = "1"
+    logger.info("Initializing BGE-M3 Hybrid Embedder...")
+    embedder = BGE_M3_HybridEmbedding()
+
+    # 4. Batch Embed and Insert
+    logger.info("Beginning batch embedding and insertion (batch_size=%d)...", args.batch_size)
+    t0_embed = time.time()
+    total_inserted = 0
+    batch_size = max(1, args.batch_size)
+
+    for i in range(0, len(bundle_chunks), batch_size):
+        batch = bundle_chunks[i:i + batch_size]
+        texts = [c.text for _, c in batch]
+
+        # Embed batch
+        emb_res = embedder.embed_documents(texts, batch_size=batch_size)
+        dense_vecs = emb_res["dense"]
+        sparse_vecs = emb_res["sparse"]
+
+        entities = []
+        for idx_in_batch, (b, c) in enumerate(batch):
+            sparse_raw = sparse_vecs[idx_in_batch]
+            clean_sparse: Dict[int, float] = {}
+            if isinstance(sparse_raw, dict):
+                for k, v in sparse_raw.items():
+                    try:
+                        ik = int(k)
+                        if ik >= 0:
+                            clean_sparse[ik] = float(v)
+                    except (ValueError, TypeError):
+                        continue
+
+            entities.append({
+                "text": str(c.text)[:14000],
+                "source": str(c.source),
+                "page": int(c.page),
+                "summary": str(c.hierarchy_path or "")[:2048],
+                "doc_date": str(b.effective_date or b.issued_date or "unknown"),
+                "doc_type": str(b.doc_type or "unknown"),
+                "authority": str(b.issued_by or "unknown"),
+                "file_hash": str(b.pdf_sha256 or ""),
+                "is_table": bool(c.is_table),
+                "chunk_type": str(c.chunk_type),
+                "parent_id": str(c.parent_id),
+                "doc_number": str(c.doc_number),
+                "doc_id": str(c.doc_id),
+                "chunk_id": str(c.chunk_id),
+                "bbox": str(c.bbox),
+                "validity_status": str(c.validity_status),
+                "legal_level": str(b.category),
+                "hierarchy_path": str(c.hierarchy_path),
+                "citation_count": 0,
+                "project_code": "LEGAL_OKF",
+                "discipline": "LEGAL",
+                "doc_status": str(b.validity_status),
+                "revision": 0,
+                "synthetic_queries": "",
+                "source_category": str(b.category),
+                "vector": dense_vecs[idx_in_batch],
+                "sparse_vector": clean_sparse,
+            })
+
+        if entities:
+            client.insert(collection_name=col_name, data=entities)
+            total_inserted += len(entities)
+
+        if (i // batch_size + 1) % 10 == 0 or total_inserted == len(bundle_chunks):
+            logger.info("Inserted %d/%d chunks (%.1f%%)...", total_inserted, len(bundle_chunks), (total_inserted / len(bundle_chunks)) * 100)
+
+    embed_dur = time.time() - t0_embed
+    logger.info("Loading collection '%s' into Milvus memory...", col_name)
+    client.load_collection(col_name)
+
+    stats = client.get_collection_stats(col_name)
+    logger.info("Milvus collection '%s' stats: %s", col_name, stats)
+
+    return {
+        "collection": col_name,
+        "bundles_count": len(bundles),
+        "chunks_count": total_inserted,
+        "chunk_duration_sec": chunk_dur,
+        "embed_duration_sec": embed_dur,
+        "stats": stats,
+    }
 
 
 def run_enqueue(bridge: Hub3Bridge, bundles: List[Hub3BundleInfo]) -> int:
@@ -219,17 +408,35 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.sync_neo4j:
         logger.info("Syncing %d bundles to Neo4j...", len(bundles))
         try:
-            res = asyncio.run(sync_to_neo4j(bridge, bundles))
+            res = asyncio.run(sync_to_neo4j(bridge, bundles, uri=args.neo4j_uri))
             print("\n--- Neo4j Knowledge Graph Sync Report ---")
             print(f"  Nodes synchronized    : {res['nodes_synced']}")
             print(f"  Replaces relationships: {res['replaces_created']}")
             print(f"  Amends relationships  : {res['amends_created']}")
+            print(f"  Guides relationships  : {res.get('guides_created', 0)}")
             print("-----------------------------------------\n")
         except Exception as e:
             logger.error("Neo4j synchronization failed: %s", e)
             return 1
 
-    # 5. Enqueue into Redis IngestionQueue
+    # 5. Milvus OKF Chunks Batch Ingestion (Verdict B')
+    if args.ingest_milvus:
+        logger.info("Beginning batch Milvus ingestion into '%s'...", args.milvus_collection)
+        try:
+            m_res = run_ingest_milvus(bridge, bundles, id_map, args)
+            print("\n--- Milvus Knowledge Ingestion Report (Verdict B') ---")
+            print(f"  Target Collection     : {m_res['collection']}")
+            print(f"  Bundles Processed     : {m_res['bundles_count']}")
+            print(f"  Total Chunks Inserted : {m_res['chunks_count']}")
+            print(f"  Chunking Duration     : {m_res['chunk_duration_sec']:.2f}s")
+            print(f"  Embedding Duration    : {m_res['embed_duration_sec']:.2f}s")
+            print(f"  Collection Stats      : {m_res['stats']}")
+            print("------------------------------------------------------\n")
+        except Exception as e:
+            logger.error("Milvus ingestion failed: %s", e)
+            return 1
+
+    # 6. Enqueue into Redis IngestionQueue
     if args.enqueue:
         logger.info("Enqueueing %d bundles into IngestionQueue...", len(bundles))
         try:

@@ -407,6 +407,50 @@ class Neo4jRepository:
                         )
                         amends_created += 1
 
+                # Step 4: Create [:GUIDES] relationships
+                guides_created = 0
+                for b in bundles:
+                    source_id = (
+                        getattr(b, "canonical_id", None)
+                        or getattr(b, "id", None)
+                        or (b.get("canonical_id") if isinstance(b, dict) else None)
+                        or (b.get("id") if isinstance(b, dict) else None)
+                    )
+                    if not source_id:
+                        continue
+
+                    guides_list = (
+                        getattr(b, "canonical_guides", None)
+                        or getattr(b, "guides", [])
+                        or (b.get("canonical_guides") if isinstance(b, dict) else None)
+                        or (b.get("guides", []) if isinstance(b, dict) else [])
+                    )
+                    if not guides_list and getattr(b, "guided_by", None):
+                        guides_list = [getattr(b, "guided_by")]
+
+                    if isinstance(guides_list, str):
+                        guides_list = [guides_list]
+
+                    seen_guides = set()
+                    for raw_target in guides_list:
+                        raw_target = str(raw_target).strip()
+                        if not raw_target:
+                            continue
+                        target_id = self._canonicalize_doc_id(raw_target, id_map)
+                        if target_id in seen_guides or target_id == source_id:
+                            continue
+                        seen_guides.add(target_id)
+
+                        await session.run(
+                            """
+                            MERGE (source:Document {id: $source_id})
+                            MERGE (target:Document {id: $target_id})
+                            MERGE (source)-[:GUIDES]->(target)
+                            """,
+                            source_id=source_id,
+                            target_id=target_id,
+                        )
+                        guides_created += 1
 
         except Exception as e:
             logger.error(f"Failed to sync Hub 3 topology to Neo4j: {e}")
@@ -416,6 +460,7 @@ class Neo4jRepository:
             "nodes_synced": nodes_synced,
             "replaces_created": replaces_created,
             "amends_created": amends_created,
+            "guides_created": guides_created,
         }
 
     async def update_node_status(self, doc_id: str, new_status: str):

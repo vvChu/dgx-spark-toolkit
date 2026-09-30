@@ -75,6 +75,8 @@ class Hub3BundleInfo:
     amendments: List[Dict[str, Any]] = field(default_factory=list)
     references: List[str] = field(default_factory=list)
     guided_by: Optional[str] = None
+    guides: List[str] = field(default_factory=list)
+    canonical_guides: List[str] = field(default_factory=list)
     raw_metadata: Dict[str, Any] = field(default_factory=dict)
     canonical_id: str = ""
     file_name: str = ""
@@ -130,6 +132,7 @@ class Hub3Bridge:
         registry_items: List[Dict[str, Any]] = (
             registry_data.get("laws", [])
             + registry_data.get("standards", [])
+            + registry_data.get("decrees", [])
         )
         if isinstance(registry_data.get("documents"), list):
             registry_items.extend(registry_data["documents"])
@@ -259,6 +262,16 @@ class Hub3Bridge:
             guided_by = None
             if isinstance(reg_item.get("relations"), dict):
                 guided_by = reg_item["relations"].get("guided_by")
+            elif isinstance(local_meta.get("relations"), dict):
+                guided_by = local_meta["relations"].get("guided_by")
+            elif local_meta.get("guided_by"):
+                guided_by = local_meta.get("guided_by")
+
+            guides: List[str] = []
+            if isinstance(guided_by, list):
+                guides.extend(str(g) for g in guided_by if g)
+            elif guided_by:
+                guides.append(str(guided_by))
 
             # Locate Markdown file: prioritize {slug}.md, fallback to first non-index md
             md_path = b_dir / f"{slug}.md"
@@ -315,6 +328,7 @@ class Hub3Bridge:
                 amendments=amendments,
                 references=references,
                 guided_by=str(guided_by) if guided_by else None,
+                guides=guides,
                 raw_metadata=combined_raw,
                 canonical_id=canonical_id,
                 file_name=file_name,
@@ -341,6 +355,13 @@ class Hub3Bridge:
                 if amd_id:
                     resolved_amends.add(self.resolve_canonical_id(amd_id, canonical_map))
             b.canonical_amends = sorted(resolved_amends)
+
+            resolved_guides = set()
+            for g in b.guides:
+                resolved_guides.add(self.resolve_canonical_id(g, canonical_map))
+            if b.guided_by and not resolved_guides:
+                resolved_guides.add(self.resolve_canonical_id(b.guided_by, canonical_map))
+            b.canonical_guides = sorted(resolved_guides)
 
         if limit:
             bundles = bundles[:limit]
@@ -524,6 +545,186 @@ class Hub3Bridge:
         # Algorithmic normalization if not found in map
         return self._normalize_unmapped_id(clean)
 
+    def _infer_parent_id(self, doc_id: str, clause_id: str) -> str:
+        """Infer canonical parent chunk_id from hierarchical clause_id."""
+        clean_cid = clause_id.strip()
+        # Pattern 1: dieu-X-khoan-Y or dieu-X-diem-Z -> dieu-X
+        m_dieu_k = re.match(r"^(dieu-\d+)-(?:khoan|diem|part).*", clean_cid)
+        if m_dieu_k:
+            return f"{doc_id}::p1::{m_dieu_k.group(1)}"
+        # Pattern 2: muc-X-Y-Z -> muc-X-Y, muc-X-Y -> muc-X
+        parts = clean_cid.split("-")
+        if len(parts) >= 3 and parts[0] == "muc":
+            parent_clause = "-".join(parts[:-1])
+            return f"{doc_id}::p1::{parent_clause}"
+        return ""
+
+    def chunk_okf_bundle(
+        self,
+        bundle: Hub3BundleInfo,
+        clean_text: str,
+        doc_id: str,
+    ) -> List[Chunk]:
+        """Chunk OKF Gazette Bundle using HTML Anchors and clauses.json metadata (Verdict B').
+
+        - Locates HTML anchors '<a id=\"{clause_id}\">' for precise boundaries.
+        - Handles TCVN/QCVN 1-line spans by capturing text until next anchor.
+        - Ingests QCVN 04 directly from clauses.json 'content' if anchors are absent.
+        - Splits giant tables (>12,000 chars) into safe '::part{n}' chunks.
+        - Preserves 'parent_id' for '_expand_parent_child_context' retrieval.
+
+        Args:
+            bundle: Hub3BundleInfo instance.
+            clean_text: Frontmatter-stripped Markdown text.
+            doc_id: Canonical document identifier.
+
+        Returns:
+            List of standardized Chunk objects.
+        """
+        import json
+
+        bundle_dir = Path(bundle.bundle_dir or Path(bundle.markdown_path).parent)
+        clauses_file = bundle_dir / "clauses.json"
+        clauses_map: Dict[str, Dict[str, Any]] = {}
+        if clauses_file.is_file():
+            try:
+                with open(clauses_file, "r", encoding="utf-8") as f:
+                    c_list = json.load(f) or []
+                    for item in c_list:
+                        cid = item.get("clause_id") or item.get("id") or item.get("anchor")
+                        if cid:
+                            clauses_map[cid] = item
+            except Exception as e:
+                logger.warning("Could not read clauses.json for %s: %s", bundle.slug, e)
+
+        anchor_pattern = re.compile(r'<a\s+id=[\'"]([^\'"]+)[\'"](?:\s*></a>|>)', re.IGNORECASE)
+        anchors = list(anchor_pattern.finditer(clean_text))
+        chunks: List[Chunk] = []
+
+        if anchors:
+            # 1. Preamble chunk before first anchor
+            first_pos = anchors[0].start()
+            if first_pos > 50:
+                preamble_raw = clean_text[:first_pos].strip()
+                clean_preamble = re.sub(r"#+.*?\n", "", preamble_raw).strip()
+                if len(clean_preamble) > 50:
+                    chunks.append(Chunk(
+                        text=clean_preamble,
+                        source=bundle.file_name,
+                        page=1,
+                        chunk_type="preamble",
+                        is_table=False,
+                        parent_id="",
+                        hierarchy_path="Preamble",
+                        doc_id=doc_id,
+                        doc_number=bundle.document_number,
+                        chunk_id=f"{doc_id}::p1::preamble",
+                        validity_status=bundle.validity_status,
+                    ))
+
+            # 2. Iterate each anchor
+            for idx, m in enumerate(anchors):
+                cid = m.group(1).strip()
+                start_pos = m.end()
+                end_pos = anchors[idx + 1].start() if idx + 1 < len(anchors) else len(clean_text)
+                body = clean_text[start_pos:end_pos].strip()
+
+                c_info = clauses_map.get(cid, {})
+                clause_title = c_info.get("title", "")
+
+                if not body and c_info.get("content"):
+                    body = str(c_info.get("content", "")).strip()
+
+                if not body:
+                    body = clause_title or cid
+
+                parent_id = self._infer_parent_id(doc_id, cid)
+                chunk_type = "child" if parent_id else "parent"
+                is_table = "bang" in cid or "table" in cid or bool(c_info.get("is_table"))
+
+                # Split tables or oversized texts exceeding 12,000 characters
+                if len(body) > 12000:
+                    lines = body.splitlines()
+                    part_lines: List[str] = []
+                    part_idx = 1
+                    curr_len = 0
+                    for line in lines:
+                        part_lines.append(line)
+                        curr_len += len(line) + 1
+                        if curr_len > 8000:
+                            part_text = "\n".join(part_lines).strip()
+                            chunks.append(Chunk(
+                                text=part_text,
+                                source=bundle.file_name,
+                                page=1,
+                                chunk_type="table" if is_table else chunk_type,
+                                is_table=is_table,
+                                parent_id=parent_id,
+                                hierarchy_path=clause_title or cid,
+                                doc_id=doc_id,
+                                doc_number=bundle.document_number,
+                                chunk_id=f"{doc_id}::p1::{cid}::part{part_idx}",
+                                validity_status=bundle.validity_status,
+                            ))
+                            part_lines = []
+                            curr_len = 0
+                            part_idx += 1
+                    if part_lines:
+                        part_text = "\n".join(part_lines).strip()
+                        chunks.append(Chunk(
+                            text=part_text,
+                            source=bundle.file_name,
+                            page=1,
+                            chunk_type="table" if is_table else chunk_type,
+                            is_table=is_table,
+                            parent_id=parent_id,
+                            hierarchy_path=clause_title or cid,
+                            doc_id=doc_id,
+                            doc_number=bundle.document_number,
+                            chunk_id=f"{doc_id}::p1::{cid}::part{part_idx}",
+                            validity_status=bundle.validity_status,
+                        ))
+                else:
+                    chunks.append(Chunk(
+                        text=body,
+                        source=bundle.file_name,
+                        page=1,
+                        chunk_type="table" if is_table else chunk_type,
+                        is_table=is_table,
+                        parent_id=parent_id,
+                        hierarchy_path=clause_title or cid,
+                        doc_id=doc_id,
+                        doc_number=bundle.document_number,
+                        chunk_id=f"{doc_id}::p1::{cid}",
+                        validity_status=bundle.validity_status,
+                    ))
+
+        elif clauses_map:
+            # Fallback for bundles like QCVN 04 without inline HTML anchors
+            for cid, item in clauses_map.items():
+                content = str(item.get("content", "")).strip()
+                title = str(item.get("title", "")).strip()
+                full_text = f"{title}\n{content}".strip() if title else content
+                if not full_text:
+                    continue
+                parent_id = self._infer_parent_id(doc_id, cid)
+                chunk_type = "child" if parent_id else "parent"
+                chunks.append(Chunk(
+                    text=full_text,
+                    source=bundle.file_name,
+                    page=1,
+                    chunk_type=chunk_type,
+                    is_table=False,
+                    parent_id=parent_id,
+                    hierarchy_path=title or cid,
+                    doc_id=doc_id,
+                    doc_number=bundle.document_number,
+                    chunk_id=f"{doc_id}::p1::{cid}",
+                    validity_status=bundle.validity_status,
+                ))
+
+        return chunks
+
     def convert_bundle_to_processed_doc(
         self,
         bundle: Hub3BundleInfo,
@@ -592,50 +793,67 @@ class Hub3Bridge:
                 if amd_id:
                     resolved_amends.append(self.resolve_canonical_id(amd_id, canonical_map))
 
+        resolved_guides = list(bundle.canonical_guides) if bundle.canonical_guides else [
+            self.resolve_canonical_id(g, canonical_map)
+            for g in bundle.guides
+            if g
+        ]
+        if not resolved_guides and bundle.guided_by:
+            resolved_guides = [self.resolve_canonical_id(bundle.guided_by, canonical_map)]
+
         relationships = DocumentRelationships(
             replaces=sorted(set(resolved_replaces)),
             amends=sorted(set(resolved_amends)),
             references=list(bundle.references),
-            guides=[],
+            guides=sorted(set(resolved_guides)),
         )
 
-        # Fast-Path Chunking: disable table vision correction & summarization for 100% local execution
-        if chunker is None:
-            chunker = DocumentChunker()
-            chunker.TABLE_CORRECT_ENABLED = False
-            chunker.TABLE_SUMMARY_ENABLED = False
+        # OKF Fast-Path Anchor Chunker: Use HTML Anchors and clauses.json metadata (Verdict B')
+        bundle_dir = Path(bundle.bundle_dir or Path(bundle.markdown_path).parent)
+        clauses_file = bundle_dir / "clauses.json"
+        has_anchors = bool(re.search(r'<a\s+id=[\'"][^\'"]+[\'"](?:\s*></a>|>)', clean_text, re.IGNORECASE))
+        has_clauses_file = clauses_file.is_file()
+
+        if has_anchors or has_clauses_file:
+            chunks = self.chunk_okf_bundle(bundle, clean_text, doc_id)
         else:
-            if hasattr(chunker, "TABLE_CORRECT_ENABLED"):
+            # Fallback to DocumentChunker for legacy mock tests or non-OKF plain markdown
+            if chunker is None:
+                chunker = DocumentChunker()
                 chunker.TABLE_CORRECT_ENABLED = False
-            if hasattr(chunker, "TABLE_SUMMARY_ENABLED"):
                 chunker.TABLE_SUMMARY_ENABLED = False
+            else:
+                if hasattr(chunker, "TABLE_CORRECT_ENABLED"):
+                    chunker.TABLE_CORRECT_ENABLED = False
+                if hasattr(chunker, "TABLE_SUMMARY_ENABLED"):
+                    chunker.TABLE_SUMMARY_ENABLED = False
 
-        raw_chunks = chunker.chunk_document(
-            text=clean_text,
-            source=bundle.file_name,
-            page=1,
-            doc_id=doc_id,
-        )
-
-        chunks: List[Chunk] = []
-        for idx, rc in enumerate(raw_chunks, start=1):
-            chunk_id = f"{doc_id}::p1::c{idx}"
-            chunk_obj = Chunk(
-                text=rc.get("text", ""),
-                source=rc.get("source", bundle.file_name),
-                page=rc.get("page", 1),
-                chunk_type=rc.get("chunk_type", "parent"),
-                is_table=rc.get("is_table", False),
-                parent_id=rc.get("parent_id", ""),
-                hierarchy_path=rc.get("hierarchy_path", ""),
-                bbox=rc.get("bbox", [0, 0, 1000, 1000]),
-                synthetic_queries=rc.get("synthetic_queries", ""),
+            raw_chunks = chunker.chunk_document(
+                text=clean_text,
+                source=bundle.file_name,
+                page=1,
                 doc_id=doc_id,
-                doc_number=bundle.document_number,
-                chunk_id=chunk_id,
-                validity_status=bundle.validity_status,
             )
-            chunks.append(chunk_obj)
+
+            chunks = []
+            for idx, rc in enumerate(raw_chunks, start=1):
+                chunk_id = f"{doc_id}::p1::c{idx}"
+                chunk_obj = Chunk(
+                    text=rc.get("text", ""),
+                    source=rc.get("source", bundle.file_name),
+                    page=rc.get("page", 1),
+                    chunk_type=rc.get("chunk_type", "parent"),
+                    is_table=rc.get("is_table", False),
+                    parent_id=rc.get("parent_id", ""),
+                    hierarchy_path=rc.get("hierarchy_path", ""),
+                    bbox=rc.get("bbox", [0, 0, 1000, 1000]),
+                    synthetic_queries=rc.get("synthetic_queries", ""),
+                    doc_id=doc_id,
+                    doc_number=bundle.document_number,
+                    chunk_id=chunk_id,
+                    validity_status=bundle.validity_status,
+                )
+                chunks.append(chunk_obj)
 
         raw_pages = [RawPage(text=clean_text, page=1, source="hub3_markdown")]
 
@@ -676,7 +894,7 @@ class Hub3Bridge:
             if inspect.isawaitable(result):
                 return await result
             return result
-        return {"nodes_synced": 0, "replaces_created": 0, "amends_created": 0}
+        return {"nodes_synced": 0, "replaces_created": 0, "amends_created": 0, "guides_created": 0}
 
     def _validate_bundle_security(self, bundle: Hub3BundleInfo) -> None:
         """Validate cryptographic provenance of bundle before ingestion queueing.

@@ -75,12 +75,12 @@ class MilvusRepository:
 
         # Sanitize each parent_id before interpolating into the filter expression
         parent_id_str = "[" + ",".join(f'"{_sanitize_pid(pid)}"' for pid in parent_ids) + "]"
-        query_expr = f'parent_id in {parent_id_str} and chunk_type == "parent"'
+        query_expr = f'(parent_id in {parent_id_str} or chunk_id in {parent_id_str}) and chunk_type == "parent"'
 
         results = await self.client.query(
             collection_name=self.collection_name,
             filter=query_expr,
-            output_fields=["parent_id", "text"]
+            output_fields=["chunk_id", "parent_id", "text"]
         )
         return results
 

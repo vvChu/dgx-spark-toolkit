@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -812,7 +813,12 @@ class SearchPipeline:
         if not parent_ids:
             return
         parent_results = await self.milvus.get_parent_chunks(parent_ids)
-        parent_map = {p["parent_id"]: p["text"] for p in parent_results}
+        parent_map = {}
+        for p in parent_results:
+            if p.get("parent_id"):
+                parent_map[p["parent_id"]] = p.get("text", "")
+            if p.get("chunk_id"):
+                parent_map[p["chunk_id"]] = p.get("text", "")
         for r in top_results:
             if r.get("chunk_type") == "child" and r["parent_id"] in parent_map:
                 r["child_text"] = r["text"]
