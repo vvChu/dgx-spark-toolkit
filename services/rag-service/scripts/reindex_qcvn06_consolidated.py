@@ -101,7 +101,7 @@ def main() -> int:
     tt09_text = (
         "THÔNG TƯ 09/2023/TT-BXD\n"
         "Ban hành Sửa đổi 1:2023 QCVN 06:2022/BXD Quy chuẩn kỹ thuật quốc gia về An toàn cháy cho nhà và công trình.\n\n"
-        "Bộ Xây dựng ban hành Thông tư số 09/2023/TT-BXD ngày 16 tháng 10 năm 2023 sửa đổi 1:2023 QCVN 06:2022/BXD.\n"
+        "Bộ Xây dựng ban hành Thông tư số 09/2023/TT-BXD ngày 10 tháng 10 năm 2023 sửa đổi 1:2023 QCVN 06:2022/BXD.\n"
         "- Điều 1: Ban hành kèm theo Thông tư này 'Sửa đổi 1:2023 QCVN 06:2022/BXD Quy chuẩn kỹ thuật quốc gia về An toàn cháy cho nhà và công trình'.\n"
         "- Điều 2: Thông tư này có hiệu lực thi hành kể từ ngày 01 tháng 12 năm 2023. Quy định chuyển tiếp đối với các dự án, công trình đã được cấp giấy chứng nhận thẩm duyệt thiết kế PCCC trước ngày Thông tư này có hiệu lực.\n"
         "- Toàn bộ nội dung kỹ thuật sửa đổi vi sai của Thông tư 09/2023/TT-BXD đã được hợp nhất trực tiếp vào văn bản quy chuẩn hợp nhất QCVN 06:2022/BXD (Sửa đổi 1:2023)."
@@ -118,7 +118,7 @@ def main() -> int:
     # For TT 09 mock bundle
     class MockBundle:
         effective_date = "2023-12-01"
-        issued_date = "2023-10-16"
+        issued_date = "2023-10-10"
         doc_type = "Thông tư"
         issued_by = "Bộ Xây dựng"
         pdf_sha256 = ""

@@ -727,6 +727,41 @@ class TestNeo4jGraphIntegration:
         # [:AMENDS] preserves base active status (does NOT set base status = OUTDATED)
         assert "SET base.status = 'OUTDATED'" not in str(amends_calls[0])
 
+    def test_sync_hub3_topology_amends_doc_number_with_id_map(self, mock_neo4j_repo):
+        """Verify sync_hub3_topology with id_map assigns canonical doc_number 09/2023/TT-BXD to amending node."""
+        repo, session = mock_neo4j_repo
+
+        bundle = Hub3BundleInfo(
+            slug="qcvn_06_2022_bxd",
+            category="02_qcvn",
+            registry_id="qcvn_06_2022_bxd",
+            document_number="QCVN 06:2022/BXD",
+            title="QCVN 06:2022/BXD",
+            doc_type="Quy chuẩn",
+            issued_by="BXD",
+            issued_date="2022-11-30",
+            effective_date="2023-01-16",
+            status="active",
+            validity_status="ACTIVE",
+            bundle_path="legal_docs/02_qcvn/qcvn_06_2022_bxd/",
+            bundle_dir="/tmp",
+            markdown_path="/tmp/qcvn06.md",
+            canonical_id="VBPL/QCVN_06_2022/BXD",
+            file_name="qcvn_06_2022_bxd.pdf",
+            amendments=[{"id": "SD1-2023-QCVN-06", "title": "Sửa đổi 1:2023"}],
+        )
+
+        id_map = {"SD1-2023-QCVN-06": "VBPL/09/2023/TT-BXD"}
+        res = asyncio.run(repo.sync_hub3_topology([bundle], id_map=id_map))
+        assert res["amends_created"] == 1
+
+        all_calls = session.run.call_args_list
+        amends_calls = [c for c in all_calls if "[:AMENDS]" in str(c)]
+        assert len(amends_calls) == 1
+        kwargs = amends_calls[0][1]
+        assert kwargs["amd_id"] == "VBPL/09/2023/TT-BXD"
+        assert kwargs["amd_doc_num"] == "09/2023/TT-BXD"
+
     def test_sync_hub3_topology_raw_replaces_canonicalization_and_dedup(self, mock_neo4j_repo):
         """Verify raw replaces strings are resolved to canonical target IDs and deduplicated."""
         repo, session = mock_neo4j_repo

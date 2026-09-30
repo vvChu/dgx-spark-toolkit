@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from neo4j import AsyncDriver
 
@@ -184,12 +184,14 @@ class Neo4jRepository:
         query = """
         MATCH (d:Document)
         WHERE d.id CONTAINS $query_id
-        OPTIONAL MATCH (d)-[r:REPLACES|AMENDS|REFERENCES|GUIDES|PROMULGATES*1..3]->(target:Document)
-        OPTIONAL MATCH (source:Document)-[r2:REPLACES|AMENDS|REFERENCES|GUIDES|PROMULGATES*1..3]->(d)
+        OPTIONAL MATCH (d)-[r:REPLACES|AMENDS|REFERENCES|GUIDES*1..3]->(target:Document)
+        OPTIONAL MATCH (source:Document)-[r2:REPLACES|AMENDS|REFERENCES|GUIDES*1..3]->(d)
+        OPTIONAL MATCH (promulgator:Document)-[r_prom:PROMULGATES]->(d)
         RETURN d.id as id,
                CASE WHEN d.status IS NOT NULL THEN d.status ELSE 'UNKNOWN' END as status,
                [rel in coalesce(r, []) | type(rel)] as out_rels, [t in coalesce(target, []) | t.id] as targets,
-               [rel in coalesce(r2, []) | type(rel)] as in_rels, [s in coalesce(source, []) | s.id] as sources
+               [rel in coalesce(r2, []) | type(rel)] + CASE WHEN r_prom IS NOT NULL THEN ['PROMULGATES'] ELSE [] END as in_rels,
+               [s in coalesce(source, []) | s.id] + CASE WHEN promulgator IS NOT NULL THEN [promulgator.id] ELSE [] END as sources
         LIMIT 10
         """
         try:
@@ -497,8 +499,9 @@ class Neo4jRepository:
                                           amending.doc_type = $doc_type,
                                           amending.doc_number = $amd_doc_num,
                                           amending.title = $amd_title
-                            ON MATCH SET amending.doc_number = CASE WHEN amending.doc_number IS NULL OR amending.doc_number = '' OR amending.doc_number CONTAINS 'Sửa đổi' THEN $amd_doc_num ELSE amending.doc_number END,
-                                         amending.doc_type = CASE WHEN amending.doc_type IS NULL OR amending.doc_type = '' OR amending.doc_type = 'Sửa đổi bổ sung' THEN $doc_type ELSE amending.doc_type END
+                            ON MATCH SET amending.doc_number = $amd_doc_num,
+                                         amending.doc_type = $doc_type,
+                                         amending.title = $amd_title
                             MERGE (base:Document {id: $base_id})
                             MERGE (amending)-[:AMENDS]->(base)
                             """,
@@ -573,8 +576,9 @@ class Neo4jRepository:
                                       promulgator.doc_type = $doc_type,
                                       promulgator.doc_number = $prom_doc_num,
                                       promulgator.title = $prom_title
-                        ON MATCH SET promulgator.doc_number = CASE WHEN promulgator.doc_number IS NULL OR promulgator.doc_number = '' THEN $prom_doc_num ELSE promulgator.doc_number END,
-                                     promulgator.doc_type = CASE WHEN promulgator.doc_type IS NULL OR promulgator.doc_type = '' THEN $doc_type ELSE promulgator.doc_type END
+                        ON MATCH SET promulgator.doc_number = $prom_doc_num,
+                                     promulgator.doc_type = $doc_type,
+                                     promulgator.title = $prom_title
                         MERGE (base:Document {id: $base_id})
                         MERGE (promulgator)-[:PROMULGATES]->(base)
                         """,
