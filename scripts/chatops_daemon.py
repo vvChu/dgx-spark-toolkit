@@ -481,6 +481,60 @@ async def probe_hardware_and_containers() -> str:
     return "\n".join(lines)
 
 
+def resolve_pid(pid: str, cmap: Optional[Dict[str, str]] = None) -> tuple[str, str]:
+    """Resolves process origin (Docker container vs host service) and high-level task name."""
+    cname, task = None, ""
+    is_docker = False
+    cmap = cmap or {}
+    try:
+        with open(f"/proc/{pid}/cgroup", "r") as f:
+            cg = f.read()
+            for line in cg.splitlines():
+                # cgroups v1: "/docker/<id>"; cgroups v2: "docker-<id>.scope"
+                if "docker-" in line or "/docker/" in line:
+                    is_docker = True
+                    for cid, name in cmap.items():
+                        if cid in line:
+                            cname = name
+                            break
+                    if cname:
+                        break
+                elif ".service" in line and not cname and not is_docker:
+                    parts = [p for p in line.split("/") if p.endswith(".service")]
+                    if parts:
+                        cname = parts[-1].replace(".service", "")
+    except Exception:
+        pass
+
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            raw = f.read().replace(b"\x00", b" ").decode(errors="ignore").strip()
+            if "reindex_milvus" in raw:
+                task = "reindex_milvus.py"
+            elif "VLLM::EngineCore" in raw:
+                task = "VLLM::EngineCore"
+            elif "pipeline" in raw:
+                task = "ingestion.pipeline"
+            elif "uvicorn" in raw:
+                task = "FastAPI / Uvicorn"
+            elif "neo4j" in raw or "java" in raw:
+                task = "Neo4j Graph (JVM)"
+            elif "litellm" in raw:
+                task = "LiteLLM Gateway"
+            elif "ocr" in raw or "surya" in raw:
+                task = "OCR Worker"
+            elif "milvus run" in raw:
+                task = "Milvus Standalone"
+            elif raw:
+                task = raw.split()[0].split("/")[-1]
+    except Exception:
+        pass
+    origin_icon = "🐳" if is_docker else "💻"
+    origin_label = cname if cname else "Host"
+    origin = f"{origin_icon} `{origin_label}`"
+    return origin, task
+
+
 async def probe_memory_and_swap() -> str:
     """Probes RAM, Swap utilization, swappiness, and top processes by RSS and VmSwap."""
     lines = ["🧠 *CHI TIẾT BỘ NHỚ & SWAP (DGX SPARK)* 🧠\n"]
@@ -531,55 +585,8 @@ async def probe_memory_and_swap() -> str:
     except Exception:
         pass
 
-    def _resolve_pid(pid: str) -> tuple[str, str]:
-        cname, task = None, ""
-        is_docker = False
-        try:
-            with open(f"/proc/{pid}/cgroup", "r") as f:
-                cg = f.read()
-                for line in cg.splitlines():
-                    if "docker-" in line or "/docker/" in line:
-                        is_docker = True
-                        for cid, name in cmap.items():
-                            if cid in line:
-                                cname = name
-                                break
-                        if cname:
-                            break
-                    elif ".service" in line and not cname and not is_docker:
-                        parts = [p for p in line.split("/") if p.endswith(".service")]
-                        if parts:
-                            cname = parts[-1].replace(".service", "")
-        except Exception:
-            pass
-
-        try:
-            with open(f"/proc/{pid}/cmdline", "rb") as f:
-                raw = f.read().replace(b"\x00", b" ").decode(errors="ignore").strip()
-                if "reindex_milvus" in raw:
-                    task = "reindex_milvus.py"
-                elif "VLLM::EngineCore" in raw:
-                    task = "VLLM::EngineCore"
-                elif "pipeline" in raw:
-                    task = "ingestion.pipeline"
-                elif "uvicorn" in raw:
-                    task = "FastAPI / Uvicorn"
-                elif "neo4j" in raw or "java" in raw:
-                    task = "Neo4j Graph (JVM)"
-                elif "litellm" in raw:
-                    task = "LiteLLM Gateway"
-                elif "ocr" in raw or "surya" in raw:
-                    task = "OCR Worker"
-                elif "milvus run" in raw:
-                    task = "Milvus Standalone"
-                elif raw:
-                    task = raw.split()[0].split("/")[-1]
-        except Exception:
-            pass
-        origin_icon = "🐳" if is_docker else "💻"
-        origin_label = cname if cname else "Host"
-        origin = f"{origin_icon} `{origin_label}`"
-        return origin, task
+    def _resolve_pid(p: str) -> tuple[str, str]:
+        return resolve_pid(p, cmap)
 
     # 3. Top RAM Consumers
     lines.append("\n🔥 *TOP 5 TIẾN TRÌNH DÙNG RAM (RSS):*")
@@ -622,7 +629,7 @@ async def probe_memory_and_swap() -> str:
                     swap_list.append((vmswap, pid))
             except Exception:
                 pass
-        swap_list.sort(key=lambda x: (-x[0], int(x[1]) if str(x[1]).isdigit() else x[1]))
+        swap_list.sort(key=lambda x: (-x[0], str(x[1]).zfill(10)))
         if swap_list:
             for vmswap_kb, pid in swap_list[:5]:
                 vmswap_mb = vmswap_kb / 1024
@@ -1091,7 +1098,10 @@ async def reenable_antigravity_account(
             duration_ms = int((time.time() - t0) * 1000)
             if is_challenge:
                 reason_desc = "Cần mở khóa thủ công trên trình duyệt"
-                action_hint = f"👉 [🔗 Bấm vào đây để mở trang xác minh Google]({val_url})" if val_url else "👉 Vui lòng hoàn thành xác thực trình duyệt trên máy chủ."
+                if val_url:
+                    action_hint = f"👉 [🔗 Bấm vào đây để mở trang xác minh Google]({val_url})"
+                else:
+                    action_hint = "👉 Vui lòng hoàn thành xác thực trình duyệt trên máy chủ."
             else:
                 reason_desc = "Tài khoản đã bị vô hiệu hóa (disabled)"
                 action_hint = "👉 Vui lòng kiểm tra lại cấu hình tài khoản trên máy chủ."
@@ -2565,7 +2575,7 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
         append_audit_log("message", text, {"user_id": user_id}, user_id, "FORBIDDEN", 0, -1, "Unknown user message dropped")
         return
 
-    cmd_token = text.split()[0].split("@")[0].lower() if text else ""
+    cmd_token = text.split()[0].split("@")[0].lower() if text and text.strip() else ""
 
     # 1. /start or /menu
     if cmd_token in ["/start", "/menu"]:
@@ -2693,10 +2703,14 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
         success = update_grok_effort(target_effort)
         if success:
             await send_telegram_msg(chat_id, f"🎯 Đã chuyển mức suy luận Grok CLI sang: `{target_effort}`\n\n" + format_grok_effort_text())
-            append_audit_log("message", "/grok_effort", {"effort": target_effort}, user_id or ADMIN_USER_ID, "SUCCESS", 0, 0, f"Set grok effort to {target_effort}")
+            append_audit_log(
+                "message", "/grok_effort", {"effort": target_effort}, user_id or ADMIN_USER_ID, "SUCCESS", 0, 0, f"Set grok effort to {target_effort}"
+            )
         else:
-            await send_telegram_msg(chat_id, f"❌ Cập nhật cấu hình effort thất bại!\n\n" + format_grok_effort_text())
-            append_audit_log("message", "/grok_effort", {"effort": target_effort}, user_id or ADMIN_USER_ID, "FAILED", 0, -1, "Failed to update Grok effort config")
+            await send_telegram_msg(chat_id, "❌ Cập nhật cấu hình effort thất bại!\n\n" + format_grok_effort_text())
+            append_audit_log(
+                "message", "/grok_effort", {"effort": target_effort}, user_id or ADMIN_USER_ID, "FAILED", 0, -1, "Failed to update Grok effort config"
+            )
         return
 
     # 4f. /help
@@ -2708,11 +2722,15 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
     if cmd_token == "/restart":
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
-            registry = load_command_registry()
-            restart_cmd = registry.get("system.container.restart", {})
-            whitelist_pattern = restart_cmd.get("param_rules", {}).get("service", "")
-            allowed = whitelist_pattern.replace("^(", "").replace(")$", "").replace("|", ", ") if whitelist_pattern else "open-webui, ..."
-            await send_telegram_msg(chat_id, f"Cú pháp: `/restart <service_name>` (Ví dụ: `/restart open-webui`)\nCác dịch vụ hợp lệ: `{allowed}`")
+            try:
+                registry = load_command_registry()
+                restart_cmd = registry.get("system.container.restart", {})
+                whitelist_pattern = restart_cmd.get("param_rules", {}).get("service", "")
+                allowed = whitelist_pattern.replace("^(", "").replace(")$", "").replace("|", ", ") if whitelist_pattern else "open-webui, ai-gateway, ..."
+            except Exception:
+                allowed = "open-webui, ai-gateway, rag-service, ..."
+            hint_msg = f"Cú pháp: `/restart <service_name>` (Ví dụ: `/restart open-webui`)\nCác dịch vụ hợp lệ: `{allowed}`"
+            await send_telegram_msg(chat_id, hint_msg)
             return
         svc = parts[1].strip()
         sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị khởi động lại {svc}...")
