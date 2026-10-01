@@ -2,6 +2,13 @@
 
 Nhật ký dòng thời gian ghi nhận các hoạt động nạp, cập nhật và chuẩn hóa tri thức tại repository `dgx-spark-toolkit`.
 
+## [2026-10-01] [session/chatops-hardening] | ChatOps 9-Fix Hardening Sprint + Grok Post-Impl Review
+
+- **Nhiệm vụ**: Audit toàn diện `chatops_daemon.py`, triển khai 9 fixes (P0→P1→P2), Grok pre-impl review + post-impl adversarial review.
+- **Kết quả**: 82/82 tests pass (tăng từ 76), flake8 clean, service PID 3622742 running. Commits: `c2e9840` (post-review fixes).
+- **Grok phát hiện bổ sung**: 2 P0 crash bugs (whitespace IndexError, mixed-type sort TypeError) mà 82 tests bỏ sót → fix ngay.
+- **Tri thức mới**: RULE-2.13 (Sort Key Uniform Type), RULE-4.7 (Post-Impl Review Gate), RULE-5.9 (Whitespace Split Guard).
+
 ## [2026-09-29] [feat/skills-and-antigravity-pool] | Skill Evolution v1.3/v1.5 & Antigravity Pool Triage v1.2.0 (PR #87 & PR #88 Merged)
 
 - **Nhiệm vụ**: Tiến hóa trực tiếp 2 Kernel Skills (`ccba-create-pr` v1.3.0 và `ccba-llm-pipeline-patterns` v1.5.0 Pattern 17) tại PR #87; nâng cấp cơ chế bảo vệ tài khoản Google qua Antigravity Tools và tối ưu hóa hiển thị ChatOps Triage tại PR #88.

@@ -46,7 +46,8 @@
 - `RULE-2.9 (Dynamic Catalog Sizing Invariant)`: Unit test kho tri thức cấm assert kích thước cố định (`assert len == 60`), bắt buộc dùng kiểm tra cận dưới (`assert len >= 60`).
 - `RULE-2.10 (KISS Function Limit)`: Complexity cảnh báo từ 10, lỗi review từ 15. SLOC > 80 là câu review. Xem `platform_aware_kiss_standard.md`.
 - `RULE-2.11 (URL-Encoded Path IDs)`: Endpoint REST/MCP nhận mã văn bản qua path (`/graph/neighbors/{node_id}`), số hiệu pháp lý có `/` bắt buộc `quote(so_hieu, safe="")`.
-- `RULE-2.12 (AST Model/IP Linter)`: Linter tĩnh dùng `ast` duyệt syntax tree quét chuỗi model thô (bỏ qua docstring) và `ipaddress` quét IPv4. Miễn trừ qua cú pháp tường minh (`# ccba:allow-raw-model`, `# ccba:allow-raw-ip`); cấm `# noqa`.
+- `RULE-2.12 (AST Model/IP Linter)`: Linter tĩnh dùng `ast` quét chuỗi model thô và IPv4. Miễn trừ qua `# ccba:allow-raw-model` / `# ccba:allow-raw-ip`; cấm `# noqa`.
+- `RULE-2.13 (Sort Key Uniform Type)`: Python 3 cấm so sánh `int` vs `str` trong sort. Key với PID/ID dùng `str(x).zfill(N)` để đồng nhất kiểu; cấm `int(x) if x.isdigit() else x` (gây `TypeError` khi mix kiểu).
 
 ---
 
@@ -62,20 +63,22 @@
 
 - `RULE-4.1 (GitHub Actions Billing Fallback)`: Khi GitHub Actions chạm hạn mức chi tiêu, dùng Shift-Left Local Gate làm căn cứ nghiệm thu.
 - `RULE-4.2 (Copilot Review Verification)`: Mọi review từ Copilot (`PRR_...`) phải đối soát và giải trình tại `walkthrough.md`.
-- `RULE-4.3 (Bidirectional LLM Peer Review)`: Phối hợp Antigravity & Grok qua JSON/MD (`status.json`, `grok_cross_review.md`). Vòng 1 rà soát blockers, Vòng 2 kiểm chứng AST & test suite.
-- `RULE-4.4 (Maskara URL False-Positive Guard)`: Trong tài liệu và log (.md), cấm ghi thô URL database vì pre-commit Maskara chặn nhầm Database URL leak. Bắt buộc mô tả ngữ nghĩa hoặc dùng masked placeholder.
-- `RULE-4.5 (Dual-LLM Adversarial Validation & Path Traversal)`: Grok CLI coi `~` là chuỗi thô (literal), cấm `~/...` trong `--deny`; bắt buộc dùng đường dẫn tuyệt đối chuẩn hóa (`/home/vvc/...`) và loại bỏ `list_dir`.
-- `RULE-4.6 (Read-Only PR Discovery & Dirty Tree Guard)`: Bước 0 `/ccba-create-pr` strictly read-only, cấm auto-push hoặc self-heal trên `master`. Dirty Tree Guard chặn tạo PR nếu cây làm việc còn uncommitted changes.
+- `RULE-4.3 (Bidirectional LLM Peer Review)`: Phối hợp Antigravity & Grok qua JSON/MD. Vòng 1 rà soát blockers, Vòng 2 kiểm chứng AST & test suite.
+- `RULE-4.4 (Maskara URL False-Positive Guard)`: Trong tài liệu và log (.md), cấm ghi thô URL database vì pre-commit Maskara chặn nhầm. Dùng masked placeholder.
+- `RULE-4.5 (Dual-LLM Adversarial Validation & Path Traversal)`: Grok CLI coi `~` là chuỗi thô, cấm `~/...`; dùng đường dẫn tuyệt đối (`/home/vvc/...`) và loại bỏ `list_dir`.
+- `RULE-4.6 (Read-Only PR Discovery & Dirty Tree Guard)`: Bước 0 `/ccba-create-pr` strictly read-only; Dirty Tree Guard chặn tạo PR nếu còn uncommitted changes.
+- `RULE-4.7 (Post-Impl Review Gate)`: Tests pass 100% không đủ — bắt buộc Grok post-impl review sau batch fix lớn. Grok phát hiện `IndexError`/`TypeError` latent mà 82 tests bỏ sót. Prompt liệt kê từng fix kèm câu hỏi edge-case.
 
 ---
 
 ## Miền 5: Linux, Tooling & Environment
 
-- `RULE-5.1 (Python Executable Ambiguity)`: Trên Ubuntu/Linux, lệnh `python` không tồn tại mặc định. Mọi script/hook phải gọi `python3` hoặc `.venv/bin/python`.
-- `RULE-5.2 (Spoke Virtual Key & Credential Isolation)`: (1) Masking khóa bí mật CLI. (2) File `.env` Spoke bắt buộc gán `0o600`. (3) Chuẩn hóa endpoint Tailscale bỏ dư thừa `/v1`.
-- `RULE-5.3 (Headless Watchdog Metrics)`: Container watchdog đọc SoC Temp, RAM, NVMe từ `/proc/meminfo`, `shutil.disk_usage(/)`, `/sys/class/thermal` không cần root.
-- `RULE-5.4 (Blackwell GB10 SMI)`: GPU GB10 Unified Memory `nvidia-smi` trả `[N/A]`; truy vấn qua `--query-compute-apps=process_name,used_memory` cộng dồn tiến trình.
-- `RULE-5.5 (WAL-Safe SQLite Recovery)`: Nâng cấp container SQLite WAL gọi `sqlite3.backup()` xuất snapshot trước tarball. Rollback xóa `-wal`/`-shm` cũ phục hồi snapshot.
-- `RULE-5.6 (Thinking Token Management)`: Qwen 3.6 JSON/HyDE/fallbacks bắt buộc `enable_thinking: false`. Đổi cờ gateway phải gắn `cache_params.namespace` mới.
-- `RULE-5.7 (LAN Binding Restart)`: Sửa LAN `gui_config.json` bắt buộc restart `antigravity-tools.service` để re-bind socket tránh Connection refused qua Tailscale IP.
-- `RULE-5.8 (Hermes Sentinel & Prompt Ingestion)`: Hermes MCP dùng sentinel `no_mcp`; gỡ `skills` khỏi Telegram chặn prompt injection; CLI runner truyền prompt qua `stdin` tránh `E2BIG`.
+- `RULE-5.1 (Python Executable)`: Ubuntu/Linux không có `python`; dùng `python3` hoặc `.venv/bin/python`.
+- `RULE-5.2 (Credential Isolation)`: Masking bí mật CLI; `.env` Spoke gán `0o600`; Tailscale endpoint bỏ `/v1` thừa.
+- `RULE-5.3 (Headless Watchdog)`: Watchdog đọc SoC Temp/RAM/NVMe từ `/proc/meminfo`, `shutil.disk_usage(/)`, `/sys/class/thermal` không cần root.
+- `RULE-5.4 (Blackwell GB10 SMI)`: `nvidia-smi` trả `[N/A]` với Unified Memory; dùng `--query-compute-apps=process_name,used_memory`.
+- `RULE-5.5 (WAL-Safe SQLite)`: Gọi `sqlite3.backup()` trước tarball; rollback xóa `-wal`/`-shm` rồi phục hồi snapshot.
+- `RULE-5.6 (Thinking Token)`: Qwen 3.6 JSON/HyDE bắt buộc `enable_thinking: false`; đổi cờ gateway phải gắn `cache_params.namespace` mới.
+- `RULE-5.7 (LAN Binding)`: Sửa `gui_config.json` bắt buộc restart `antigravity-tools.service` re-bind socket (Tailscale IP).
+- `RULE-5.8 (Hermes Sentinel)`: Hermes dùng `no_mcp`; gỡ `skills` khỏi Telegram; CLI truyền prompt qua `stdin` tránh `E2BIG`.
+- `RULE-5.9 (Whitespace Split Guard)`: `text.split()[0]` crash với whitespace-only string (`"   ".split() == []`); bắt buộc guard `if text and text.strip()` trước mọi split token parse.

@@ -2187,7 +2187,8 @@ def test_message_reenable_account():
 def test_extract_validation_url_variants():
     """Verify extract_validation_url correctly parses direct URLs and regex from raw reasons."""
     # 1. Direct validation_url
-    assert daemon.extract_validation_url({"validation_url": "https://accounts.google.com/signin/continue?flow=1"}) == "https://accounts.google.com/signin/continue?flow=1"
+    target_url = "https://accounts.google.com/signin/continue?flow=1"
+    assert daemon.extract_validation_url({"validation_url": target_url}) == target_url
 
     # 2. Regex from proxy_disabled_reason with escaped unicode amp
     raw_str = (
@@ -2644,6 +2645,7 @@ def test_handle_menu_navigation_delegation():
 def test_boost_target_dynamic_hub_path_injection(monkeypatch):
     """Verify dispatch_command injects CCBA_HUB_PATH into host_script target."""
     monkeypatch.setenv("CCBA_HUB_PATH", "/custom/hub/path")
+
     async def _test():
         with patch("scripts.chatops_daemon.execute_shell_job", new_callable=AsyncMock) as mock_exec, \
              patch("scripts.chatops_daemon.is_kernel_runner_locked", return_value=False):
@@ -2831,3 +2833,18 @@ def test_help_text_expanded_commands():
     assert "/reenable_account" in daemon.HELP_TEXT
     assert "/grok_effort" in daemon.HELP_TEXT
 
+
+def test_probe_memory_and_swap_markdown_safety():
+    """Verify probe_memory_and_swap formats process names with underscores using monospace backticks."""
+    async def _test():
+        mock_ps_out = b"12345 524288\n"
+        with patch("scripts.chatops_daemon.run_probe_command", new_callable=AsyncMock) as mock_cmd, \
+             patch("scripts.chatops_daemon.resolve_pid", return_value=("🐳 `rag-service`", "reindex_milvus.py")):
+            mock_cmd.return_value = (0, mock_ps_out, b"")
+            text = await daemon.probe_memory_and_swap()
+            # Must use monospace backtick for task with underscore, not italic underscore
+            assert "`reindex_milvus.py`" in text
+            assert "_reindex_milvus.py_" not in text
+            assert "TOP 5 TIẾN TRÌNH DÙNG RAM (RSS):" in text
+
+    asyncio.run(_test())
