@@ -341,6 +341,36 @@ def test_analysis_endpoints(client):
     assert diagram_response.json()["daily_quota_limit"] == 25
 
 
+def test_compliance_endpoint_structured_profile(client):
+    _install_common_overrides()
+
+    mock_service = AsyncMock()
+    mock_service.check_compliance.return_value = {
+        "status": "ok",
+        "overall_status": "COMPLIANT",
+        "markdown_report": "# BÁO CÁO THẨM ĐỊNH",
+    }
+    app.dependency_overrides[get_compliance_service] = lambda: mock_service
+
+    payload = {
+        "project_profile": {
+            "project_name": "Chung cư Mỹ Đình",
+            "project_level": "Cấp_I",
+            "primary_function": "F1.2",
+            "geometry": {
+                "fire_height_m": 75.0,
+                "above_ground_floors": 25,
+                "underground_floors": 3,
+                "total_floor_area_m2": 35000.0,
+            },
+        },
+        "focus_area": "PCCC",
+    }
+    response = client.post("/analysis/compliance", json=payload)
+    assert response.status_code == 200
+    assert response.json()["overall_status"] == "COMPLIANT"
+
+
 def test_admin_quota_status_endpoint(client):
     _install_common_overrides()
 

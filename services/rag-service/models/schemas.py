@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 
 
 class SearchRequest(BaseModel):
@@ -65,8 +65,9 @@ class ConflictAnalysisRequest(BaseModel):
 
 
 class ComplianceCheckRequest(BaseModel):
-    project_profile: str
-    focus_area: Optional[str] = "BIM"
+    project_profile: Union[Dict[str, Any], str]
+    focus_area: Optional[str] = "PCCC"
+    charging_params: Optional[Dict[str, Any]] = None
 
 
 class UpdateRelationRequest(BaseModel):

@@ -39,7 +39,8 @@ async def check_compliance(
     """
     return await compliance_service.check_compliance(
         project_profile=request.project_profile,
-        focus_area=request.focus_area
+        focus_area=request.focus_area,
+        charging_params=request.charging_params,
     )
 
 
