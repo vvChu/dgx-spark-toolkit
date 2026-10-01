@@ -141,9 +141,12 @@ HELP_TEXT: str = (
     "• `/gpu`: Xem nhiệt độ, VRAM GPU Blackwell GB10.\n"
     "• `/autotuner`: Kiểm tra tiến độ Nightly Auto-Tuner CCBA.\n"
     "• `/rag_state`: Xem tiến độ hàng đợi RAG Ingestion.\n"
+    "• `/antigravity`: Kiểm tra hồ bơi tài khoản Antigravity.\n"
+    "• `/reenable_account <id>`: Kích hoạt lại tài khoản Antigravity (Health Probe).\n"
     "• `/deps`: Rà soát độ trễ phiên bản và lỗ hổng bảo mật phụ thuộc.\n"
     "• `/upgrade_deps [patch|minor]`: Nâng cấp phụ thuộc 1-Click kèm Hard Completion Lock.\n"
     "• `/grok`: Bật bảng điều khiển cảm ứng đổi model cho Grok Build CLI.\n"
+    "• `/grok_effort [low|medium|high]`: Chuyển mức suy luận Grok CLI.\n"
     "• `/set_grok_model <model>`: Chuyển đổi nhanh model Grok CLI.\n"
     "• `/restart <service>`: Khởi động lại container.\n"
     "• `/upgrade_owu`: Nâng cấp Open WebUI.\n"
@@ -530,18 +533,20 @@ async def probe_memory_and_swap() -> str:
 
     def _resolve_pid(pid: str) -> tuple[str, str]:
         cname, task = None, ""
+        is_docker = False
         try:
             with open(f"/proc/{pid}/cgroup", "r") as f:
                 cg = f.read()
                 for line in cg.splitlines():
                     if "docker-" in line or "/docker/" in line:
+                        is_docker = True
                         for cid, name in cmap.items():
                             if cid in line:
                                 cname = name
                                 break
                         if cname:
                             break
-                    elif ".service" in line and not cname:
+                    elif ".service" in line and not cname and not is_docker:
                         parts = [p for p in line.split("/") if p.endswith(".service")]
                         if parts:
                             cname = parts[-1].replace(".service", "")
@@ -571,7 +576,9 @@ async def probe_memory_and_swap() -> str:
                     task = raw.split()[0].split("/")[-1]
         except Exception:
             pass
-        origin = f"🐳 `{cname}`" if cname else "💻 `Host`"
+        origin_icon = "🐳" if is_docker else "💻"
+        origin_label = cname if cname else "Host"
+        origin = f"{origin_icon} `{origin_label}`"
         return origin, task
 
     # 3. Top RAM Consumers
@@ -592,7 +599,7 @@ async def probe_memory_and_swap() -> str:
                     origin, task = _resolve_pid(pid)
                     lines.append(f"• {origin} (PID {pid}): *{sz_str}*")
                     if task:
-                        lines.append(f"  └ _{task}_")
+                        lines.append(f"  └ `{task.replace('`', '')}`")
         elif rc != 0:
             lines.append(f"• Lỗi đọc tiến trình RAM: {escape_md(err.decode().strip() or 'Timeout hoặc lỗi')}")
     except Exception as e:
@@ -615,7 +622,7 @@ async def probe_memory_and_swap() -> str:
                     swap_list.append((vmswap, pid))
             except Exception:
                 pass
-        swap_list.sort(reverse=True)
+        swap_list.sort(key=lambda x: (-x[0], int(x[1]) if str(x[1]).isdigit() else x[1]))
         if swap_list:
             for vmswap_kb, pid in swap_list[:5]:
                 vmswap_mb = vmswap_kb / 1024
@@ -623,7 +630,7 @@ async def probe_memory_and_swap() -> str:
                 origin, task = _resolve_pid(pid)
                 lines.append(f"• {origin} (PID {pid}): *{sz_str}*")
                 if task:
-                    lines.append(f"  └ _{task}_")
+                    lines.append(f"  └ `{task.replace('`', '')}`")
         else:
             lines.append(" 🟢 _Không có tiến trình nào bị trôi vào Swap._")
     except Exception as e:
@@ -1449,6 +1456,13 @@ def register_failed_pin_attempt() -> int:
             data = json.loads(LOCKOUT_FILE.read_text())
         except Exception:
             pass
+
+    old_locked_until = data.get("locked_until", 0)
+    if old_locked_until > 0 and time.time() >= old_locked_until:
+        data["attempts"] = 0
+        data["locked_until"] = 0
+        append_audit_log("exec", "lockout_expired", {}, ADMIN_USER_ID, "RESET", 0, 0, "Brute force lockout expired, counter reset")
+
     attempts = data.get("attempts", 0) + 1
     locked_until = 0
     if attempts >= 3:
@@ -2077,9 +2091,11 @@ async def dispatch_command(
 
     # 4. Executor implementation
     async def _execute_action() -> bool:
+        nonlocal cq_id
         if runner == "internal":
             if cq_id:
                 await answer_callback(cq_id)
+                cq_id = None
             if command_id == "system.status":
                 text = await probe_hardware_and_containers()
                 if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=get_main_dashboard_markup()):
@@ -2223,7 +2239,7 @@ async def _handle_menu_navigation(data: str, cq_id: str, chat_id: int, message_i
         return True
     elif data == "menu:deps_check":
         await answer_callback(cq_id, "🔍 Đang rà soát phụ thuộc...")
-        await dispatch_command("system.deps.check", {}, chat_id, message_id, title="Rà soát phụ thuộc & bảo mật", cq_id=cq_id)
+        await dispatch_command("system.deps.check", {}, chat_id, message_id, title="Rà soát phụ thuộc & bảo mật", cq_id=None)
         return True
     elif data == "menu:deps_upg_patch":
         await answer_callback(cq_id)
@@ -2489,7 +2505,7 @@ async def _handle_callback_query(cq: Dict[str, Any], update: Dict[str, Any]) -> 
             return
         await answer_callback(cq_id, f"🔍 Đang kiểm tra probe {account_id}...")
         status_msg_id = await send_telegram_msg(chat_id, f"⏳ *[HEALTH PROBE GATE]* Đang kiểm tra tài khoản `{account_id}`...\nVui lòng đợi...")
-        await reenable_antigravity_account(account_id, chat_id, status_msg_id or message_id, cq_id=cq_id, user_id=user_id)
+        await reenable_antigravity_account(account_id, chat_id, status_msg_id or message_id, cq_id=None, user_id=user_id)
         return
     elif data.startswith("act:"):
         nonce = data.split(":", 1)[1]
@@ -2510,7 +2526,7 @@ async def _handle_callback_query(cq: Dict[str, Any], update: Dict[str, Any]) -> 
 
         await answer_callback(cq_id, f"🚀 Khởi chạy {title}...")
         status_msg_id = await send_telegram_msg(chat_id, f"⏳ *[ĐANG CHẠY]* `{title}`\nVui lòng đợi...")
-        dispatched = await dispatch_command(cmd, params, chat_id, status_msg_id or message_id, title=title, cq_id=cq_id, timeout=timeout)
+        dispatched = await dispatch_command(cmd, params, chat_id, status_msg_id or message_id, title=title, cq_id=None, timeout=timeout)
         if not dispatched:
             action_cache[nonce] = entry
         return
@@ -2549,62 +2565,64 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
         append_audit_log("message", text, {"user_id": user_id}, user_id, "FORBIDDEN", 0, -1, "Unknown user message dropped")
         return
 
+    cmd_token = text.split()[0].split("@")[0].lower() if text else ""
+
     # 1. /start or /menu
-    if text in ["/start", "/menu"]:
+    if cmd_token in ["/start", "/menu"]:
         await send_telegram_msg(chat_id, "🖥️ *BẢNG ĐIỀU KHIỂN DGX SPARK CHATOPS*\nVui lòng chọn tác vụ bên dưới:", reply_markup=get_main_dashboard_markup())
         return
 
     # 2. /status
-    if text == "/status":
+    if cmd_token == "/status":
         sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra trạng thái...")
         if sent_id:
             await dispatch_command("system.status", {}, chat_id, sent_id)
         return
 
     # 2a. /memory
-    if text == "/memory":
+    if cmd_token == "/memory":
         sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra chi tiết bộ nhớ & Swap...")
         if sent_id:
             await dispatch_command("system.memory", {}, chat_id, sent_id)
         return
 
     # 2b. /stats
-    if text == "/stats":
+    if cmd_token == "/stats":
         sent_id = await send_telegram_msg(chat_id, "⏳ Đang truy vấn thống kê AI Gateway...")
         if sent_id:
             await dispatch_command("system.stats", {}, chat_id, sent_id)
         return
 
     # 3. /gpu
-    if text == "/gpu":
+    if cmd_token == "/gpu":
         sent_id = await send_telegram_msg(chat_id, "⏳ Đang truy vấn GPU Blackwell...")
         if sent_id:
             await dispatch_command("host.gpu", {}, chat_id, sent_id)
         return
 
     # 4. /rag_state
-    if text == "/rag_state":
+    if cmd_token == "/rag_state":
         sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra hàng đợi RAG...")
         if sent_id:
             await dispatch_command("rag.ingestion.state", {}, chat_id, sent_id)
         return
 
     # 4a. /autotuner
-    if text == "/autotuner" or text.startswith("/autotuner@"):
+    if cmd_token == "/autotuner":
         sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra trạng thái Nightly Auto-Tuner...")
         if sent_id:
             await dispatch_command("ccba.autotuner.status", {}, chat_id, sent_id)
         return
 
     # 4b. /antigravity
-    if text in ["/antigravity", "/accounts"] or text.startswith("/antigravity@") or text.startswith("/accounts@"):
+    if cmd_token in ["/antigravity", "/accounts"]:
         sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra hồ bơi tài khoản Antigravity...")
         if sent_id:
             await dispatch_command("antigravity.status", {}, chat_id, sent_id)
         return
 
     # 4b2. /reenable_account <account_id>
-    if text.startswith("/reenable_account") or text.startswith("/reenable"):
+    if cmd_token in ["/reenable_account", "/reenable"]:
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
             await send_telegram_msg(chat_id, "Cú pháp: `/reenable_account <account_id>` (Ví dụ: `/reenable_account acc_123`)")
@@ -2619,14 +2637,14 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
         return
 
     # 4b. /deps
-    if text == "/deps" or text.startswith("/deps@") or text.startswith("/deps "):
+    if cmd_token == "/deps":
         sent_id = await send_telegram_msg(chat_id, "⏳ Đang rà soát phụ thuộc & kiểm tra bảo mật...")
         if sent_id:
             await dispatch_command("system.deps.check", {}, chat_id, sent_id, title="Rà soát phụ thuộc & bảo mật")
         return
 
     # 4c. /upgrade_deps [patch|minor]
-    if text == "/upgrade_deps" or text.startswith("/upgrade_deps@") or text.startswith("/upgrade_deps "):
+    if cmd_token == "/upgrade_deps":
         parts = text.split(maxsplit=1)
         tier = "patch"
         if len(parts) > 1:
@@ -2640,7 +2658,7 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
         return
 
     # 4d. /grok or /grok_model
-    if text in ["/grok", "/grok_model"] or text.startswith("/grok@") or text.startswith("/grok_model@"):
+    if cmd_token in ["/grok", "/grok_model"]:
         info = read_grok_model_info()
         grok_text = format_grok_menu_text()
         markup = get_grok_menu_markup(info.get("default", ""))
@@ -2648,7 +2666,7 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
         return
 
     # 4e. /set_grok_model <model>
-    if text.startswith("/set_grok_model") or text.startswith("/grok_set"):
+    if cmd_token in ["/set_grok_model", "/grok_set"]:
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
             allowed_str = ", ".join([f"`{m[0]}`" for m in GROK_AVAILABLE_MODELS])
@@ -2660,16 +2678,41 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
             await dispatch_command("grok.model.set", {"model": target_model}, chat_id, sent_id, title=f"Đổi model Grok sang {target_model}")
         return
 
+    # 4g. /grok_effort
+    if cmd_token == "/grok_effort":
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            allowed_efforts = ", ".join([f"`{e[0]}`" for e in GROK_EFFORT_LEVELS])
+            await send_telegram_msg(chat_id, f"⚠️ Cú pháp: `/grok_effort <level>`\nCác mức khả dụng: {allowed_efforts}")
+            return
+        target_effort = parts[1].strip().lower()
+        allowed_efforts = [e[0] for e in GROK_EFFORT_LEVELS]
+        if target_effort not in allowed_efforts:
+            await send_telegram_msg(chat_id, f"❌ Mức effort `{target_effort}` không hợp lệ!")
+            return
+        success = update_grok_effort(target_effort)
+        if success:
+            await send_telegram_msg(chat_id, f"🎯 Đã chuyển mức suy luận Grok CLI sang: `{target_effort}`\n\n" + format_grok_effort_text())
+            append_audit_log("message", "/grok_effort", {"effort": target_effort}, user_id or ADMIN_USER_ID, "SUCCESS", 0, 0, f"Set grok effort to {target_effort}")
+        else:
+            await send_telegram_msg(chat_id, f"❌ Cập nhật cấu hình effort thất bại!\n\n" + format_grok_effort_text())
+            append_audit_log("message", "/grok_effort", {"effort": target_effort}, user_id or ADMIN_USER_ID, "FAILED", 0, -1, "Failed to update Grok effort config")
+        return
+
     # 4f. /help
-    if text == "/help" or text.startswith("/help@"):
+    if cmd_token == "/help":
         await send_telegram_msg(chat_id, HELP_TEXT, reply_markup=get_main_dashboard_markup())
         return
 
     # 5. /restart <service>
-    if text.startswith("/restart"):
+    if cmd_token == "/restart":
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
-            await send_telegram_msg(chat_id, "Cú pháp: `/restart <service_name>` (Ví dụ: `/restart open-webui`)")
+            registry = load_command_registry()
+            restart_cmd = registry.get("system.container.restart", {})
+            whitelist_pattern = restart_cmd.get("param_rules", {}).get("service", "")
+            allowed = whitelist_pattern.replace("^(", "").replace(")$", "").replace("|", ", ") if whitelist_pattern else "open-webui, ..."
+            await send_telegram_msg(chat_id, f"Cú pháp: `/restart <service_name>` (Ví dụ: `/restart open-webui`)\nCác dịch vụ hợp lệ: `{allowed}`")
             return
         svc = parts[1].strip()
         sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị khởi động lại {svc}...")
@@ -2678,7 +2721,7 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
         return
 
     # 6. /upgrade_owu [version]
-    if text.startswith("/upgrade_owu"):
+    if cmd_token == "/upgrade_owu":
         parts = text.split(maxsplit=1)
         if len(parts) > 1:
             ver = parts[1].strip()
@@ -2738,7 +2781,7 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
         return
 
     # 7. /exec <PIN> <command>
-    if text.startswith("/exec"):
+    if cmd_token == "/exec":
         # Immediately delete message to purge PIN from history
         await delete_telegram_msg(chat_id, message_id)
 
@@ -2804,7 +2847,7 @@ async def _handle_text_message(msg: Dict[str, Any]) -> None:
         return
 
     # 8. /boost <skill>
-    if text.startswith("/boost"):
+    if cmd_token == "/boost":
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
             await send_telegram_msg(chat_id, "Cú pháp: `/boost <skill_name>` (Ví dụ: `/boost bigbim-risk`)")
@@ -3077,8 +3120,13 @@ async def handle_internal_notify(payload: Dict[str, Any], x_chatops_secret: Opti
                     f"  *Giới hạn thời gian:* `{display_timeout}s`"
                 )
         body_text = "\n\n".join(action_summaries)
+        icon = "🔔" if severity == "INFO" else "⚠️" if severity == "WARNING" else "🚨"
+        escaped_title = escape_md(title[:200])
+        escaped_body = escape_md(body[:2000]) if body else ""
+        client_info = f"{icon} *{escaped_title}*\n\n{escaped_body}\n\n─────────────\n\n"
         msg_text = (
-            f"⚠️ *[ĐỀ XUẤT THỰC THI TÁC VỤ]*\n\n"
+            f"{client_info}"
+            f"⚡ *[HÀNH ĐỘNG ĐỀ XUẤT]*\n\n"
             f"{body_text}\n\n"
             f"_Vui lòng bấm nút bên dưới để xác nhận thực thi hoặc bỏ qua nếu không đồng ý._"
         )

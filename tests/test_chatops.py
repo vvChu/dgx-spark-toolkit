@@ -453,7 +453,7 @@ def test_dynamic_action_callback_handling():
                 daemon.ADMIN_USER_ID,
                 1001,
                 title="🚀 /boost bigbim-risk",
-                cq_id="cq_valid_1",
+                cq_id=None,
                 timeout=600,
             )
 
@@ -1596,7 +1596,7 @@ def test_callback_deps_menu_and_actions():
              patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_disp:
             await daemon.process_telegram_update(cq_check)
             mock_ans.assert_called_once_with("cq_deps_chk", "🔍 Đang rà soát phụ thuộc...")
-            mock_disp.assert_called_once_with("system.deps.check", {}, daemon.ADMIN_USER_ID, 8802, title="Rà soát phụ thuộc & bảo mật", cq_id="cq_deps_chk")
+            mock_disp.assert_called_once_with("system.deps.check", {}, daemon.ADMIN_USER_ID, 8802, title="Rà soát phụ thuộc & bảo mật", cq_id=None)
 
         # 3. menu:deps_upg_patch
         cq_patch = {
@@ -2137,7 +2137,7 @@ def test_callback_act_antigravity_reenable():
             mock_ans.assert_called_once_with("cq_reenable_1", "🔍 Đang kiểm tra probe acc_xyz_789...")
             mock_send.assert_called_once()
             assert "HEALTH PROBE GATE" in mock_send.call_args[0][1]
-            mock_reenable.assert_called_once_with("acc_xyz_789", daemon.ADMIN_USER_ID, 7702, cq_id="cq_reenable_1", user_id=daemon.ADMIN_USER_ID)
+            mock_reenable.assert_called_once_with("acc_xyz_789", daemon.ADMIN_USER_ID, 7702, cq_id=None, user_id=daemon.ADMIN_USER_ID)
 
     asyncio.run(_test())
 
@@ -2684,3 +2684,149 @@ def test_microservice_urls_and_db_constants():
     assert daemon.LITELLM_PG_CONTAINER == "litellm-postgres"
     assert daemon.LITELLM_PG_USER == "litellm"
     assert daemon.LITELLM_PG_DATABASE == "litellm"
+
+
+def test_lockout_expiry_resets_counter(tmp_path):
+    """Verify failed PIN counter resets to 1 after lockout expires instead of immediate re-lock."""
+    test_lockout = tmp_path / "test_lockout.json"
+    with patch("scripts.chatops_daemon.LOCKOUT_FILE", test_lockout), \
+         patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+        # 1. Simulate expired lockout (locked 1 hour ago)
+        test_lockout.write_text(json.dumps({"attempts": 3, "locked_until": int(time.time() - 100)}))
+
+        # 2. First failure in new session after expiry
+        attempts = daemon.register_failed_pin_attempt()
+        assert attempts == 1
+        data = json.loads(test_lockout.read_text())
+        assert data["attempts"] == 1
+        assert data["locked_until"] == 0
+        mock_audit.assert_called_once()
+        assert mock_audit.call_args[1]["status"] == "RESET"
+
+        # 3. Second failure
+        attempts_2 = daemon.register_failed_pin_attempt()
+        assert attempts_2 == 2
+        data_2 = json.loads(test_lockout.read_text())
+        assert data_2["attempts"] == 2
+        assert data_2["locked_until"] == 0
+
+        # 4. Third failure triggers new lockout
+        attempts_3 = daemon.register_failed_pin_attempt()
+        assert attempts_3 == 3
+        data_3 = json.loads(test_lockout.read_text())
+        assert data_3["attempts"] == 3
+        assert data_3["locked_until"] > time.time()
+
+
+def test_slash_command_at_bot_and_space_normalization():
+    """Verify slash commands with @bot_username and trailing spaces route correctly."""
+    async def _test():
+        test_cases = [
+            ("/status@DgxSparkBot", "system.status"),
+            ("/status ", "system.status"),
+            ("/memory@DgxSparkBot", "system.memory"),
+            ("/stats@DgxSparkBot", "system.stats"),
+            ("/gpu@DgxSparkBot", "host.gpu"),
+            ("/rag_state@DgxSparkBot", "rag.ingestion.state"),
+        ]
+        for cmd_text, expected_cmd in test_cases:
+            msg = {
+                "message": {
+                    "message_id": 9901,
+                    "from": {"id": daemon.ADMIN_USER_ID},
+                    "chat": {"id": daemon.ADMIN_USER_ID},
+                    "text": cmd_text,
+                    "date": int(time.time()),
+                }
+            }
+            with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+                 patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_disp:
+                mock_send.return_value = 9902
+                mock_disp.return_value = True
+
+                await daemon.process_telegram_update(msg)
+                mock_disp.assert_called_once_with(expected_cmd, {}, daemon.ADMIN_USER_ID, 9902)
+
+    asyncio.run(_test())
+
+
+def test_internal_notify_preserves_title_body_with_actions():
+    """Verify /api/v1/notify preserves client title and body when action buttons are present."""
+    client = TestClient(daemon.app)
+    with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = 10099
+        payload = {
+            "severity": "WARNING",
+            "type": "google_account_challenge",
+            "title": "Account Challenge Detected",
+            "body": "Validation link: https://accounts.google.com/challenge/test123",
+            "actions": [
+                {
+                    "command": "system.status",
+                    "label": "Check System Status",
+                }
+            ]
+        }
+        res = client.post("/api/v1/notify", json=payload, headers={"X-ChatOps-Secret": daemon.CHATOPS_WEBHOOK_SECRET})
+        assert res.status_code == 200
+        mock_send.assert_called_once()
+        msg_text = mock_send.call_args[0][1]
+        # Must contain title, body, separator and action header
+        assert "Account Challenge Detected" in msg_text
+        assert "https://accounts.google.com/challenge/test123" in msg_text
+        assert "─────────────" in msg_text
+        assert "HÀNH ĐỘNG ĐỀ XUẤT" in msg_text
+        # Must have inline keyboard
+        reply_markup = mock_send.call_args[1].get("reply_markup")
+        assert reply_markup is not None
+        assert "inline_keyboard" in reply_markup
+
+
+def test_grok_effort_slash_command_and_restart_whitelist_hint():
+    """Verify /grok_effort text command and /restart whitelist guidance."""
+    async def _test():
+        # 1. /grok_effort text command
+        msg_effort = {
+            "message": {
+                "message_id": 9950,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/grok_effort high",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.update_grok_effort", return_value=True) as mock_eff, \
+             patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = 9951
+            await daemon.process_telegram_update(msg_effort)
+            mock_eff.assert_called_once_with("high")
+            mock_send.assert_called_once()
+            assert "Đã chuyển mức suy luận Grok CLI sang: `high`" in mock_send.call_args[0][1]
+
+        # 2. /restart without args displays allowed container list
+        msg_restart_no_args = {
+            "message": {
+                "message_id": 9952,
+                "from": {"id": daemon.ADMIN_USER_ID},
+                "chat": {"id": daemon.ADMIN_USER_ID},
+                "text": "/restart",
+                "date": int(time.time()),
+            }
+        }
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send_rst:
+            await daemon.process_telegram_update(msg_restart_no_args)
+            mock_send_rst.assert_called_once()
+            rst_text = mock_send_rst.call_args[0][1]
+            assert "Các dịch vụ hợp lệ:" in rst_text
+            assert "open-webui" in rst_text
+            assert "milvus-standalone" in rst_text
+
+    asyncio.run(_test())
+
+
+def test_help_text_expanded_commands():
+    """Verify HELP_TEXT includes newly supported slash commands."""
+    assert "/antigravity" in daemon.HELP_TEXT
+    assert "/reenable_account" in daemon.HELP_TEXT
+    assert "/grok_effort" in daemon.HELP_TEXT
+
