@@ -53,12 +53,15 @@ class Neo4jRepository:
            OR start.id = 'VBPL/' + $doc_number
            OR start.id = 'ROOT/' + $doc_number
            OR start.doc_number = replace($doc_number, 'ROOT/', '')
+        ORDER BY CASE WHEN start.id STARTS WITH 'VBPL/' THEN 0 ELSE 1 END
         WITH start LIMIT 1
         OPTIONAL MATCH (newer:Document)-[:REPLACES]->(start)
         OPTIONAL MATCH (p:Document)-[:PROMULGATES]->(start)
         OPTIONAL MATCH (start)-[:PROMULGATES]->(out_p:Document)
         OPTIONAL MATCH (a:Document)-[:AMENDS]->(start)
         OPTIONAL MATCH (start)-[:AMENDS]->(out_a:Document)
+        OPTIONAL MATCH (trans:Document)-[gt:GOVERNS_TRANSITIONAL]->(start)
+        OPTIONAL MATCH (start)-[out_gt:GOVERNS_TRANSITIONAL]->(out_trans:Document)
         OPTIONAL MATCH path = (start)-[:REPLACES|REFERENCES*1..10]->(current)
         WITH start,
              collect(DISTINCT newer) AS superseding,
@@ -66,8 +69,11 @@ class Neo4jRepository:
              collect(DISTINCT out_p) AS out_promulgates,
              collect(DISTINCT a) AS amenders,
              collect(DISTINCT out_a) AS out_amends,
+             collect(DISTINCT {node: trans, rel: gt}) AS transitional_governors,
+             collect(DISTINCT {node: out_trans, rel: out_gt}) AS out_transitional,
              collect(path) AS rep_paths
-        RETURN start, superseding, promulgators, out_promulgates, amenders, out_amends, rep_paths
+        RETURN start, superseding, promulgators, out_promulgates, amenders, out_amends,
+               transitional_governors, out_transitional, rep_paths
         """
         try:
             async with self._driver.session() as session:
@@ -82,6 +88,8 @@ class Neo4jRepository:
                 out_promulgates = record["out_promulgates"]
                 amenders = record["amenders"]
                 out_amends = record["out_amends"]
+                transitional_governors = record.get("transitional_governors") or []
+                out_transitional = record.get("out_transitional") or []
                 rep_paths = record["rep_paths"]
 
                 timeline: list[dict] = []
@@ -173,6 +181,40 @@ class Neo4jRepository:
                             "effective_date": node.get("effective_date") or node.get("date") or "unknown",
                             "status": node.get("status", "OUTDATED"),
                             "relation_to_next": rel_type,
+                        })
+
+                # 8. Transitional governors (incoming GOVERNS_TRANSITIONAL)
+                for tg in transitional_governors:
+                    t_node = tg.get("node") if isinstance(tg, dict) else None
+                    t_rel = tg.get("rel") if isinstance(tg, dict) else None
+                    if t_node:
+                        t_props = dict(t_rel) if t_rel else {}
+                        timeline.append({
+                            "doc_number": t_node.get("doc_number") or t_node.get("id"),
+                            "id": t_node.get("id"),
+                            "effective_date": t_node.get("effective_date") or t_node.get("date") or "unknown",
+                            "status": t_node.get("status", "ACTIVE"),
+                            "relation_to_next": "GOVERNS_TRANSITIONAL",
+                            "cutoff_date": t_props.get("cutoff_date"),
+                            "grace_period_end": t_props.get("grace_period_end"),
+                            "condition": t_props.get("condition"),
+                        })
+
+                # 9. Outgoing transitional predecessors
+                for ot in out_transitional:
+                    o_node = ot.get("node") if isinstance(ot, dict) else None
+                    o_rel = ot.get("rel") if isinstance(ot, dict) else None
+                    if o_node:
+                        o_props = dict(o_rel) if o_rel else {}
+                        timeline.append({
+                            "doc_number": o_node.get("doc_number") or o_node.get("id"),
+                            "id": o_node.get("id"),
+                            "effective_date": o_node.get("effective_date") or o_node.get("date") or "unknown",
+                            "status": o_node.get("status", "OUTDATED"),
+                            "relation_to_next": "TRANSITIONAL_PREDECESSOR",
+                            "cutoff_date": o_props.get("cutoff_date"),
+                            "grace_period_end": o_props.get("grace_period_end"),
+                            "condition": o_props.get("condition"),
                         })
 
                 return timeline

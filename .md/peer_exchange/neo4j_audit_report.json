@@ -1,0 +1,63 @@
+{
+  "status": "SUCCESS",
+  "normalized_nodes_count": 49,
+  "repaired_decree_relationships": [
+    {
+      "source": "207/2026/NĐ-CP",
+      "rel": "AMENDS",
+      "target": "15/2021/NĐ-CP"
+    },
+    {
+      "source": "209/2026/NĐ-CP",
+      "rel": "AMENDS",
+      "target": "06/2021/NĐ-CP"
+    },
+    {
+      "source": "206/2026/NĐ-CP",
+      "rel": "AMENDS",
+      "target": "10/2021/NĐ-CP"
+    },
+    {
+      "source": "339/2026/NĐ-CP",
+      "rel": "AMENDS",
+      "target": "16/2022/NĐ-CP"
+    }
+  ],
+  "transitional_relationships_created": [
+    {
+      "source": "135/2025/QH15",
+      "target": "50/2014/QH13",
+      "properties": {
+        "condition": "Hồ sơ hoặc hợp đồng ký kết/phê duyệt trước 01/07/2026 tiếp tục áp dụng Luật Xây dựng 2014.",
+        "grace_period_end": "2027-07-01",
+        "cutoff_date": "2026-07-01"
+      }
+    },
+    {
+      "source": "31/2026/TT-BXD",
+      "target": "QCVN 04:2021/BXD",
+      "properties": {
+        "condition": "Nhà chung cư hiện hữu có thời hạn đến 15/06/2027 để hoàn thành rà soát trạm sạc xe điện.",
+        "grace_period_end": "2027-06-15",
+        "cutoff_date": "2026-12-15"
+      }
+    },
+    {
+      "source": "09/2023/TT-BXD",
+      "target": "QCVN 06:2022/BXD",
+      "properties": {
+        "condition": "Hồ sơ thiết kế PCCC nộp trước 01/12/2023 tiếp tục áp dụng quy chuẩn tại thời điểm nộp.",
+        "grace_period_end": "2024-12-01",
+        "cutoff_date": "2023-12-01"
+      }
+    }
+  ],
+  "graph_relationship_stats": {
+    "REPLACES": 43,
+    "GUIDES": 27,
+    "PROMULGATES": 14,
+    "AMENDS": 10,
+    "REFERENCES": 7,
+    "GOVERNS_TRANSITIONAL": 3
+  }
+}
