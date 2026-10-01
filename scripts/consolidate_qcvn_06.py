@@ -11,11 +11,17 @@ Key Invariants:
 5. Idempotent: Loads pristine 2022 backup baselines to guarantee zero residual drift.
 """
 
+import os
 import re
 import shutil
 from pathlib import Path
 
-VAULT_DIR = Path("/home/vvc/ccba/ccba-legal-knowledge/legal_docs/02_qcvn/qcvn_06_2022_bxd")
+VAULT_DIR = Path(
+    os.getenv(
+        "CCBA_LEGAL_KNOWLEDGE_PATH",
+        "/home/vvc/ccba/ccba-legal-knowledge/legal_docs/02_qcvn/qcvn_06_2022_bxd",  # ccba:allow-machine-path
+    )
+)
 MASTER_FILE = VAULT_DIR / "qcvn_06_2022_bxd.md"
 BAK_FILE = VAULT_DIR / "qcvn_06_2022_bxd.md.bak"
 AMENDMENT_FILE = VAULT_DIR / "sources/sua_doi_1_2023_qcvn_06_2022_bxd.md"

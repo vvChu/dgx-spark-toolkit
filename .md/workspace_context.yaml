@@ -18,3 +18,21 @@ project:
   name: dgx-spark-toolkit
   qc_mode: null
   type: Phần mềm
+
+cleanliness:
+  allowed_scripts:
+    - audit_neo4j_relationships.py
+    - consolidate_qcvn_06.py
+    - benchmark_bge_m3_cache.py
+    - benchmark_local_llm.py
+    - benchmark_qwen.py
+  roles:
+    audits:
+      - audit_neo4j_relationships.py
+    benchmarks:
+      - benchmark_bge_m3_cache.py
+      - benchmark_local_llm.py
+      - benchmark_qwen.py
+    tools:
+      - consolidate_qcvn_06.py
+
