@@ -2701,7 +2701,7 @@ def test_lockout_expiry_resets_counter(tmp_path):
         assert data["attempts"] == 1
         assert data["locked_until"] == 0
         mock_audit.assert_called_once()
-        assert mock_audit.call_args[1]["status"] == "RESET"
+        assert mock_audit.call_args[0][4] == "RESET"
 
         # 3. Second failure
         attempts_2 = daemon.register_failed_pin_attempt()
@@ -2750,9 +2750,10 @@ def test_slash_command_at_bot_and_space_normalization():
     asyncio.run(_test())
 
 
-def test_internal_notify_preserves_title_body_with_actions():
+def test_internal_notify_preserves_title_body_with_actions(monkeypatch):
     """Verify /api/v1/notify preserves client title and body when action buttons are present."""
-    client = TestClient(daemon.app)
+    monkeypatch.setattr(daemon, "CHATOPS_INTERNAL_SECRET", "dgx_test_secret_123")
+    client = TestClient(daemon.app, client=("127.0.0.1", 50000))
     with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = 10099
         payload = {
@@ -2762,12 +2763,12 @@ def test_internal_notify_preserves_title_body_with_actions():
             "body": "Validation link: https://accounts.google.com/challenge/test123",
             "actions": [
                 {
-                    "command": "system.status",
-                    "label": "Check System Status",
+                    "command": "system.deps.check",
+                    "label": "Check System Dependencies",
                 }
             ]
         }
-        res = client.post("/api/v1/notify", json=payload, headers={"X-ChatOps-Secret": daemon.CHATOPS_WEBHOOK_SECRET})
+        res = client.post("/api/v1/notify", json=payload, headers={"X-ChatOps-Secret": daemon.CHATOPS_INTERNAL_SECRET})
         assert res.status_code == 200
         mock_send.assert_called_once()
         msg_text = mock_send.call_args[0][1]
