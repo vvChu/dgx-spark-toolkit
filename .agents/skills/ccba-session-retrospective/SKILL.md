@@ -22,7 +22,7 @@ keywords:
 - kiểm định quản trị
 metadata:
   author: CCBA
-  version: 1.5.0
+  version: 1.4.0
 bundle: _core
 tier: kernel
 triggers:
@@ -129,12 +129,6 @@ Trước khi kết thúc phiên, Agent **bắt buộc** phải thực hiện quy
    python -m ccba_harness verify-patch --preset skill
    ```
 - **Tiêu chí hoàn thành:** Cả 4 lệnh kiểm tra cốt lõi, scoped test suite và khóa cứng `verify-patch --preset skill` đều trả về Exit code 0 (100% PASS). Agent nghiêm cấm báo cáo hoàn thành hoặc yêu cầu người dùng nghiệm thu nếu có bất kỳ kiểm định nào thất bại. Lưu ý: `validate_docs.py` có thể trả về Exit code 0 kèm cảnh báo `[WARN]` — đây là chấp nhận được; chỉ khi Exit code 1 (`[ERROR]`) mới chặn hoàn tất.
-
-> [!NOTE]
-> **Spoke Fallback (Hub Scripts Not Synced):** Các scripts Hub (`scripts/governance/compile_catalog.py`, `scripts/validate_skills.py`, `scripts/sync_hub_adr_matrix.py`, `scripts/session_cleanup.py`) có thể chưa được sync về Spoke. Khi gặp `[Errno 2] No such file or directory`:
-> 1. Thay thế bằng: `pytest` (tests), `flake8` (lint), `wc -c session_learnings.md` (budget check)
-> 2. Ghi nhận scripts bị thiếu vào mục **Trạng thái Governance Gate** trong báo cáo Bước 6
-> 3. Đây là **known infra gap** — không phải lỗi của session, không block completion
 
 ### Bước 5: Dọn dẹp Tự động & Commit Bypass (Workspace & Git Clean)
 - **Dọn dẹp tự động qua công cụ nền tảng:**
