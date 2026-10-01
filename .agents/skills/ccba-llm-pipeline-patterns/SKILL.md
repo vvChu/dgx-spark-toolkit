@@ -10,7 +10,7 @@ bundle: _core
 tier: kernel
 command: /ccba-llm-pipeline-patterns
 metadata:
-  version: "1.4.0"
+  version: "1.6.0"
   author: "CCBA Hub"
 gpi:
   s: 3.0
@@ -555,6 +555,108 @@ Khi triển khai các mô hình lý luận (Reasoning LLMs / Hybrid MoE như Qwe
 1. **Never Prompt-Beg**: Tuyệt đối không phụ thuộc vào văn xuôi "không suy nghĩ" trong system prompt. BẮT BUỘC tắt thinking từ tầng chat template (`enable_thinking: False`) hoặc định tuyến qua alias `local-instruct`.
 2. **Strict Extraction Budget**: Mọi hàm bóc tách dữ liệu có cấu trúc có `max_tokens <= 512` phải vô hiệu hóa thinking để bảo toàn trọn vẹn ngân sách token cho payload JSON.
 3. **Decoupled Gateway Contract**: Application code chỉ được gọi thông qua các alias ngữ nghĩa (`local-instruct`, `rag-core`), không hardcode tên checkpoint vật lý.
+
+---
+
+## Pattern 17: Subprocess CLI Isolation & Mutex Lock
+
+### Vấn đề
+Subprocess nặng (Grok CLI, AGY CLI, vLLM launcher) chạy từ async handler gây ra:
+1. **Zombie processes**: Process không được `wait()` → tích lũy defunct entries, tràn PID table.
+2. **Concurrent execution collision**: Hai request đồng thời khởi động cùng 1 subprocess nặng → race condition, GPU OOM.
+3. **Path traversal risk**: Argument từ user input truyền thẳng vào `subprocess.Popen` → command injection.
+
+### Giải pháp: Pattern 17 (3 lớp bảo vệ)
+```python
+import fcntl, asyncio
+from pathlib import Path
+
+LOCK_FILE = Path("/tmp/grok_subprocess.lock")
+
+async def run_heavy_subprocess(cmd_args: list[str]) -> str:
+    """Pattern 17: Mutex + resolved path + process group cleanup."""
+    # Lớp 1 — Cross-process Mutex (fcntl.flock LOCK_NB)
+    lock_fd = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock_fd.close()
+        raise RuntimeError("Subprocess đang bận — thử lại sau")
+
+    try:
+        # Lớp 2 — Path Traversal Guard (resolve absolute path)
+        safe_bin = Path(cmd_args[0]).resolve()
+
+        # Lớp 3 — New session group (start_new_session=True)
+        proc = await asyncio.create_subprocess_exec(
+            str(safe_bin), *cmd_args[1:],
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,  # tạo process group mới
+        )
+        stdout, _ = await proc.communicate()
+        return stdout.decode(errors="replace")
+    finally:
+        # Dọn process group nếu còn sống
+        try:
+            import os, signal
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+            pass
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+```
+
+### Key Invariants
+1. **`LOCK_NB` (Non-Blocking)**: Thất bại ngay lập tức thay vì block vô hạn — caller nhận được error message ngay.
+2. **`start_new_session=True`**: Tạo process group riêng; `os.killpg()` dọn sạch toàn bộ child processes của subprocess.
+3. **`Path.resolve()`**: Chuẩn hóa `~/...` thành `/home/user/...`, chặn path traversal và symlink attack.
+
+---
+
+## Pattern 18: Input Token Parse Safety (Whitespace & Type Guards)
+
+### Vấn đề
+Hai class crash phổ biến khi parse input string và sort key trong Python 3:
+
+**Class A — Whitespace IndexError:**
+```python
+text = "   "          # whitespace-only input
+cmd = text.split()[0]  # [] → IndexError: list index out of range
+```
+
+**Class B — Mixed-type Sort TypeError:**
+```python
+items = [(100.0, "123"), (50.0, "456"), (200.0, "9a")]
+items.sort(key=lambda x: (-x[0], int(x[1]) if x[1].isdigit() else x[1]))
+# → TypeError: '<' not supported between instances of 'str' and 'int'
+# (khi list có mix cả digit và non-digit PIDs)
+```
+
+### Giải pháp chuẩn hóa
+
+**Guard A — Whitespace-safe token parse:**
+```python
+# ❌ SAI — crash với whitespace-only
+cmd_token = text.split()[0].split("@")[0].lower() if text else ""
+
+# ✅ ĐÚNG — guard cả None và whitespace-only
+cmd_token = text.split()[0].split("@")[0].lower() if text and text.strip() else ""
+```
+
+**Guard B — Uniform sort key type:**
+```python
+# ❌ SAI — mix int/str gây TypeError khi list có cả loại
+items.sort(key=lambda x: (-x[0], int(x[1]) if str(x[1]).isdigit() else x[1]))
+
+# ✅ ĐÚNG — zfill đảm bảo uniform str type, vẫn sort đúng thứ tự numeric
+items.sort(key=lambda x: (-x[0], str(x[1]).zfill(10)))
+```
+
+### Key Invariants
+1. **`text.strip()` trước `split()[0]`**: Bắt buộc trong mọi command token parser nhận Telegram/chat text.
+2. **`str().zfill(N)` cho PID/ID sort**: N = 10 đủ cho Linux PID (max 7 digits). Tránh `int()` conversion trong lambda sort key đa tiêu chí.
+3. **Unit test bắt buộc**: Test case `text = "   "` (whitespace-only) và `items` có PID non-digit phải nằm trong test suite của mọi command dispatcher.
 
 ---
 
