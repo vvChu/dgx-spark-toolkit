@@ -7,8 +7,6 @@ from functools import lru_cache
 
 from sentence_transformers import CrossEncoder
 
-from core.vram_accelerator import vram_accelerate
-
 logger = logging.getLogger(__name__)
 
 

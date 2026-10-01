@@ -176,3 +176,34 @@ def test_retriever_timeline_parity(timeline_retriever):
         )
 
     _run(_test())
+
+
+def test_statutory_references_graph(neo4j_driver):
+    """Verify statutory REFERENCES and REPLACES edges between key standards in Neo4j."""
+    query = """
+    MATCH (s:Document)-[r:REFERENCES|REPLACES]->(t:Document)
+    WHERE s.doc_number IN ['QCVN 06:2022/BXD', 'QCVN 04:2021/BXD', 'QCVN 10:2025/BCA']
+    RETURN s.doc_number as source, type(r) as rel_type, t.doc_number as target
+    """
+
+    async def _test():
+        async with neo4j_driver.session() as session:
+            res = await session.run(query)
+            edges = {(r["source"], r["rel_type"], r["target"]) async for r in res}
+
+            # QCVN 06:2022/BXD references
+            assert ("QCVN 06:2022/BXD", "REFERENCES", "TCVN 7336:2021") in edges
+            assert ("QCVN 06:2022/BXD", "REFERENCES", "TCVN 3890:2023") in edges
+            assert ("QCVN 06:2022/BXD", "REFERENCES", "TCVN 5738:2021") in edges
+            assert ("QCVN 06:2022/BXD", "REFERENCES", "QCVN 01:2021/BXD") in edges
+            assert ("QCVN 06:2022/BXD", "REFERENCES", "QCVN 04:2021/BXD") in edges
+
+            # QCVN 04:2021/BXD references
+            assert ("QCVN 04:2021/BXD", "REFERENCES", "QCVN 06:2022/BXD") in edges
+            assert ("QCVN 04:2021/BXD", "REFERENCES", "QCVN 01:2021/BXD") in edges
+
+            # QCVN 10:2025/BCA replaces TCVN 3890:2023
+            assert ("QCVN 10:2025/BCA", "REPLACES", "TCVN 3890:2023") in edges
+
+    _run(_test())
+

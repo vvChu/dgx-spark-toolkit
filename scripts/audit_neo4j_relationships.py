@@ -75,6 +75,18 @@ DECREE_CORRECTIONS = [
     {"decree": "339/2026/NĐ-CP", "correct_target": "16/2022/NĐ-CP", "rel_type": "AMENDS"},
 ]
 
+# Statutory Cross-References Matrix (Connecting Core Standards & Planning Code)
+STATUTORY_REFERENCES = [
+    {"source": "QCVN 06:2022/BXD", "target": "TCVN 7336:2021", "rel_type": "REFERENCES"},
+    {"source": "QCVN 06:2022/BXD", "target": "TCVN 3890:2023", "rel_type": "REFERENCES"},
+    {"source": "QCVN 06:2022/BXD", "target": "TCVN 5738:2021", "rel_type": "REFERENCES"},
+    {"source": "QCVN 06:2022/BXD", "target": "QCVN 01:2021/BXD", "rel_type": "REFERENCES"},
+    {"source": "QCVN 06:2022/BXD", "target": "QCVN 04:2021/BXD", "rel_type": "REFERENCES"},
+    {"source": "QCVN 04:2021/BXD", "target": "QCVN 06:2022/BXD", "rel_type": "REFERENCES"},
+    {"source": "QCVN 04:2021/BXD", "target": "QCVN 01:2021/BXD", "rel_type": "REFERENCES"},
+    {"source": "QCVN 10:2025/BCA", "target": "TCVN 3890:2023", "rel_type": "REPLACES"},
+]
+
 
 class Neo4jRelationshipAuditor:
     """Audits and repairs Neo4j legal knowledge graph relationships."""
@@ -182,6 +194,32 @@ class Neo4jRelationshipAuditor:
 
         return created
 
+    async def establish_statutory_references(self) -> List[Dict[str, Any]]:
+        """Establish normative REFERENCES and replacement edges between key standards."""
+        created = []
+        async with self.driver.session() as session:
+            for item in STATUTORY_REFERENCES:
+                source = item["source"]
+                target = item["target"]
+                rel_type = item["rel_type"]
+
+                query = f"""
+                MATCH (s:Document) WHERE s.doc_number = $source OR s.id = 'VBPL/' + $source
+                ORDER BY CASE WHEN s.id STARTS WITH 'VBPL/' THEN 0 ELSE 1 END WITH s LIMIT 1
+                MATCH (t:Document) WHERE t.doc_number = $target OR t.id = 'VBPL/' + $target
+                ORDER BY CASE WHEN t.id STARTS WITH 'VBPL/' THEN 0 ELSE 1 END WITH s, t LIMIT 1
+                MERGE (s)-[r:{rel_type}]->(t)
+                RETURN s.doc_number as source, type(r) as rel, t.doc_number as target
+                """
+                res = await session.run(query, source=source, target=target)
+                rec = await res.single()
+                if rec:
+                    logger.info(f"Established reference: {rec['source']} -[:{rec['rel']}]-> {rec['target']}")
+                    created.append({"source": rec["source"], "rel": rec["rel"], "target": rec["target"]})
+                else:
+                    logger.warning(f"Could not connect reference {source} -> {target}")
+        return created
+
     async def create_transitional_indexes(self):
         """Create Neo4j indexes for GOVERNS_TRANSITIONAL properties."""
         query = """
@@ -199,6 +237,7 @@ class Neo4jRelationshipAuditor:
         normalized_count = await self.normalize_doc_numbers()
         decree_repairs = await self.repair_mismatched_decrees()
         transitional_edges = await self.establish_transitional_relationships()
+        statutory_references = await self.establish_statutory_references()
         await self.create_transitional_indexes()
 
         # Query summary statistics
