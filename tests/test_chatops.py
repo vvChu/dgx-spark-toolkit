@@ -45,6 +45,9 @@ def test_command_registry_service_lock_and_whitelist():
         "rag-service",
         "milvus-standalone",
         "neo4j-graph",
+        "dgx-spark-ocr-worker",
+        "rag-frontend",
+        "whisper-local",
     ]
     for s in allowed:
         assert regex.match(s), f"Should match allowed service: {s}"
@@ -84,7 +87,7 @@ def test_command_registry_service_lock_and_whitelist():
 
 
 def test_restart_service_markup():
-    """Verify get_restart_service_markup contains milvus-standalone and neo4j-graph."""
+    """Verify get_restart_service_markup contains all 11 whitelisted containers."""
     markup = daemon.get_restart_service_markup()
     buttons = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
 
@@ -92,6 +95,9 @@ def test_restart_service_markup():
     assert "rst:neo4j-graph" in buttons
     assert "rst:open-webui" in buttons
     assert "rst:rag-service" in buttons
+    assert "rst:dgx-spark-ocr-worker" in buttons
+    assert "rst:rag-frontend" in buttons
+    assert "rst:whisper-local" in buttons
 
 
 def test_audit_hash_chain_restoration(tmp_path, monkeypatch):
@@ -989,12 +995,10 @@ def test_execute_shell_job_suspicious_success_warning(tmp_path, monkeypatch):
 
 
 def test_main_dashboard_markup_12_buttons():
-    """Verify main dashboard markup has 12 buttons across 6 rows (2 per row)."""
+    """Verify main dashboard markup has buttons across 7 rows including grok_menu."""
     markup = daemon.get_main_dashboard_markup()
     keyboard = markup["inline_keyboard"]
-    assert len(keyboard) == 6
-    for row in keyboard:
-        assert len(row) == 2
+    assert len(keyboard) == 7
 
     callbacks = [btn["callback_data"] for row in keyboard for btn in row]
     assert "menu:status" in callbacks
@@ -1009,6 +1013,7 @@ def test_main_dashboard_markup_12_buttons():
     assert "menu:deps_menu" in callbacks
     assert "menu:antigravity" in callbacks
     assert "menu:help" in callbacks
+    assert "menu:grok_menu" in callbacks
 
 
 def test_boost_submenu_markup_deterministic_sorting(tmp_path):
@@ -2318,3 +2323,364 @@ def test_reenable_antigravity_account_manual_disabled_passes_stage1():
             assert mock_audit.call_args[0][4] == "PROBE_FAILED"
 
     asyncio.run(_test())
+
+
+def test_grok_model_command_registry():
+    """Verify grok.model.menu and grok.model.set command definitions in chatops_commands.yaml."""
+    commands_file = Path("scripts/chatops_commands.yaml")
+    assert commands_file.exists()
+
+    with open(commands_file, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    cmds = {c["id"]: c for c in data.get("commands", [])}
+
+    assert "grok.model.menu" in cmds
+    menu_cmd = cmds["grok.model.menu"]
+    assert menu_cmd["slash"] == "/grok"
+    assert menu_cmd["risk_tier"] == "READ_ONLY"
+    assert menu_cmd["runner"] == "internal"
+
+    assert "grok.model.set" in cmds
+    set_cmd = cmds["grok.model.set"]
+    assert set_cmd["slash"] == "/set_grok_model"
+    assert set_cmd["risk_tier"] == "SAFE_OPS"
+    assert set_cmd["runner"] == "internal"
+
+    model_regex = re.compile(set_cmd["param_rules"]["model"])
+    # Allowed models
+    assert model_regex.match("qwen-local")
+    assert model_regex.match("gemini-38-flash")
+    assert model_regex.match("claude-sonnet-4-6")
+    assert model_regex.match("claude-opus-4-6")
+    assert model_regex.match("grok-4.7")
+    assert model_regex.match("grok-4.7-build-fast")
+    assert model_regex.match("grok-4.6")
+    assert model_regex.match("grok-4.5")
+
+    # Disallowed models
+    assert not model_regex.match("gpt-4o")
+    assert not model_regex.match("qwen;rm -rf /")
+    assert not model_regex.match("random-model")
+
+
+def test_grok_menu_and_effort_markup():
+    """Verify get_grok_menu_markup and get_grok_effort_markup generate correct buttons and checkmarks."""
+    # 1. Menu markup with qwen-local active
+    markup = daemon.get_grok_menu_markup(current_model="qwen-local")
+    keyboard = markup["inline_keyboard"]
+    callbacks = [btn["callback_data"] for row in keyboard for btn in row]
+
+    assert "grok_set:qwen-local" in callbacks
+    assert "grok_set:gemini-38-flash" in callbacks
+    assert "grok_set:claude-sonnet-4-6" in callbacks
+    assert "grok_set:claude-opus-4-6" in callbacks
+    assert "grok_set:grok-4.7" in callbacks
+    assert "menu:grok_effort_menu" in callbacks
+    assert "menu:main" in callbacks
+
+    # Checkmark on current model
+    qwen_btn = next(btn for row in keyboard for btn in row if btn["callback_data"] == "grok_set:qwen-local")
+    assert "✅" in qwen_btn["text"]
+    gemini_btn = next(btn for row in keyboard for btn in row if btn["callback_data"] == "grok_set:gemini-38-flash")
+    assert "✅" not in gemini_btn["text"]
+
+    # 2. Effort markup with medium active
+    effort_markup = daemon.get_grok_effort_markup(current_effort="medium")
+    effort_kb = effort_markup["inline_keyboard"]
+    eff_callbacks = [btn["callback_data"] for row in effort_kb for btn in row]
+
+    assert "grok_effort:low" in eff_callbacks
+    assert "grok_effort:medium" in eff_callbacks
+    assert "grok_effort:high" in eff_callbacks
+    assert "grok_effort:xhigh" in eff_callbacks
+    assert "menu:grok_menu" in eff_callbacks
+
+    med_btn = next(btn for row in effort_kb for btn in row if btn["callback_data"] == "grok_effort:medium")
+    assert "✅" in med_btn["text"]
+    low_btn = next(btn for row in effort_kb for btn in row if btn["callback_data"] == "grok_effort:low")
+    assert "✅" not in low_btn["text"]
+
+
+def test_read_and_update_grok_config(tmp_path, monkeypatch):
+    """Verify reading and updating ~/.grok/config.toml safely without corrupting formatting."""
+    fake_config = tmp_path / "config.toml"
+    initial_content = (
+        "[cli]\n"
+        "installer = \"internal\"\n\n"
+        "[models]\n"
+        "default = \"grok-4.7\"\n"
+        "default_reasoning_effort = \"xhigh\"\n\n"
+        "[model_providers.ai-gateway]\n"
+        "base_url = \"http://127.0.0.1:8090/v1\"\n"
+    )
+    fake_config.write_text(initial_content, encoding="utf-8")
+    monkeypatch.setattr(daemon, "GROK_CONFIG_PATH", fake_config)
+
+    # 1. Read initial info
+    info = daemon.read_grok_model_info()
+    assert info["default"] == "grok-4.7"
+    assert info["effort"] == "xhigh"
+    assert info["exists"] is True
+
+    # 2. Update model
+    assert daemon.update_grok_model("qwen-local") is True
+    updated_info = daemon.read_grok_model_info()
+    assert updated_info["default"] == "qwen-local"
+    assert updated_info["effort"] == "xhigh"
+
+    # Verify other sections preserved
+    content = fake_config.read_text(encoding="utf-8")
+    assert "[model_providers.ai-gateway]" in content
+
+    # 3. Update effort
+    assert daemon.update_grok_effort("low") is True
+    updated_effort_info = daemon.read_grok_model_info()
+    assert updated_effort_info["effort"] == "low"
+    assert updated_effort_info["default"] == "qwen-local"
+
+
+def test_handle_grok_callbacks(tmp_path, monkeypatch):
+    """Verify callback query routing for menu:grok_menu, grok_set:*, menu:grok_effort_menu, and grok_effort:*."""
+    fake_config = tmp_path / "config.toml"
+    fake_config.write_text("[models]\ndefault = \"grok-4.7\"\ndefault_reasoning_effort = \"medium\"\n", encoding="utf-8")
+    monkeypatch.setattr(daemon, "GROK_CONFIG_PATH", fake_config)
+
+    async def _test():
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_answer, \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit, \
+             patch("scripts.chatops_daemon.append_audit_log") as mock_audit:
+
+            mock_edit.return_value = True
+
+            # 1. Open grok menu callback
+            update_menu = {
+                "callback_query": {
+                    "id": "cq_1",
+                    "from": {"id": daemon.ADMIN_USER_ID},
+                    "message": {"chat": {"id": 12345}, "message_id": 999},
+                    "data": "menu:grok_menu",
+                }
+            }
+            await daemon.process_telegram_update(update_menu)
+            mock_answer.assert_called_with("cq_1")
+            mock_edit.assert_called_once()
+            assert "QUẢN LÝ MODEL GROK BUILD CLI" in mock_edit.call_args[0][2]
+
+            # 2. Set model callback
+            mock_edit.reset_mock()
+            mock_answer.reset_mock()
+            update_set = {
+                "callback_query": {
+                    "id": "cq_2",
+                    "from": {"id": daemon.ADMIN_USER_ID},
+                    "message": {"chat": {"id": 12345}, "message_id": 999},
+                    "data": "grok_set:qwen-local",
+                }
+            }
+            await daemon.process_telegram_update(update_set)
+            mock_answer.assert_called_with("cq_2", "✅ Đã đổi sang qwen-local!")
+            assert daemon.read_grok_model_info()["default"] == "qwen-local"
+            assert mock_audit.called
+
+            # 3. Open effort menu callback
+            mock_edit.reset_mock()
+            mock_answer.reset_mock()
+            update_effort_menu = {
+                "callback_query": {
+                    "id": "cq_3",
+                    "from": {"id": daemon.ADMIN_USER_ID},
+                    "message": {"chat": {"id": 12345}, "message_id": 999},
+                    "data": "menu:grok_effort_menu",
+                }
+            }
+            await daemon.process_telegram_update(update_effort_menu)
+            mock_answer.assert_called_with("cq_3")
+            assert "CHỌN MỨC SUY LUẬN" in mock_edit.call_args[0][2]
+
+            # 4. Set effort callback
+            mock_edit.reset_mock()
+            mock_answer.reset_mock()
+            update_set_effort = {
+                "callback_query": {
+                    "id": "cq_4",
+                    "from": {"id": daemon.ADMIN_USER_ID},
+                    "message": {"chat": {"id": 12345}, "message_id": 999},
+                    "data": "grok_effort:xhigh",
+                }
+            }
+            await daemon.process_telegram_update(update_set_effort)
+            mock_answer.assert_called_with("cq_4", "🎯 Mức suy luận: xhigh!")
+            assert daemon.read_grok_model_info()["effort"] == "xhigh"
+
+    asyncio.run(_test())
+
+
+def test_handle_grok_message_commands(tmp_path, monkeypatch):
+    """Verify text slash commands /grok and /set_grok_model."""
+    fake_config = tmp_path / "config.toml"
+    fake_config.write_text("[models]\ndefault = \"grok-4.7\"\ndefault_reasoning_effort = \"medium\"\n", encoding="utf-8")
+    monkeypatch.setattr(daemon, "GROK_CONFIG_PATH", fake_config)
+
+    async def _test():
+        with patch("scripts.chatops_daemon.send_telegram_msg", new_callable=AsyncMock) as mock_send, \
+             patch("scripts.chatops_daemon.dispatch_command", new_callable=AsyncMock) as mock_dispatch:
+
+            mock_send.return_value = 888
+
+            # 1. /grok command
+            update_grok = {
+                "message": {
+                    "message_id": 101,
+                    "date": int(time.time()),
+                    "chat": {"id": 12345},
+                    "from": {"id": daemon.ADMIN_USER_ID},
+                    "text": "/grok",
+                }
+            }
+            await daemon.process_telegram_update(update_grok)
+            mock_send.assert_called_once()
+            assert "QUẢN LÝ MODEL GROK BUILD CLI" in mock_send.call_args[0][1]
+
+            # 2. /set_grok_model claude-sonnet-4-6
+            mock_send.reset_mock()
+            update_set = {
+                "message": {
+                    "message_id": 102,
+                    "date": int(time.time()),
+                    "chat": {"id": 12345},
+                    "from": {"id": daemon.ADMIN_USER_ID},
+                    "text": "/set_grok_model claude-sonnet-4-6",
+                }
+            }
+            await daemon.process_telegram_update(update_set)
+            mock_send.assert_called_once()
+            mock_dispatch.assert_called_once_with(
+                "grok.model.set",
+                {"model": "claude-sonnet-4-6"},
+                12345,
+                888,
+                title="Đổi model Grok sang claude-sonnet-4-6",
+            )
+
+    asyncio.run(_test())
+
+
+def test_run_probe_command_success():
+    """Verify run_probe_command successfully executes simple command and captures output."""
+    async def _test():
+        rc, stdout, stderr = await daemon.run_probe_command(["echo", "hello_dgx"], timeout=2.0)
+        assert rc == 0
+        assert b"hello_dgx" in stdout
+
+    asyncio.run(_test())
+
+
+def test_run_probe_command_timeout():
+    """Verify run_probe_command enforces timeout and kills hanging processes."""
+    async def _test():
+        rc, stdout, stderr = await daemon.run_probe_command(["sleep", "5"], timeout=0.1)
+        assert rc == -1
+        assert b"timed out" in stderr
+
+    asyncio.run(_test())
+
+
+def test_run_probe_command_nonexistent():
+    """Verify run_probe_command gracefully returns -1 for nonexistent commands."""
+    async def _test():
+        rc, stdout, stderr = await daemon.run_probe_command(["nonexistent_probe_binary_xyz_123"], timeout=2.0)
+        assert rc == -1
+        assert len(stderr) > 0
+
+    asyncio.run(_test())
+
+
+def test_escape_md():
+    """Verify escape_md escapes Telegram Markdown v1 special characters."""
+    assert daemon.escape_md("") == ""
+    assert daemon.escape_md(None) == ""
+    raw = "Error_in_docker: *failed* with [code] and `value`"
+    escaped = daemon.escape_md(raw)
+    assert r"\_" in escaped
+    assert r"\*" in escaped
+    assert r"\[" in escaped
+    assert r"\`" in escaped
+
+
+def test_help_text_constant():
+    """Verify HELP_TEXT constant contains all major commands and guidance."""
+    assert daemon.HELP_TEXT
+    assert "HƯỚNG DẪN SỬ DỤNG DGX-CHATOPS" in daemon.HELP_TEXT
+    assert "/status" in daemon.HELP_TEXT
+    assert "/memory" in daemon.HELP_TEXT
+    assert "/gpu" in daemon.HELP_TEXT
+    assert "/grok" in daemon.HELP_TEXT
+    assert "/restart" in daemon.HELP_TEXT
+    assert "/boost" in daemon.HELP_TEXT
+
+
+def test_handle_menu_navigation_delegation():
+    """Verify _handle_menu_navigation handles known menus and returns False for unknown."""
+    async def _test():
+        with patch("scripts.chatops_daemon.answer_callback", new_callable=AsyncMock) as mock_ans, \
+             patch("scripts.chatops_daemon.edit_telegram_msg", new_callable=AsyncMock) as mock_edit:
+            mock_ans.return_value = True
+            mock_edit.return_value = True
+
+            # Known menu item
+            handled = await daemon._handle_menu_navigation("menu:main", "cq_1", 123, 456)
+            assert handled is True
+            mock_ans.assert_called_once_with("cq_1")
+            mock_edit.assert_called_once()
+
+            # Unknown menu item
+            handled_unknown = await daemon._handle_menu_navigation("unknown:data", "cq_2", 123, 456)
+            assert handled_unknown is False
+
+    asyncio.run(_test())
+
+
+def test_boost_target_dynamic_hub_path_injection(monkeypatch):
+    """Verify dispatch_command injects CCBA_HUB_PATH into host_script target."""
+    monkeypatch.setenv("CCBA_HUB_PATH", "/custom/hub/path")
+    async def _test():
+        with patch("scripts.chatops_daemon.execute_shell_job", new_callable=AsyncMock) as mock_exec, \
+             patch("scripts.chatops_daemon.is_kernel_runner_locked", return_value=False):
+            mock_exec.return_value = None
+            dispatched = await daemon.dispatch_command("ccba.skill.boost", {"skill": "bigbim-risk"}, 123, 456)
+            assert dispatched is True
+            mock_exec.assert_called_once()
+            called_cmd = mock_exec.call_args[0][0]
+            assert "bash /custom/hub/path/scripts/eval/run_boost_worktree.sh bigbim-risk" == called_cmd
+
+    asyncio.run(_test())
+
+
+def test_core_container_keywords_coverage():
+    """Verify CORE_CONTAINER_KEYWORDS covers all 11 core infrastructure containers."""
+    expected = [
+        "open-webui",
+        "ai-gateway",
+        "qwen36b",
+        "smart-watchdog",
+        "cloudflared",
+        "rag-service",
+        "milvus",
+        "neo4j",
+        "dgx-spark-ocr-worker",
+        "rag-frontend",
+        "whisper-local",
+    ]
+    for c in expected:
+        assert c in daemon.CORE_CONTAINER_KEYWORDS
+
+
+def test_microservice_urls_and_db_constants():
+    """Verify externalized service URLs, targets, and database configuration defaults."""
+    assert daemon.RAG_SERVICE_URL.startswith("http")
+    assert daemon.OPENWEBUI_URL.startswith("http")
+    assert daemon.RAG_TARGET_DOCS > 0
+    assert daemon.LITELLM_PG_CONTAINER == "litellm-postgres"
+    assert daemon.LITELLM_PG_USER == "litellm"
+    assert daemon.LITELLM_PG_DATABASE == "litellm"

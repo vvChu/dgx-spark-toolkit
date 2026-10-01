@@ -23,13 +23,13 @@ import json
 import os
 from pathlib import Path
 import re
-import secrets
 import shlex
 import shutil
 import signal
 import sys
 import time
-from typing import Any, Dict, Optional
+import tomllib
+from typing import Any, Dict, List, Optional, Tuple, Union
 import uuid
 
 from dotenv import load_dotenv
@@ -66,6 +66,50 @@ LOCK_FILE = STATE_DIR / "dgx_chatops.lock"
 LOCKOUT_FILE = STATE_DIR / "chatops_lockout.json"
 AUDIT_FILE = LOG_DIR / "audit.jsonl"
 COMMANDS_FILE = PROJECT_ROOT / "scripts" / "chatops_commands.yaml"
+GROK_CONFIG_PATH = Path.home() / ".grok" / "config.toml"
+
+# --- Externalized Microservices & Database Endpoints ---
+RAG_SERVICE_URL = os.environ.get("RAG_SERVICE_URL", "http://127.0.0.1:8005").rstrip("/")
+OPENWEBUI_URL = os.environ.get("OPENWEBUI_URL", "http://127.0.0.1:3001").rstrip("/")
+RAG_TARGET_DOCS = int(os.environ.get("RAG_TARGET_DOCS", "8870"))
+
+LITELLM_PG_CONTAINER = os.environ.get("LITELLM_PG_CONTAINER", "litellm-postgres")
+LITELLM_PG_USER = os.environ.get("LITELLM_PG_USER", "litellm")
+LITELLM_PG_DATABASE = os.environ.get("LITELLM_PG_DATABASE", "litellm")
+
+# Core containers monitored by /status (aligned with restart whitelist)
+CORE_CONTAINER_KEYWORDS = [
+    "open-webui",
+    "ai-gateway",
+    "qwen36b",
+    "smart-watchdog",
+    "cloudflared",
+    "rag-service",
+    "milvus",
+    "neo4j",
+    "dgx-spark-ocr-worker",
+    "rag-frontend",
+    "whisper-local",
+]
+
+# ccba:allow-raw-model
+GROK_AVAILABLE_MODELS = [
+    ("qwen-local", "🟢 Qwen 35B Local (GPU)"),
+    ("gemini-38-flash", "⚡ Gemini 3.8 Flash"),
+    ("claude-sonnet-4-6", "🧠 Claude Sonnet 4.6"),
+    ("claude-opus-4-6", "🚀 Claude Opus 4.6"),
+    ("grok-4.7", "⭐ Grok 4.7 (xAI)"),
+    ("grok-4.7-build-fast", "🏎️ Grok 4.7 Fast"),
+    ("grok-4.6", "🌪️ Grok 4.6 (xAI)"),
+    ("grok-4.5", "📦 Grok 4.5 (xAI)"),
+]
+
+GROK_EFFORT_LEVELS = [
+    ("low", "🟢 Low (Tiết kiệm)"),
+    ("medium", "🟡 Medium (Cân bằng)"),
+    ("high", "🟠 High (Suy luận sâu)"),
+    ("xhigh", "🔴 xHigh (Tối đa)"),
+]
 
 TELEGRAM_API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
@@ -86,6 +130,74 @@ SHELL_BLACKLIST = [
     r"\bpoweroff\b",
     r"\binit\s+0\b",
 ]
+
+# Help Text single source of truth (P1-03)
+HELP_TEXT: str = (
+    "❓ *HƯỚNG DẪN SỬ DỤNG DGX-CHATOPS*\n\n"
+    "• `/menu` hoặc `/start`: Bật bảng điều khiển cảm ứng.\n"
+    "• `/status`: Kiểm tra nhanh phần cứng & containers.\n"
+    "• `/memory`: Chi tiết RAM, Swap và Top 5 tiến trình ngốn bộ nhớ.\n"
+    "• `/stats`: Thống kê sản lượng Tokens, Requests (Dual-Gateway).\n"
+    "• `/gpu`: Xem nhiệt độ, VRAM GPU Blackwell GB10.\n"
+    "• `/autotuner`: Kiểm tra tiến độ Nightly Auto-Tuner CCBA.\n"
+    "• `/rag_state`: Xem tiến độ hàng đợi RAG Ingestion.\n"
+    "• `/deps`: Rà soát độ trễ phiên bản và lỗ hổng bảo mật phụ thuộc.\n"
+    "• `/upgrade_deps [patch|minor]`: Nâng cấp phụ thuộc 1-Click kèm Hard Completion Lock.\n"
+    "• `/grok`: Bật bảng điều khiển cảm ứng đổi model cho Grok Build CLI.\n"
+    "• `/set_grok_model <model>`: Chuyển đổi nhanh model Grok CLI.\n"
+    "• `/restart <service>`: Khởi động lại container.\n"
+    "• `/upgrade_owu`: Nâng cấp Open WebUI.\n"
+    "• `/boost <skill>`: Tăng cường suy luận sâu cho kỹ năng bị kẹt (ADR-0052).\n"
+    "• `/exec <PIN> <command>`: Thực thi lệnh khẩn cấp (có 2-step confirmation).\n"
+)
+
+
+def escape_md(text: str) -> str:
+    """Escapes Telegram Markdown (v1) special formatting characters in raw dynamic text."""
+    if not text:
+        return ""
+    return re.sub(r"([_*`\[])", r"\\\1", str(text))
+
+
+async def run_probe_command(
+    cmd: List[str],
+    timeout: float = 10.0,
+    cwd: Optional[Union[str, Path]] = None,
+) -> Tuple[int, bytes, bytes]:
+    """Runs an OS probe command with timeout and process kill escalation.
+
+    Returns:
+        Tuple of (returncode, stdout_bytes, stderr_bytes). If timed out or errored,
+        returncode is -1 and stderr contains the error message.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+        )
+    except Exception as e:
+        return -1, b"", str(e).encode()
+
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return proc.returncode or 0, stdout or b"", stderr or b""
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
+        return -1, b"", b"Probe command timed out"
+    except asyncio.CancelledError:
+        try:
+            proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
+        raise
+
 
 # --- 2. IN-MEMORY STATE & MUTEXES ---
 action_cache: Dict[str, Dict[str, Any]] = {}
@@ -331,15 +443,11 @@ async def probe_hardware_and_containers() -> str:
 
     # 3. GPU Temp & Compute
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "nvidia-smi",
-            "--query-gpu=temperature.gpu,utilization.gpu",
-            "--format=csv,noheader",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        rc, out, _ = await run_probe_command(
+            ["nvidia-smi", "--query-gpu=temperature.gpu,utilization.gpu", "--format=csv,noheader"],
+            timeout=5.0,
         )
-        out, _ = await proc.communicate()
-        if out:
+        if rc == 0 and out:
             temp, util = out.decode().strip().split(",")
             lines.append(f"• *GPU Blackwell:* Nhiệt độ `{temp.strip()}°C` | Tải `{util.strip()}`")
     except Exception:
@@ -347,28 +455,24 @@ async def probe_hardware_and_containers() -> str:
 
     lines.append("\n📦 *TRẠNG THÁI CONTAINERS:*")
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "docker",
-            "ps",
-            "-a",
-            "--format",
-            "{{.Names}}|{{.Status}}|{{.Image}}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        rc, out, err = await run_probe_command(
+            ["docker", "ps", "-a", "--format", "{{.Names}}|{{.Status}}|{{.Image}}"],
+            timeout=8.0,
         )
-        out, _ = await proc.communicate()
-        if out:
+        if rc == 0 and out:
             for c_line in out.decode().strip().split("\n"):
                 if not c_line.strip():
                     continue
                 parts = c_line.split("|")
                 name = parts[0]
                 status = parts[1]
-                if any(core in name for core in ["open-webui", "ai-gateway", "qwen36b", "smart-watchdog", "cloudflared", "rag-service", "milvus", "neo4j"]):
+                if any(core in name for core in CORE_CONTAINER_KEYWORDS):
                     st_icon = "🟢" if "Up" in status else "🔴"
                     lines.append(f" {st_icon} `{name}`: {status}")
+        elif rc != 0:
+            lines.append(f"• Lỗi kiểm tra Docker: {escape_md(err.decode().strip() or 'Lệnh quá thời gian hoặc lỗi')}")
     except Exception as e:
-        lines.append(f"• Lỗi kiểm tra Docker: {e}")
+        lines.append(f"• Lỗi kiểm tra Docker: {escape_md(str(e))}")
 
     lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
     return "\n".join(lines)
@@ -412,13 +516,11 @@ async def probe_memory_and_swap() -> str:
     # Helper: Docker container mapping & process task resolver
     cmap: Dict[str, str] = {}
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "ps", "-a", "--no-trunc", "--format", "{{.ID}}|{{.Names}}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        rc, out, _ = await run_probe_command(
+            ["docker", "ps", "-a", "--no-trunc", "--format", "{{.ID}}|{{.Names}}"],
+            timeout=8.0,
         )
-        out, _ = await proc.communicate()
-        if out:
+        if rc == 0 and out:
             for line in out.decode().strip().split("\n"):
                 if "|" in line:
                     cid, cname = line.split("|")
@@ -475,13 +577,11 @@ async def probe_memory_and_swap() -> str:
     # 3. Top RAM Consumers
     lines.append("\n🔥 *TOP 5 TIẾN TRÌNH DÙNG RAM (RSS):*")
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "ps", "-eo", "pid,rss", "--sort=-rss",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        rc, out, err = await run_probe_command(
+            ["ps", "-eo", "pid,rss", "--sort=-rss"],
+            timeout=5.0,
         )
-        out, _ = await proc.communicate()
-        if out:
+        if rc == 0 and out:
             rows = out.decode().strip().split("\n")[1:6]
             for r in rows:
                 p_parts = r.split()
@@ -493,8 +593,10 @@ async def probe_memory_and_swap() -> str:
                     lines.append(f"• {origin} (PID {pid}): *{sz_str}*")
                     if task:
                         lines.append(f"  └ _{task}_")
+        elif rc != 0:
+            lines.append(f"• Lỗi đọc tiến trình RAM: {escape_md(err.decode().strip() or 'Timeout hoặc lỗi')}")
     except Exception as e:
-        lines.append(f"• Lỗi đọc tiến trình RAM: {e}")
+        lines.append(f"• Lỗi đọc tiến trình RAM: {escape_md(str(e))}")
 
     # 4. Top Swap Consumers
     lines.append("\n💾 *TOP 5 TIẾN TRÌNH NẰM TRONG SWAP:*")
@@ -554,12 +656,12 @@ async def _query_litellm_postgres_stats() -> Optional[Dict[str, Any]]:
         proc = await asyncio.create_subprocess_exec(
             "docker",
             "exec",
-            "litellm-postgres",
+            LITELLM_PG_CONTAINER,
             "psql",
             "-U",
-            "litellm",
+            LITELLM_PG_USER,
             "-d",
-            "litellm",
+            LITELLM_PG_DATABASE,
             "-t",
             "-A",
             "-F|",
@@ -1146,31 +1248,31 @@ async def probe_blackwell_gpu() -> str:
     """Deep probe for NVIDIA GB10 with compute processes memory summation."""
     lines = ["🎮 *THÔNG SỐ GPU NVIDIA BLACKWELL GB10* 🎮\n"]
     try:
-        p1 = await asyncio.create_subprocess_exec(
-            "nvidia-smi",
-            "--query-gpu=name,temperature.gpu,utilization.gpu,power.draw",
-            "--format=csv,noheader",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        rc1, out1, _ = await run_probe_command(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,temperature.gpu,utilization.gpu,power.draw",
+                "--format=csv,noheader",
+            ],
+            timeout=5.0,
         )
-        out1, _ = await p1.communicate()
-        if out1:
+        if rc1 == 0 and out1:
             name, temp, util, power = [x.strip() for x in out1.decode().strip().split(",")]
             lines.append(f"• Thiết bị: `{name}`")
             lines.append(f"• Nhiệt độ: `{temp}°C` | Tải: `{util}` | Công suất: `{power}`")
 
         # Query compute processes
-        p2 = await asyncio.create_subprocess_exec(
-            "nvidia-smi",
-            "--query-compute-apps=process_name,used_memory",
-            "--format=csv,noheader",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        rc2, out2, _ = await run_probe_command(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=process_name,used_memory",
+                "--format=csv,noheader",
+            ],
+            timeout=5.0,
         )
-        out2, _ = await p2.communicate()
         apps = []
         total_used_mib = 0.0
-        if out2:
+        if rc2 == 0 and out2:
             for row in out2.decode().strip().split("\n"):
                 if not row.strip():
                     continue
@@ -1192,7 +1294,7 @@ async def probe_blackwell_gpu() -> str:
         else:
             lines.append("• Không có tiến trình GPU compute nào đang chạy.")
     except Exception as e:
-        lines.append(f"• Lỗi truy vấn GPU: {e}")
+        lines.append(f"• Lỗi truy vấn GPU: {escape_md(str(e))}")
 
     lines.append(f"\n_Thời gian: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}_")
     return "\n".join(lines)
@@ -1391,8 +1493,169 @@ def get_main_dashboard_markup() -> Dict[str, Any]:
                 {"text": "🤖 Hồ Bơi Antigravity", "callback_data": "menu:antigravity"},
                 {"text": "❓ Hướng Dẫn ChatOps", "callback_data": "menu:help"},
             ],
+            [
+                {"text": "⚡ Đổi Model Grok CLI (MỚI)", "callback_data": "menu:grok_menu"},
+            ],
         ]
     }
+
+
+def get_grok_menu_markup(current_model: str = "") -> Dict[str, Any]:
+    """Builds sub-menu for switching Grok Build CLI default model."""
+    keyboard = []
+    for i in range(0, len(GROK_AVAILABLE_MODELS), 2):
+        row = []
+        for m_id, label in GROK_AVAILABLE_MODELS[i:i + 2]:
+            display = f"{label} ✅" if m_id == current_model else label
+            row.append({"text": display, "callback_data": f"grok_set:{m_id}"})
+        keyboard.append(row)
+
+    keyboard.append([
+        {"text": "🎯 Mức Suy Luận (Effort)", "callback_data": "menu:grok_effort_menu"},
+        {"text": "🔄 Làm Mới", "callback_data": "menu:grok_menu"},
+    ])
+    keyboard.append([
+        {"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"},
+    ])
+    return {"inline_keyboard": keyboard}
+
+
+def get_grok_effort_markup(current_effort: str = "") -> Dict[str, Any]:
+    """Builds sub-menu for choosing Grok reasoning effort."""
+    keyboard = []
+    for i in range(0, len(GROK_EFFORT_LEVELS), 2):
+        row = []
+        for eff_id, label in GROK_EFFORT_LEVELS[i:i + 2]:
+            display = f"{label} ✅" if eff_id == current_effort else label
+            row.append({"text": display, "callback_data": f"grok_effort:{eff_id}"})
+        keyboard.append(row)
+
+    keyboard.append([
+        {"text": "🔙 Quay Lại Menu Grok", "callback_data": "menu:grok_menu"},
+    ])
+    return {"inline_keyboard": keyboard}
+
+
+def get_grok_config_path() -> Path:
+    """Returns the path to ~/.grok/config.toml."""
+    return GROK_CONFIG_PATH
+
+
+def read_grok_model_info() -> Dict[str, Any]:
+    """Reads current model and effort from ~/.grok/config.toml."""
+    cfg_path = get_grok_config_path()
+    if not cfg_path.exists():
+        return {"default": "unknown", "effort": "unknown", "exists": False}
+    try:
+        content = cfg_path.read_text(encoding="utf-8")
+        data = tomllib.loads(content)
+        models_cfg = data.get("models", {})
+        return {
+            "default": str(models_cfg.get("default", "grok-4.7")),
+            "effort": str(models_cfg.get("default_reasoning_effort", "xhigh")),
+            "exists": True,
+        }
+    except Exception as e:
+        return {"default": "error", "effort": "error", "exists": True, "error": str(e)}
+
+
+def format_grok_menu_text() -> str:
+    """Formats Markdown text describing current Grok Build model status."""
+    info = read_grok_model_info()
+    cur_model = info.get("default", "unknown")
+    cur_effort = info.get("effort", "unknown")
+
+    model_display_names = {
+        "qwen-local": "Qwen 35B Local (GPU Spark - Miễn phí)",
+        "gemini-38-flash": "Gemini 3.8 Flash High (AI Gateway)",
+        "claude-sonnet-4-6": "Claude Sonnet 4.6 (AI Gateway)",
+        "claude-opus-4-6": "Claude Opus 4.6 (AI Gateway)",
+        "grok-4.7": "Grok 4.7 (xAI Frontier - Weekly Limit)",
+        "grok-4.7-build-fast": "Grok 4.7 Fast (xAI)",
+        "grok-4.6": "Grok 4.6 (xAI)",
+        "grok-4.5": "Grok 4.5 (xAI)",
+    }
+    disp = model_display_names.get(cur_model, cur_model)
+
+    return (
+        "⚡ *QUẢN LÝ MODEL GROK BUILD CLI* ⚡\n\n"
+        f"• *Model hiện tại:* `{disp}`\n"
+        f"• *Mức suy luận (Effort):* `{cur_effort}`\n"
+        f"• *Cấu hình:* `~/.grok/config.toml`\n\n"
+        "👇 _Chọn model bên dưới để chuyển đổi ngay lập tức cho Grok Build:_"
+    )
+
+
+def format_grok_effort_text() -> str:
+    """Formats Markdown text describing reasoning effort selection."""
+    info = read_grok_model_info()
+    cur_model = info.get("default", "unknown")
+    cur_effort = info.get("effort", "unknown")
+
+    return (
+        "🎯 *CHỌN MỨC SUY LUẬN (REASONING EFFORT)* 🎯\n\n"
+        f"• *Model đang dùng:* `{cur_model}`\n"
+        f"• *Mức suy luận hiện tại:* `{cur_effort}`\n\n"
+        "👇 _Chọn mức độ suy luận bên dưới:_"
+    )
+
+
+def update_grok_model(new_model: str) -> bool:
+    """Updates default model under [models] in ~/.grok/config.toml safely."""
+    cfg_path = get_grok_config_path()
+    if not cfg_path.exists():
+        return False
+    try:
+        content = cfg_path.read_text(encoding="utf-8")
+        if re.search(r'(?m)^\s*default\s*=', content):
+            new_content = re.sub(
+                r'(?m)^(\s*default\s*=\s*")[^"]*(")',
+                rf'\g<1>{new_model}\g<2>',
+                content,
+            )
+        else:
+            new_content = re.sub(
+                r'(?m)^(\[models\]\s*$)',
+                rf'\g<1>\ndefault = "{new_model}"',
+                content,
+            )
+        # Verify TOML syntax before writing
+        parsed = tomllib.loads(new_content)
+        if parsed.get("models", {}).get("default") != new_model:
+            return False
+        cfg_path.write_text(new_content, encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def update_grok_effort(new_effort: str) -> bool:
+    """Updates default_reasoning_effort under [models] in ~/.grok/config.toml safely."""
+    cfg_path = get_grok_config_path()
+    if not cfg_path.exists():
+        return False
+    try:
+        content = cfg_path.read_text(encoding="utf-8")
+        if re.search(r'(?m)^\s*default_reasoning_effort\s*=', content):
+            new_content = re.sub(
+                r'(?m)^(\s*default_reasoning_effort\s*=\s*")[^"]*(")',
+                rf'\g<1>{new_effort}\g<2>',
+                content,
+            )
+        else:
+            new_content = re.sub(
+                r'(?m)^(\[models\]\s*$)',
+                rf'\g<1>\ndefault_reasoning_effort = "{new_effort}"',
+                content,
+            )
+        # Verify TOML syntax before writing
+        parsed = tomllib.loads(new_content)
+        if parsed.get("models", {}).get("default_reasoning_effort") != new_effort:
+            return False
+        cfg_path.write_text(new_content, encoding="utf-8")
+        return True
+    except Exception:
+        return False
 
 
 def get_deps_menu_markup() -> Dict[str, Any]:
@@ -1424,6 +1687,9 @@ def get_restart_service_markup() -> Dict[str, Any]:
         "rag-service",
         "milvus-standalone",
         "neo4j-graph",
+        "dgx-spark-ocr-worker",
+        "rag-frontend",
+        "whisper-local",
     ]
     keyboard = []
     for i in range(0, len(services), 2):
@@ -1489,12 +1755,12 @@ async def probe_rag_state() -> str:
     # 1. Health & Database Connectivity
     is_service_reachable = False
     try:
-        res = await client.get("http://127.0.0.1:8005/health", timeout=5.0)
+        res = await client.get(f"{RAG_SERVICE_URL}/health", timeout=5.0)
         if res.status_code in [200, 503]:
             is_service_reachable = True
             data = res.json()
             st_text = "🟢 Khả dụng" if data.get("status") == "ok" else "🟡 Hoạt động giảm tải (Degraded)"
-            lines.append(f"• Dịch vụ `rag-service`: {st_text} (Port 8005)")
+            lines.append(f"• Dịch vụ `rag-service`: {st_text} ({RAG_SERVICE_URL})")
             ver_raw = str(data.get("version", "2.0.0"))
             ver_str = ver_raw if ver_raw.startswith("v") else f"v{ver_raw}"
             lines.append(f"• Phiên bản: `{ver_str}`")
@@ -1510,13 +1776,13 @@ async def probe_rag_state() -> str:
     # 2. Vector & Graph Stats
     if is_service_reachable:
         try:
-            res_stats = await client.get("http://127.0.0.1:8005/stats", timeout=5.0)
+            res_stats = await client.get(f"{RAG_SERVICE_URL}/stats", timeout=5.0)
             if res_stats.status_code == 200:
                 stats = res_stats.json()
                 neo4j_docs = stats.get("neo4j_docs", 0)
                 neo4j_rels = stats.get("neo4j_rels", 0)
                 milvus_entities = stats.get("milvus_entities", 0)
-                total_target = stats.get("total_target", 8870)
+                total_target = stats.get("total_target", RAG_TARGET_DOCS)
                 pct = (neo4j_docs / total_target * 100) if total_target > 0 else 0.0
 
                 lines.append("\n📊 *SỐ LIỆU CHỈ MỤC & CƠ SỞ DỮ LIỆU:*")
@@ -1695,9 +1961,9 @@ async def check_openwebui_versions() -> Dict[str, Any]:
     pub_date = ""
     html_url = "https://github.com/open-webui/open-webui/releases"
 
-    # 1. Query local instance on host port 3001
+    # 1. Query local instance on host port
     try:
-        res = await client.get("http://127.0.0.1:3001/api/version", timeout=4.0)
+        res = await client.get(f"{OPENWEBUI_URL}/api/version", timeout=4.0)
         if res.status_code == 200:
             cur_ver = str(res.json().get("version", "")).lstrip("v").strip()
     except Exception as e:
@@ -1852,6 +2118,25 @@ async def dispatch_command(
             elif command_id == "antigravity.account.reenable":
                 acc_id = params.get("account_id", "")
                 return await reenable_antigravity_account(acc_id, chat_id, message_id, cq_id=cq_id, user_id=ADMIN_USER_ID)
+            elif command_id == "grok.model.menu":
+                text = format_grok_menu_text()
+                info = read_grok_model_info()
+                markup = get_grok_menu_markup(info.get("default", ""))
+                if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=markup):
+                    await send_telegram_msg(chat_id, text, reply_markup=markup)
+                append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS", 0, 0, "Probed grok model menu")
+            elif command_id == "grok.model.set":
+                new_m = params.get("model", "")
+                success = update_grok_model(new_m)
+                info = read_grok_model_info()
+                markup = get_grok_menu_markup(info.get("default", ""))
+                if success:
+                    text = f"✅ *Đã chuyển model mặc định của Grok CLI sang:* `{new_m}`\n\n" + format_grok_menu_text()
+                else:
+                    text = f"❌ *Không thể cập nhật cấu hình sang model:* `{new_m}`\n\n" + format_grok_menu_text()
+                if not await edit_telegram_msg(chat_id, message_id, text, reply_markup=markup):
+                    await send_telegram_msg(chat_id, text, reply_markup=markup)
+                append_audit_log("internal_cmd", command_id, params, ADMIN_USER_ID, "SUCCESS" if success else "FAILED", 0, 0, f"Set grok model to {new_m}")
             else:
                 unhandled = f"⚠️ Chưa xử lý runner internal cho lệnh `{command_id}`"
                 if not await edit_telegram_msg(chat_id, message_id, unhandled, reply_markup=get_main_dashboard_markup()):
@@ -1859,8 +2144,15 @@ async def dispatch_command(
             return True
         elif runner in ["docker_cli", "host_script"]:
             target_tmpl = cmd_def.get("target", "")
+            # Auto-inject environment context variables into execution params
+            exec_params = dict(params)
+            exec_params.setdefault(
+                "hub_path",
+                os.environ.get("CCBA_HUB_PATH", str(Path.home() / "ccba/ccba-agent-platform")),
+            )
+            exec_params.setdefault("project_root", str(PROJECT_ROOT))
             try:
-                rendered_cmd = target_tmpl.format(**params)
+                rendered_cmd = target_tmpl.format(**exec_params)
             except KeyError as ke:
                 err_text = f"❌ *[LỖI CẤU HÌNH]* Thiếu tham số `{ke}` cho lệnh `{command_id}`!"
                 if not await edit_telegram_msg(chat_id, message_id, err_text):
@@ -1892,192 +2184,526 @@ async def dispatch_command(
 
 
 # --- 8. TELEGRAM LONG POLLER ENGINE ---
-async def process_telegram_update(update: Dict[str, Any]) -> None:
-    """Processes an incoming Telegram update with strict ACL and atomic actions."""
-    # Handle callback queries (Button clicks)
-    if "callback_query" in update:
-        cq = update["callback_query"]
-        cq_id = cq["id"]
-        from_user = cq.get("from", {})
-        user_id = from_user.get("id")
-        msg = cq.get("message", {})
-        chat_id = msg.get("chat", {}).get("id")
-        message_id = msg.get("message_id")
-        data = cq.get("data", "")
+async def _handle_menu_navigation(data: str, cq_id: str, chat_id: int, message_id: int) -> bool:
+    """Handles static and submenu navigation callbacks. Returns True if handled."""
+    if data == "menu:main":
+        await answer_callback(cq_id)
+        main_menu_text = "🖥️ *BẢNG ĐIỀU KHIỂN DGX SPARK CHATOPS*\nVui lòng chọn tác vụ bên dưới:"
+        await edit_telegram_msg(chat_id, message_id, main_menu_text, reply_markup=get_main_dashboard_markup())
+        return True
+    elif data == "menu:status":
+        await dispatch_command("system.status", {}, chat_id, message_id, cq_id=cq_id)
+        return True
+    elif data == "menu:memory":
+        await dispatch_command("system.memory", {}, chat_id, message_id, cq_id=cq_id)
+        return True
+    elif data == "menu:stats":
+        await dispatch_command("system.stats", {}, chat_id, message_id, cq_id=cq_id)
+        return True
+    elif data == "menu:gpu":
+        await dispatch_command("host.gpu", {}, chat_id, message_id, cq_id=cq_id)
+        return True
+    elif data == "menu:rag_state":
+        await dispatch_command("rag.ingestion.state", {}, chat_id, message_id, cq_id=cq_id)
+        return True
+    elif data == "menu:antigravity":
+        await dispatch_command("antigravity.status", {}, chat_id, message_id, cq_id=cq_id)
+        return True
+    elif data == "menu:deps_menu":
+        await answer_callback(cq_id)
+        deps_text = (
+            "📦 *QUẢN LÝ PHỤ THUỘC (DEPENDENCY LIFECYCLE)* 📦\n\n"
+            "Vui lòng chọn tác vụ kiểm tra hoặc nâng cấp bên dưới:\n"
+            "• *Rà soát:* Quét phiên bản lỗi thời & CVE bảo mật trên toàn hệ thống.\n"
+            "• *Tier 1 (Patch):* Nâng cấp bản vá an toàn 1-Click (0 CVE, regression check).\n"
+            "• *Tier 2 (Minor):* Nâng cấp tính năng mới có khóa bundle budget & typecheck."
+        )
+        if not await edit_telegram_msg(chat_id, message_id, deps_text, reply_markup=get_deps_menu_markup()):
+            await send_telegram_msg(chat_id, deps_text, reply_markup=get_deps_menu_markup())
+        return True
+    elif data == "menu:deps_check":
+        await answer_callback(cq_id, "🔍 Đang rà soát phụ thuộc...")
+        await dispatch_command("system.deps.check", {}, chat_id, message_id, title="Rà soát phụ thuộc & bảo mật", cq_id=cq_id)
+        return True
+    elif data == "menu:deps_upg_patch":
+        await answer_callback(cq_id)
+        nonce = hashlib.sha256(f"deps_upg_patch_{time.time()}".encode()).hexdigest()[:8]
+        action_cache[nonce] = {
+            "command": "system.deps.upgrade",
+            "params": {"tier": "patch"},
+            "title": "Nâng cấp phụ thuộc Tier 1 (Patch)",
+            "timeout": 300,
+            "expires": time.time() + 60,
+        }
+        markup = {
+            "inline_keyboard": [
+                [{"text": "⚡ XÁC NHẬN NÂNG CẤP TIER 1 (PATCH)", "callback_data": f"act:{nonce}"}],
+                [{"text": "🔙 Quay Lại Menu Phụ Thuộc", "callback_data": "menu:deps_menu"}],
+            ]
+        }
+        confirm_text = (
+            "⚠️ *XÁC NHẬN NÂNG CẤP PHỤ THUỘC TIER 1 (PATCH)*\n\n"
+            "Thao tác này sẽ tự động cập nhật các bản vá lỗi bảo mật (Fast-track) "
+            "và chạy cổng kiểm định ADR-0058 Hard Completion Lock.\n\n"
+            "Bạn có muốn tiếp tục?"
+        )
+        if not await edit_telegram_msg(chat_id, message_id, confirm_text, reply_markup=markup):
+            await send_telegram_msg(chat_id, confirm_text, reply_markup=markup)
+        return True
+    elif data == "menu:deps_upg_minor":
+        await answer_callback(cq_id)
+        nonce = hashlib.sha256(f"deps_upg_minor_{time.time()}".encode()).hexdigest()[:8]
+        action_cache[nonce] = {
+            "command": "system.deps.upgrade",
+            "params": {"tier": "minor"},
+            "title": "Nâng cấp phụ thuộc Tier 2 (Minor)",
+            "timeout": 300,
+            "expires": time.time() + 60,
+        }
+        markup = {
+            "inline_keyboard": [
+                [{"text": "🚀 XÁC NHẬN NÂNG CẤP TIER 2 (MINOR)", "callback_data": f"act:{nonce}"}],
+                [{"text": "🔙 Quay Lại Menu Phụ Thuộc", "callback_data": "menu:deps_menu"}],
+            ]
+        }
+        confirm_text = (
+            "⚠️ *XÁC NHẬN NÂNG CẤP PHỤ THUỘC TIER 2 (MINOR)*\n\n"
+            "Thao tác này sẽ nâng cấp các phiên bản Minor tương thích SemVer, "
+            "tái biên dịch lockfile bằng uv và kiểm tra nghiêm ngặt ngưỡng Frontend Bundle Budget (`RULE-2.7`).\n\n"
+            "Bạn có muốn tiếp tục?"
+        )
+        if not await edit_telegram_msg(chat_id, message_id, confirm_text, reply_markup=markup):
+            await send_telegram_msg(chat_id, confirm_text, reply_markup=markup)
+        return True
+    elif data == "menu:autotuner":
+        await dispatch_command("ccba.autotuner.status", {}, chat_id, message_id, cq_id=cq_id)
+        return True
+    elif data == "menu:boost_list":
+        if is_kernel_runner_locked():
+            await answer_callback(cq_id, "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!", show_alert=True)
+            return True
+        await answer_callback(cq_id)
+        boost_markup = get_boost_skills_markup()
+        boost_text = "⚡ *CHỌN KỸ NĂNG CẦN CAN THIỆP /BOOST:*\n_(Danh sách kỹ năng đang plateau theo thứ tự cập nhật)_"
+        if not await edit_telegram_msg(chat_id, message_id, boost_text, reply_markup=boost_markup):
+            await send_telegram_msg(chat_id, boost_text, reply_markup=boost_markup)
+        return True
+    elif data == "menu:restart_list":
+        await answer_callback(cq_id)
+        await edit_telegram_msg(chat_id, message_id, "🔄 *CHỌN SERVICE CẦN KHỞI ĐỘNG LẠI:*", reply_markup=get_restart_service_markup())
+        return True
+    elif data == "menu:upgrade_owu":
+        await answer_callback(cq_id, "Đang kiểm tra phiên bản...")
+        await edit_telegram_msg(
+            chat_id,
+            message_id,
+            "⏳ *Đang kiểm tra phiên bản Open WebUI trên server và GitHub...*\nVui lòng đợi trong giây lát...",
+        )
+        info = await check_openwebui_versions()
+        cur_ver = info["current_version"]
+        latest_ver = info["latest_version"]
+        has_update = info["has_update"]
 
-        # Strict ACL
-        if user_id != ADMIN_USER_ID:
-            await answer_callback(cq_id, "❌ Không có quyền truy cập!", show_alert=True)
-            append_audit_log("callback", data, {"user_id": user_id}, user_id, "FORBIDDEN", 0, -1, "Unknown user tried to click button")
-            return
-
-        # 1. Main Navigation Menu callbacks
-        if data == "menu:main":
-            await answer_callback(cq_id)
-            main_menu_text = "🖥️ *BẢNG ĐIỀU KHIỂN DGX SPARK CHATOPS*\nVui lòng chọn tác vụ bên dưới:"
-            await edit_telegram_msg(chat_id, message_id, main_menu_text, reply_markup=get_main_dashboard_markup())
-            return
-        elif data == "menu:status":
-            await dispatch_command("system.status", {}, chat_id, message_id, cq_id=cq_id)
-            return
-        elif data == "menu:memory":
-            await dispatch_command("system.memory", {}, chat_id, message_id, cq_id=cq_id)
-            return
-        elif data == "menu:stats":
-            await dispatch_command("system.stats", {}, chat_id, message_id, cq_id=cq_id)
-            return
-        elif data == "menu:gpu":
-            await dispatch_command("host.gpu", {}, chat_id, message_id, cq_id=cq_id)
-            return
-        elif data == "menu:rag_state":
-            await dispatch_command("rag.ingestion.state", {}, chat_id, message_id, cq_id=cq_id)
-            return
-        elif data == "menu:antigravity":
-            await dispatch_command("antigravity.status", {}, chat_id, message_id, cq_id=cq_id)
-            return
-        elif data == "menu:deps_menu":
-            await answer_callback(cq_id)
-            deps_text = (
-                "📦 *QUẢN LÝ PHỤ THUỘC (DEPENDENCY LIFECYCLE)* 📦\n\n"
-                "Vui lòng chọn tác vụ kiểm tra hoặc nâng cấp bên dưới:\n"
-                "• *Rà soát:* Quét phiên bản lỗi thời & CVE bảo mật trên toàn hệ thống.\n"
-                "• *Tier 1 (Patch):* Nâng cấp bản vá an toàn 1-Click (0 CVE, regression check).\n"
-                "• *Tier 2 (Minor):* Nâng cấp tính năng mới có khóa bundle budget & typecheck."
+        if has_update:
+            prompt = (
+                f"🚀 *PHÁT HIỆN BẢN CẬP NHẬT MỚI CHO OPEN WEBUI!*\n\n"
+                f"• Phiên bản đang chạy: `v{cur_ver}`\n"
+                f"• Phiên bản mới nhất: `v{latest_ver}` ({info['published_at']})\n"
+                f"• Xem chi tiết: [GitHub Release Notes]({info['release_url']})\n\n"
+                f"💡 *Kế hoạch nâng cấp:*\n"
+                f"• Lệnh sẽ chạy: `bash scripts/update-openwebui.sh v{latest_ver}`\n"
+                f"• Tự động sao lưu database SQLite (Zero Data Loss).\n"
+                f"• Tự động rollback nếu container mới khởi động lỗi.\n"
+                f"• Thời gian gián đoạn dự kiến: ~30s.\n\n"
+                f"Bạn có chắc chắn muốn thực thi nâng cấp ngay bây giờ?"
             )
-            if not await edit_telegram_msg(chat_id, message_id, deps_text, reply_markup=get_deps_menu_markup()):
-                await send_telegram_msg(chat_id, deps_text, reply_markup=get_deps_menu_markup())
-            return
-        elif data == "menu:deps_check":
-            await answer_callback(cq_id, "🔍 Đang rà soát phụ thuộc...")
-            await dispatch_command("system.deps.check", {}, chat_id, message_id, title="Rà soát phụ thuộc & bảo mật", cq_id=cq_id)
-            return
-        elif data == "menu:deps_upg_patch":
-            await answer_callback(cq_id)
-            nonce = hashlib.sha256(f"deps_upg_patch_{time.time()}".encode()).hexdigest()[:8]
+            nonce = hashlib.sha256(f"upg_owu_{time.time()}_{latest_ver}".encode()).hexdigest()[:8]
             action_cache[nonce] = {
-                "command": "system.deps.upgrade",
-                "params": {"tier": "patch"},
-                "title": "Nâng cấp phụ thuộc Tier 1 (Patch)",
+                "command": "system.openwebui.upgrade",
+                "params": {"target_version": f"v{latest_ver}"},
+                "title": f"Nâng cấp Open WebUI lên v{latest_ver}",
                 "timeout": 300,
                 "expires": time.time() + 60,
             }
             markup = {
                 "inline_keyboard": [
-                    [{"text": "⚡ XÁC NHẬN NÂNG CẤP TIER 1 (PATCH)", "callback_data": f"act:{nonce}"}],
-                    [{"text": "🔙 Quay Lại Menu Phụ Thuộc", "callback_data": "menu:deps_menu"}],
+                    [{"text": f"🚀 XÁC NHẬN NÂNG CẤP (v{latest_ver})", "callback_data": f"act:{nonce}"}],
+                    [{"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"}],
                 ]
             }
-            confirm_text = (
-                "⚠️ *XÁC NHẬN NÂNG CẤP PHỤ THUỘC TIER 1 (PATCH)*\n\n"
-                "Thao tác này sẽ tự động cập nhật các bản vá lỗi bảo mật (Fast-track) "
-                "và chạy cổng kiểm định ADR-0058 Hard Completion Lock.\n\n"
-                "Bạn có muốn tiếp tục?"
+            await edit_telegram_msg(chat_id, message_id, prompt, reply_markup=markup)
+        elif cur_ver != "unknown":
+            up_to_date_msg = (
+                f"✅ *OPEN WEBUI ĐÃ Ở PHIÊN BẢN MỚI NHẤT!*\n\n"
+                f"• Phiên bản đang chạy: `v{cur_ver}`\n"
+                f"• Phiên bản trên GitHub: `v{latest_ver}`\n"
+                f"• Trạng thái: Hệ thống đang vận hành phiên bản mới nhất, không cần cập nhật."
             )
-            if not await edit_telegram_msg(chat_id, message_id, confirm_text, reply_markup=markup):
-                await send_telegram_msg(chat_id, confirm_text, reply_markup=markup)
-            return
-        elif data == "menu:deps_upg_minor":
-            await answer_callback(cq_id)
-            nonce = hashlib.sha256(f"deps_upg_minor_{time.time()}".encode()).hexdigest()[:8]
-            action_cache[nonce] = {
-                "command": "system.deps.upgrade",
-                "params": {"tier": "minor"},
-                "title": "Nâng cấp phụ thuộc Tier 2 (Minor)",
+            reinstall_nonce = hashlib.sha256(f"reinstall_owu_{time.time()}".encode()).hexdigest()[:8]
+            action_cache[reinstall_nonce] = {
+                "command": "system.openwebui.upgrade",
+                "params": {"target_version": f"v{cur_ver}"},
+                "title": f"Cài đặt lại Open WebUI v{cur_ver}",
                 "timeout": 300,
                 "expires": time.time() + 60,
             }
             markup = {
                 "inline_keyboard": [
-                    [{"text": "🚀 XÁC NHẬN NÂNG CẤP TIER 2 (MINOR)", "callback_data": f"act:{nonce}"}],
-                    [{"text": "🔙 Quay Lại Menu Phụ Thuộc", "callback_data": "menu:deps_menu"}],
+                    [{"text": f"🔄 Cài Đặt Lại v{cur_ver} (Reinstall)", "callback_data": f"act:{reinstall_nonce}"}],
+                    [{"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"}],
                 ]
             }
-            confirm_text = (
-                "⚠️ *XÁC NHẬN NÂNG CẤP PHỤ THUỘC TIER 2 (MINOR)*\n\n"
-                "Thao tác này sẽ nâng cấp các phiên bản Minor tương thích SemVer, "
-                "tái biên dịch lockfile bằng uv và kiểm tra nghiêm ngặt ngưỡng Frontend Bundle Budget (`RULE-2.7`).\n\n"
-                "Bạn có muốn tiếp tục?"
+            await edit_telegram_msg(chat_id, message_id, up_to_date_msg, reply_markup=markup)
+        else:
+            err_msg = (
+                f"⚠️ *KHÔNG THỂ KIỂM TRA PHIÊN BẢN TỰ ĐỘNG*\n\n"
+                f"• Phiên bản local: `{cur_ver}`\n"
+                f"• Phiên bản GitHub: `{latest_ver}`\n\n"
+                f"Bạn có thể chỉ định phiên bản nâng cấp thủ công bằng lệnh:\n"
+                f"`/upgrade_owu <version>` (ví dụ: `/upgrade_owu v0.11.4`)"
             )
-            if not await edit_telegram_msg(chat_id, message_id, confirm_text, reply_markup=markup):
-                await send_telegram_msg(chat_id, confirm_text, reply_markup=markup)
+            await edit_telegram_msg(chat_id, message_id, err_msg, reply_markup=get_main_dashboard_markup())
+        return True
+    elif data == "menu:grok_menu":
+        await answer_callback(cq_id)
+        info = read_grok_model_info()
+        grok_text = format_grok_menu_text()
+        markup = get_grok_menu_markup(info.get("default", ""))
+        if not await edit_telegram_msg(chat_id, message_id, grok_text, reply_markup=markup):
+            await send_telegram_msg(chat_id, grok_text, reply_markup=markup)
+        return True
+    elif data == "menu:grok_effort_menu":
+        await answer_callback(cq_id)
+        effort_text = format_grok_effort_text()
+        info = read_grok_model_info()
+        markup = get_grok_effort_markup(info.get("effort", ""))
+        if not await edit_telegram_msg(chat_id, message_id, effort_text, reply_markup=markup):
+            await send_telegram_msg(chat_id, effort_text, reply_markup=markup)
+        return True
+    elif data == "menu:help":
+        await answer_callback(cq_id)
+        await edit_telegram_msg(chat_id, message_id, HELP_TEXT, reply_markup=get_main_dashboard_markup())
+        return True
+
+    return False
+
+
+async def _handle_callback_query(cq: Dict[str, Any], update: Dict[str, Any]) -> None:
+    """Handles callback queries from inline keyboard button clicks."""
+    cq_id = cq["id"]
+    from_user = cq.get("from", {})
+    user_id = from_user.get("id")
+    msg = cq.get("message", {})
+    chat_id = msg.get("chat", {}).get("id")
+    message_id = msg.get("message_id")
+    data = cq.get("data", "")
+
+    # Strict ACL
+    if user_id != ADMIN_USER_ID:
+        await answer_callback(cq_id, "❌ Không có quyền truy cập!", show_alert=True)
+        append_audit_log("callback", data, {"user_id": user_id}, user_id, "FORBIDDEN", 0, -1, "Unknown user tried to click button")
+        return
+
+    # 1. Main Navigation Menu callbacks
+    if await _handle_menu_navigation(data, cq_id, chat_id, message_id):
+        return
+
+    # 2. Dynamic Action Buttons (act:<nonce> or act:antigravity_reenable:<account_id>)
+    if data.startswith("bst:"):
+        skill = data.split(":", 1)[1].strip()
+        if not skill or not re.match(r"^[a-zA-Z0-9_-]+$", skill):
+            await answer_callback(cq_id, "❌ Tên kỹ năng không hợp lệ!", show_alert=True)
             return
-        elif data == "menu:autotuner":
-            await dispatch_command("ccba.autotuner.status", {}, chat_id, message_id, cq_id=cq_id)
+        if is_kernel_runner_locked():
+            await answer_callback(cq_id, "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!", show_alert=True)
             return
-        elif data == "menu:boost_list":
-            if is_kernel_runner_locked():
-                await answer_callback(cq_id, "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!", show_alert=True)
-                return
-            await answer_callback(cq_id)
-            boost_markup = get_boost_skills_markup()
-            boost_text = "⚡ *CHỌN KỸ NĂNG CẦN CAN THIỆP /BOOST:*\n_(Danh sách kỹ năng đang plateau theo thứ tự cập nhật)_"
-            if not await edit_telegram_msg(chat_id, message_id, boost_text, reply_markup=boost_markup):
-                await send_telegram_msg(chat_id, boost_text, reply_markup=boost_markup)
+        await answer_callback(cq_id)
+        nonce = hashlib.sha256(f"bst_{time.time()}_{skill}".encode()).hexdigest()[:8]
+        action_cache[nonce] = {
+            "command": "ccba.skill.boost",
+            "params": {"skill": skill},
+            "title": f"🚀 /boost {skill}",
+            "timeout": 600,
+            "expires": time.time() + 60,
+        }
+        confirm_msg = (
+            f"⚡ *XÁC NHẬN CAN THIỆP SUY LUẬN SÂU (/BOOST)* ⚡\n\n"
+            f"• Kỹ năng mục tiêu: `{skill}`\n"
+            f"• Thời hạn xác nhận: 60 giây\n\n"
+            f"Bạn có chắc chắn muốn khởi chạy `/boost {skill}` ngay bây giờ?"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "✅ Xác Nhận Chạy /boost", "callback_data": f"act:{nonce}"}],
+                [{"text": "❌ Hủy Bỏ", "callback_data": "menu:main"}],
+            ]
+        }
+        if not await edit_telegram_msg(chat_id, message_id, confirm_msg, reply_markup=markup):
+            await send_telegram_msg(chat_id, confirm_msg, reply_markup=markup)
+        return
+    elif data.startswith("rst:"):
+        svc = data.split(":", 1)[1]
+        await dispatch_command("system.container.restart", {"service": svc}, chat_id, message_id, title=f"Khởi động lại {svc}", cq_id=cq_id)
+        return
+    elif data.startswith("grok_set:"):
+        target_model = data.split("grok_set:", 1)[1].strip()
+        allowed = [m[0] for m in GROK_AVAILABLE_MODELS]
+        if target_model not in allowed:
+            await answer_callback(cq_id, f"❌ Model {target_model} không hợp lệ!", show_alert=True)
             return
-        elif data.startswith("bst:"):
-            skill = data.split(":", 1)[1].strip()
-            if not skill or not re.match(r"^[a-zA-Z0-9_-]+$", skill):
-                await answer_callback(cq_id, "❌ Tên kỹ năng không hợp lệ!", show_alert=True)
-                return
-            if is_kernel_runner_locked():
-                await answer_callback(cq_id, "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!", show_alert=True)
-                return
-            await answer_callback(cq_id)
-            nonce = hashlib.sha256(f"bst_{time.time()}_{skill}".encode()).hexdigest()[:8]
-            action_cache[nonce] = {
-                "command": "ccba.skill.boost",
-                "params": {"skill": skill},
-                "title": f"🚀 /boost {skill}",
-                "timeout": 600,
-                "expires": time.time() + 60,
-            }
-            confirm_msg = (
-                f"⚡ *XÁC NHẬN CAN THIỆP SUY LUẬN SÂU (/BOOST)* ⚡\n\n"
-                f"• Kỹ năng mục tiêu: `{skill}`\n"
-                f"• Thời hạn xác nhận: 60 giây\n\n"
-                f"Bạn có chắc chắn muốn khởi chạy `/boost {skill}` ngay bây giờ?"
-            )
-            markup = {
-                "inline_keyboard": [
-                    [{"text": "✅ Xác Nhận Chạy /boost", "callback_data": f"act:{nonce}"}],
-                    [{"text": "❌ Hủy Bỏ", "callback_data": "menu:main"}],
-                ]
-            }
-            if not await edit_telegram_msg(chat_id, message_id, confirm_msg, reply_markup=markup):
-                await send_telegram_msg(chat_id, confirm_msg, reply_markup=markup)
+        success = update_grok_model(target_model)
+        if success:
+            await answer_callback(cq_id, f"✅ Đã đổi sang {target_model}!")
+            append_audit_log("callback", data, {"model": target_model}, user_id, "SUCCESS", 0, 0, f"Switched Grok model to {target_model}")
+        else:
+            await answer_callback(cq_id, "❌ Cập nhật config thất bại!", show_alert=True)
+            append_audit_log("callback", data, {"model": target_model}, user_id, "FAILED", 0, -1, "Failed to update Grok model config")
+        info = read_grok_model_info()
+        grok_text = format_grok_menu_text()
+        markup = get_grok_menu_markup(info.get("default", ""))
+        if not await edit_telegram_msg(chat_id, message_id, grok_text, reply_markup=markup):
+            await send_telegram_msg(chat_id, grok_text, reply_markup=markup)
+        return
+    elif data.startswith("grok_effort:"):
+        target_effort = data.split("grok_effort:", 1)[1].strip()
+        allowed_efforts = [e[0] for e in GROK_EFFORT_LEVELS]
+        if target_effort not in allowed_efforts:
+            await answer_callback(cq_id, f"❌ Effort {target_effort} không hợp lệ!", show_alert=True)
             return
-        elif data == "menu:restart_list":
-            await answer_callback(cq_id)
-            await edit_telegram_msg(chat_id, message_id, "🔄 *CHỌN SERVICE CẦN KHỞI ĐỘNG LẠI:*", reply_markup=get_restart_service_markup())
+        success = update_grok_effort(target_effort)
+        if success:
+            await answer_callback(cq_id, f"🎯 Mức suy luận: {target_effort}!")
+            append_audit_log("callback", data, {"effort": target_effort}, user_id, "SUCCESS", 0, 0, f"Switched Grok reasoning effort to {target_effort}")
+        else:
+            await answer_callback(cq_id, "❌ Cập nhật config thất bại!", show_alert=True)
+            append_audit_log("callback", data, {"effort": target_effort}, user_id, "FAILED", 0, -1, "Failed to update Grok effort config")
+        effort_text = format_grok_effort_text()
+        markup = get_grok_effort_markup(target_effort)
+        if not await edit_telegram_msg(chat_id, message_id, effort_text, reply_markup=markup):
+            await send_telegram_msg(chat_id, effort_text, reply_markup=markup)
+        return
+    elif data.startswith("act:antigravity_reenable:"):
+        account_id = data.split("act:antigravity_reenable:", 1)[1].strip()
+        if not account_id or not re.match(r"^[a-zA-Z0-9_.@-]+$", account_id):
+            await answer_callback(cq_id, "❌ ID tài khoản không hợp lệ!", show_alert=True)
             return
-        elif data.startswith("rst:"):
-            svc = data.split(":", 1)[1]
-            await dispatch_command("system.container.restart", {"service": svc}, chat_id, message_id, title=f"Khởi động lại {svc}", cq_id=cq_id)
+        await answer_callback(cq_id, f"🔍 Đang kiểm tra probe {account_id}...")
+        status_msg_id = await send_telegram_msg(chat_id, f"⏳ *[HEALTH PROBE GATE]* Đang kiểm tra tài khoản `{account_id}`...\nVui lòng đợi...")
+        await reenable_antigravity_account(account_id, chat_id, status_msg_id or message_id, cq_id=cq_id, user_id=user_id)
+        return
+    elif data.startswith("act:"):
+        nonce = data.split(":", 1)[1]
+        entry = action_cache.pop(nonce, None)
+        if not entry or time.time() > entry.get("expires", 0):
+            await answer_callback(cq_id, "⚠️ Thao tác đã hết hạn hoặc đã được thực thi!", show_alert=True)
             return
-        elif data == "menu:upgrade_owu":
-            await answer_callback(cq_id, "Đang kiểm tra phiên bản...")
-            await edit_telegram_msg(
-                chat_id,
-                message_id,
-                "⏳ *Đang kiểm tra phiên bản Open WebUI trên server và GitHub...*\nVui lòng đợi trong giây lát...",
-            )
+
+        cmd = entry["command"]
+        params = entry.get("params", {})
+        title = entry.get("title", "")
+        timeout = entry.get("timeout")
+
+        if cmd == "ccba.skill.boost" and is_kernel_runner_locked():
+            action_cache[nonce] = entry
+            await answer_callback(cq_id, "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!", show_alert=True)
+            return
+
+        await answer_callback(cq_id, f"🚀 Khởi chạy {title}...")
+        status_msg_id = await send_telegram_msg(chat_id, f"⏳ *[ĐANG CHẠY]* `{title}`\nVui lòng đợi...")
+        dispatched = await dispatch_command(cmd, params, chat_id, status_msg_id or message_id, title=title, cq_id=cq_id, timeout=timeout)
+        if not dispatched:
+            action_cache[nonce] = entry
+        return
+
+    # Fallback for unhandled or expired callback query to prevent hanging spinner in Telegram
+    await answer_callback(cq_id, "⚠️ Tác vụ đã hết hạn hoặc không khả dụng!")
+    return
+
+
+async def _handle_text_message(msg: Dict[str, Any]) -> None:
+    """Handles incoming text messages and slash commands."""
+    chat_id = msg.get("chat", {}).get("id")
+    user_id = msg.get("from", {}).get("id")
+    message_id = msg.get("message_id")
+    text = msg.get("text", "").strip()
+
+    # Anti-Replay Protection for Stale Telegram Updates
+    msg_date = msg.get("date", 0)
+    if msg_date and (time.time() - msg_date > 120):
+        age_sec = int(time.time() - msg_date)
+        print(f"[Anti-Replay] Dropping stale update/message {message_id} (age: {age_sec}s > 120s)", flush=True)
+        append_audit_log(
+            trigger_type="message",
+            command=text,
+            params={"message_id": message_id, "msg_date": msg_date, "age_seconds": age_sec},
+            user_id=user_id or 0,
+            status="STALE_DROPPED",
+            duration_ms=0,
+            exit_code=-1,
+            details=f"Stale update dropped by anti-replay protection (age: {age_sec}s > 120s)",
+        )
+        return
+
+    # Strict ACL
+    if user_id != ADMIN_USER_ID:
+        append_audit_log("message", text, {"user_id": user_id}, user_id, "FORBIDDEN", 0, -1, "Unknown user message dropped")
+        return
+
+    # 1. /start or /menu
+    if text in ["/start", "/menu"]:
+        await send_telegram_msg(chat_id, "🖥️ *BẢNG ĐIỀU KHIỂN DGX SPARK CHATOPS*\nVui lòng chọn tác vụ bên dưới:", reply_markup=get_main_dashboard_markup())
+        return
+
+    # 2. /status
+    if text == "/status":
+        sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra trạng thái...")
+        if sent_id:
+            await dispatch_command("system.status", {}, chat_id, sent_id)
+        return
+
+    # 2a. /memory
+    if text == "/memory":
+        sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra chi tiết bộ nhớ & Swap...")
+        if sent_id:
+            await dispatch_command("system.memory", {}, chat_id, sent_id)
+        return
+
+    # 2b. /stats
+    if text == "/stats":
+        sent_id = await send_telegram_msg(chat_id, "⏳ Đang truy vấn thống kê AI Gateway...")
+        if sent_id:
+            await dispatch_command("system.stats", {}, chat_id, sent_id)
+        return
+
+    # 3. /gpu
+    if text == "/gpu":
+        sent_id = await send_telegram_msg(chat_id, "⏳ Đang truy vấn GPU Blackwell...")
+        if sent_id:
+            await dispatch_command("host.gpu", {}, chat_id, sent_id)
+        return
+
+    # 4. /rag_state
+    if text == "/rag_state":
+        sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra hàng đợi RAG...")
+        if sent_id:
+            await dispatch_command("rag.ingestion.state", {}, chat_id, sent_id)
+        return
+
+    # 4a. /autotuner
+    if text == "/autotuner" or text.startswith("/autotuner@"):
+        sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra trạng thái Nightly Auto-Tuner...")
+        if sent_id:
+            await dispatch_command("ccba.autotuner.status", {}, chat_id, sent_id)
+        return
+
+    # 4b. /antigravity
+    if text in ["/antigravity", "/accounts"] or text.startswith("/antigravity@") or text.startswith("/accounts@"):
+        sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra hồ bơi tài khoản Antigravity...")
+        if sent_id:
+            await dispatch_command("antigravity.status", {}, chat_id, sent_id)
+        return
+
+    # 4b2. /reenable_account <account_id>
+    if text.startswith("/reenable_account") or text.startswith("/reenable"):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            await send_telegram_msg(chat_id, "Cú pháp: `/reenable_account <account_id>` (Ví dụ: `/reenable_account acc_123`)")
+            return
+        acc_id = parts[1].strip()
+        if not re.match(r"^[a-zA-Z0-9_.@-]+$", acc_id):
+            await send_telegram_msg(chat_id, "❌ ID tài khoản không hợp lệ!")
+            return
+        sent_id = await send_telegram_msg(chat_id, f"⏳ *[HEALTH PROBE GATE]* Đang kiểm tra tài khoản `{acc_id}`...\nVui lòng đợi...")
+        if sent_id:
+            await reenable_antigravity_account(acc_id, chat_id, sent_id, user_id=user_id or ADMIN_USER_ID)
+        return
+
+    # 4b. /deps
+    if text == "/deps" or text.startswith("/deps@") or text.startswith("/deps "):
+        sent_id = await send_telegram_msg(chat_id, "⏳ Đang rà soát phụ thuộc & kiểm tra bảo mật...")
+        if sent_id:
+            await dispatch_command("system.deps.check", {}, chat_id, sent_id, title="Rà soát phụ thuộc & bảo mật")
+        return
+
+    # 4c. /upgrade_deps [patch|minor]
+    if text == "/upgrade_deps" or text.startswith("/upgrade_deps@") or text.startswith("/upgrade_deps "):
+        parts = text.split(maxsplit=1)
+        tier = "patch"
+        if len(parts) > 1:
+            tier = parts[1].strip().lower()
+        if tier not in ["patch", "minor"]:
+            await send_telegram_msg(chat_id, "⚠️ Cú pháp: `/upgrade_deps [patch|minor]` (Mặc định: `patch`)")
+            return
+        sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị nâng cấp phụ thuộc ({tier})...")
+        if sent_id:
+            await dispatch_command("system.deps.upgrade", {"tier": tier}, chat_id, sent_id, title=f"Nâng cấp phụ thuộc ({tier})")
+        return
+
+    # 4d. /grok or /grok_model
+    if text in ["/grok", "/grok_model"] or text.startswith("/grok@") or text.startswith("/grok_model@"):
+        info = read_grok_model_info()
+        grok_text = format_grok_menu_text()
+        markup = get_grok_menu_markup(info.get("default", ""))
+        await send_telegram_msg(chat_id, grok_text, reply_markup=markup)
+        return
+
+    # 4e. /set_grok_model <model>
+    if text.startswith("/set_grok_model") or text.startswith("/grok_set"):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            allowed_str = ", ".join([f"`{m[0]}`" for m in GROK_AVAILABLE_MODELS])
+            await send_telegram_msg(chat_id, f"⚠️ Cú pháp: `/set_grok_model <model>`\nCác model khả dụng: {allowed_str}")
+            return
+        target_model = parts[1].strip()
+        sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuyển model Grok CLI sang `{target_model}`...")
+        if sent_id:
+            await dispatch_command("grok.model.set", {"model": target_model}, chat_id, sent_id, title=f"Đổi model Grok sang {target_model}")
+        return
+
+    # 4f. /help
+    if text == "/help" or text.startswith("/help@"):
+        await send_telegram_msg(chat_id, HELP_TEXT, reply_markup=get_main_dashboard_markup())
+        return
+
+    # 5. /restart <service>
+    if text.startswith("/restart"):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            await send_telegram_msg(chat_id, "Cú pháp: `/restart <service_name>` (Ví dụ: `/restart open-webui`)")
+            return
+        svc = parts[1].strip()
+        sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị khởi động lại {svc}...")
+        if sent_id:
+            await dispatch_command("system.container.restart", {"service": svc}, chat_id, sent_id, title=f"Khởi động lại {svc}")
+        return
+
+    # 6. /upgrade_owu [version]
+    if text.startswith("/upgrade_owu"):
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1:
+            ver = parts[1].strip()
+            sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị nâng cấp Open WebUI lên {ver}...")
+            if sent_id:
+                await dispatch_command(
+                    "system.openwebui.upgrade",
+                    {"target_version": ver},
+                    chat_id,
+                    sent_id,
+                    title=f"Nâng cấp Open WebUI lên {ver}",
+                )
+        else:
+            sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra phiên bản Open WebUI trên server và GitHub...")
             info = await check_openwebui_versions()
             cur_ver = info["current_version"]
             latest_ver = info["latest_version"]
             has_update = info["has_update"]
 
-            if has_update:
+            if has_update and sent_id:
                 prompt = (
                     f"🚀 *PHÁT HIỆN BẢN CẬP NHẬT MỚI CHO OPEN WEBUI!*\n\n"
                     f"• Phiên bản đang chạy: `v{cur_ver}`\n"
-                    f"• Phiên bản mới nhất: `v{latest_ver}` ({info['published_at']})\n"
-                    f"• Xem chi tiết: [GitHub Release Notes]({info['release_url']})\n\n"
-                    f"💡 *Kế hoạch nâng cấp:*\n"
-                    f"• Lệnh sẽ chạy: `bash scripts/update-openwebui.sh v{latest_ver}`\n"
-                    f"• Tự động sao lưu database SQLite (Zero Data Loss).\n"
-                    f"• Tự động rollback nếu container mới khởi động lỗi.\n"
-                    f"• Thời gian gián đoạn dự kiến: ~30s.\n\n"
-                    f"Bạn có chắc chắn muốn thực thi nâng cấp ngay bây giờ?"
+                    f"• Phiên bản mới nhất: `v{latest_ver}` ({info['published_at']})\n\n"
+                    f"Bạn có muốn nâng cấp lên `v{latest_ver}` ngay bây giờ?"
                 )
                 nonce = hashlib.sha256(f"upg_owu_{time.time()}_{latest_ver}".encode()).hexdigest()[:8]
                 action_cache[nonce] = {
@@ -2093,395 +2719,118 @@ async def process_telegram_update(update: Dict[str, Any]) -> None:
                         [{"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"}],
                     ]
                 }
-                await edit_telegram_msg(chat_id, message_id, prompt, reply_markup=markup)
-            elif cur_ver != "unknown":
-                up_to_date_msg = (
-                    f"✅ *OPEN WEBUI ĐÃ Ở PHIÊN BẢN MỚI NHẤT!*\n\n"
-                    f"• Phiên bản đang chạy: `v{cur_ver}`\n"
-                    f"• Phiên bản trên GitHub: `v{latest_ver}`\n"
-                    f"• Trạng thái: Hệ thống đang vận hành phiên bản mới nhất, không cần cập nhật."
-                )
-                reinstall_nonce = hashlib.sha256(f"reinstall_owu_{time.time()}".encode()).hexdigest()[:8]
-                action_cache[reinstall_nonce] = {
-                    "command": "system.openwebui.upgrade",
-                    "params": {"target_version": f"v{cur_ver}"},
-                    "title": f"Cài đặt lại Open WebUI v{cur_ver}",
-                    "timeout": 300,
-                    "expires": time.time() + 60,
-                }
-                markup = {
-                    "inline_keyboard": [
-                        [{"text": f"🔄 Cài Đặt Lại v{cur_ver} (Reinstall)", "callback_data": f"act:{reinstall_nonce}"}],
-                        [{"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"}],
-                    ]
-                }
-                await edit_telegram_msg(chat_id, message_id, up_to_date_msg, reply_markup=markup)
-            else:
-                err_msg = (
-                    f"⚠️ *KHÔNG THỂ KIỂM TRA PHIÊN BẢN TỰ ĐỘNG*\n\n"
-                    f"• Phiên bản local: `{cur_ver}`\n"
-                    f"• Phiên bản GitHub: `{latest_ver}`\n\n"
-                    f"Bạn có thể chỉ định phiên bản nâng cấp thủ công bằng lệnh:\n"
-                    f"`/upgrade_owu <version>` (ví dụ: `/upgrade_owu v0.11.4`)"
-                )
-                await edit_telegram_msg(chat_id, message_id, err_msg, reply_markup=get_main_dashboard_markup())
-            return
-        elif data == "menu:help":
-            await answer_callback(cq_id)
-            help_text = (
-                "❓ *HƯỚNG DẪN SỬ DỤNG DGX-CHATOPS*\n\n"
-                "• `/menu` hoặc `/start`: Bật bảng điều khiển cảm ứng.\n"
-                "• `/status`: Kiểm tra nhanh phần cứng & containers.\n"
-                "• `/memory`: Chi tiết RAM, Swap và Top 5 tiến trình ngốn bộ nhớ.\n"
-                "• `/stats`: Thống kê sản lượng Tokens, Requests (Dual-Gateway).\n"
-                "• `/gpu`: Xem nhiệt độ, VRAM GPU Blackwell GB10.\n"
-                "• `/autotuner`: Kiểm tra tiến độ Nightly Auto-Tuner CCBA.\n"
-                "• `/rag_state`: Xem tiến độ hàng đợi RAG Ingestion.\n"
-                "• `/deps`: Rà soát độ trễ phiên bản và lỗ hổng bảo mật phụ thuộc.\n"
-                "• `/upgrade_deps [patch|minor]`: Nâng cấp phụ thuộc 1-Click kèm Hard Completion Lock.\n"
-                "• `/restart <service>`: Khởi động lại container.\n"
-                "• `/upgrade_owu`: Nâng cấp Open WebUI.\n"
-                "• `/boost <skill>`: Tăng cường suy luận sâu cho kỹ năng bị kẹt (ADR-0052).\n"
-                "• `/exec <PIN> <command>`: Thực thi lệnh khẩn cấp (có 2-step confirmation).\n"
-            )
-            await edit_telegram_msg(chat_id, message_id, help_text, reply_markup=get_main_dashboard_markup())
-            return
-
-        # 2. Dynamic Action Buttons (act:<nonce> or act:antigravity_reenable:<account_id>)
-        if data.startswith("act:antigravity_reenable:"):
-            account_id = data.split("act:antigravity_reenable:", 1)[1].strip()
-            if not account_id or not re.match(r"^[a-zA-Z0-9_.@-]+$", account_id):
-                await answer_callback(cq_id, "❌ ID tài khoản không hợp lệ!", show_alert=True)
-                return
-            await answer_callback(cq_id, f"🔍 Đang kiểm tra probe {account_id}...")
-            status_msg_id = await send_telegram_msg(chat_id, f"⏳ *[HEALTH PROBE GATE]* Đang kiểm tra tài khoản `{account_id}`...\nVui lòng đợi...")
-            await reenable_antigravity_account(account_id, chat_id, status_msg_id or message_id, cq_id=cq_id, user_id=user_id)
-            return
-        elif data.startswith("act:"):
-            nonce = data.split(":", 1)[1]
-            entry = action_cache.pop(nonce, None)
-            if not entry or time.time() > entry.get("expires", 0):
-                await answer_callback(cq_id, "⚠️ Thao tác đã hết hạn hoặc đã được thực thi!", show_alert=True)
-                return
-
-            cmd = entry["command"]
-            params = entry.get("params", {})
-            title = entry.get("title", "")
-            timeout = entry.get("timeout")
-
-            if cmd == "ccba.skill.boost" and is_kernel_runner_locked():
-                action_cache[nonce] = entry
-                await answer_callback(cq_id, "⚠️ Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!", show_alert=True)
-                return
-
-            await answer_callback(cq_id, f"🚀 Khởi chạy {title}...")
-            status_msg_id = await send_telegram_msg(chat_id, f"⏳ *[ĐANG CHẠY]* `{title}`\nVui lòng đợi...")
-            dispatched = await dispatch_command(cmd, params, chat_id, status_msg_id or message_id, title=title, cq_id=cq_id, timeout=timeout)
-            if not dispatched:
-                action_cache[nonce] = entry
-            return
-
-        return
-
-    # Handle incoming text messages
-    if "message" in update:
-        msg = update["message"]
-        chat_id = msg.get("chat", {}).get("id")
-        user_id = msg.get("from", {}).get("id")
-        message_id = msg.get("message_id")
-        text = msg.get("text", "").strip()
-
-        # Anti-Replay Protection for Stale Telegram Updates
-        msg_date = msg.get("date", 0)
-        if msg_date and (time.time() - msg_date > 120):
-            age_sec = int(time.time() - msg_date)
-            print(f"[Anti-Replay] Dropping stale update/message {message_id} (age: {age_sec}s > 120s)", flush=True)
-            append_audit_log(
-                trigger_type="message",
-                command=text,
-                params={"message_id": message_id, "msg_date": msg_date, "age_seconds": age_sec},
-                user_id=user_id or 0,
-                status="STALE_DROPPED",
-                duration_ms=0,
-                exit_code=-1,
-                details=f"Stale update dropped by anti-replay protection (age: {age_sec}s > 120s)",
-            )
-            return
-
-        # Strict ACL
-        if user_id != ADMIN_USER_ID:
-            append_audit_log("message", text, {"user_id": user_id}, user_id, "FORBIDDEN", 0, -1, "Unknown user message dropped")
-            return
-
-        # 1. /start or /menu
-        if text in ["/start", "/menu"]:
-            await send_telegram_msg(chat_id, "🖥️ *BẢNG ĐIỀU KHIỂN DGX SPARK CHATOPS*\nVui lòng chọn tác vụ bên dưới:", reply_markup=get_main_dashboard_markup())
-            return
-
-        # 2. /status
-        if text == "/status":
-            sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra trạng thái...")
-            if sent_id:
-                await dispatch_command("system.status", {}, chat_id, sent_id)
-            return
-
-        # 2a. /memory
-        if text == "/memory":
-            sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra chi tiết bộ nhớ & Swap...")
-            if sent_id:
-                await dispatch_command("system.memory", {}, chat_id, sent_id)
-            return
-
-        # 2b. /stats
-        if text == "/stats":
-            sent_id = await send_telegram_msg(chat_id, "⏳ Đang truy vấn thống kê AI Gateway...")
-            if sent_id:
-                await dispatch_command("system.stats", {}, chat_id, sent_id)
-            return
-
-        # 3. /gpu
-        if text == "/gpu":
-            sent_id = await send_telegram_msg(chat_id, "⏳ Đang truy vấn GPU Blackwell...")
-            if sent_id:
-                await dispatch_command("host.gpu", {}, chat_id, sent_id)
-            return
-
-        # 4. /rag_state
-        if text == "/rag_state":
-            sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra hàng đợi RAG...")
-            if sent_id:
-                await dispatch_command("rag.ingestion.state", {}, chat_id, sent_id)
-            return
-
-        # 4a. /autotuner
-        if text == "/autotuner" or text.startswith("/autotuner@"):
-            sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra trạng thái Nightly Auto-Tuner...")
-            if sent_id:
-                await dispatch_command("ccba.autotuner.status", {}, chat_id, sent_id)
-            return
-
-        # 4b. /antigravity
-        if text in ["/antigravity", "/accounts"] or text.startswith("/antigravity@") or text.startswith("/accounts@"):
-            sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra hồ bơi tài khoản Antigravity...")
-            if sent_id:
-                await dispatch_command("antigravity.status", {}, chat_id, sent_id)
-            return
-
-        # 4b2. /reenable_account <account_id>
-        if text.startswith("/reenable_account") or text.startswith("/reenable"):
-            parts = text.split(maxsplit=1)
-            if len(parts) < 2:
-                await send_telegram_msg(chat_id, "Cú pháp: `/reenable_account <account_id>` (Ví dụ: `/reenable_account acc_123`)")
-                return
-            acc_id = parts[1].strip()
-            if not re.match(r"^[a-zA-Z0-9_.@-]+$", acc_id):
-                await send_telegram_msg(chat_id, "❌ ID tài khoản không hợp lệ!")
-                return
-            sent_id = await send_telegram_msg(chat_id, f"⏳ *[HEALTH PROBE GATE]* Đang kiểm tra tài khoản `{acc_id}`...\nVui lòng đợi...")
-            if sent_id:
-                await reenable_antigravity_account(acc_id, chat_id, sent_id, user_id=user_id or ADMIN_USER_ID)
-            return
-
-        # 4b. /deps
-        if text == "/deps" or text.startswith("/deps@") or text.startswith("/deps "):
-            sent_id = await send_telegram_msg(chat_id, "⏳ Đang rà soát phụ thuộc & kiểm tra bảo mật...")
-            if sent_id:
-                await dispatch_command("system.deps.check", {}, chat_id, sent_id, title="Rà soát phụ thuộc & bảo mật")
-            return
-
-        # 4c. /upgrade_deps [patch|minor]
-        if text == "/upgrade_deps" or text.startswith("/upgrade_deps@") or text.startswith("/upgrade_deps "):
-            parts = text.split(maxsplit=1)
-            tier = "patch"
-            if len(parts) > 1:
-                tier = parts[1].strip().lower()
-            if tier not in ["patch", "minor"]:
-                await send_telegram_msg(chat_id, "⚠️ Cú pháp: `/upgrade_deps [patch|minor]` (Mặc định: `patch`)")
-                return
-            sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị nâng cấp phụ thuộc ({tier})...")
-            if sent_id:
-                await dispatch_command("system.deps.upgrade", {"tier": tier}, chat_id, sent_id, title=f"Nâng cấp phụ thuộc ({tier})")
-            return
-
-        # 4d. /help
-        if text == "/help" or text.startswith("/help@"):
-            help_text = (
-                "❓ *HƯỚNG DẪN SỬ DỤNG DGX-CHATOPS*\n\n"
-                "• `/menu` hoặc `/start`: Bật bảng điều khiển cảm ứng.\n"
-                "• `/status`: Kiểm tra nhanh phần cứng & containers.\n"
-                "• `/memory`: Chi tiết RAM, Swap và Top 5 tiến trình ngốn bộ nhớ.\n"
-                "• `/stats`: Thống kê sản lượng Tokens, Requests (Dual-Gateway).\n"
-                "• `/gpu`: Xem nhiệt độ, VRAM GPU Blackwell GB10.\n"
-                "• `/autotuner`: Kiểm tra tiến độ Nightly Auto-Tuner CCBA.\n"
-                "• `/rag_state`: Xem tiến độ hàng đợi RAG Ingestion.\n"
-                "• `/deps`: Rà soát độ trễ phiên bản và lỗ hổng bảo mật phụ thuộc.\n"
-                "• `/upgrade_deps [patch|minor]`: Nâng cấp phụ thuộc 1-Click kèm Hard Completion Lock.\n"
-                "• `/restart <service>`: Khởi động lại container.\n"
-                "• `/upgrade_owu`: Nâng cấp Open WebUI.\n"
-                "• `/boost <skill>`: Tăng cường suy luận sâu cho kỹ năng bị kẹt (ADR-0052).\n"
-                "• `/exec <PIN> <command>`: Thực thi lệnh khẩn cấp (có 2-step confirmation).\n"
-            )
-            await send_telegram_msg(chat_id, help_text, reply_markup=get_main_dashboard_markup())
-            return
-
-        # 5. /restart <service>
-        if text.startswith("/restart"):
-            parts = text.split(maxsplit=1)
-            if len(parts) < 2:
-                await send_telegram_msg(chat_id, "Cú pháp: `/restart <service_name>` (Ví dụ: `/restart open-webui`)")
-                return
-            svc = parts[1].strip()
-            sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị khởi động lại {svc}...")
-            if sent_id:
-                await dispatch_command("system.container.restart", {"service": svc}, chat_id, sent_id, title=f"Khởi động lại {svc}")
-            return
-
-        # 6. /upgrade_owu [version]
-        if text.startswith("/upgrade_owu"):
-            parts = text.split(maxsplit=1)
-            if len(parts) > 1:
-                ver = parts[1].strip()
-                sent_id = await send_telegram_msg(chat_id, f"⏳ Đang chuẩn bị nâng cấp Open WebUI lên {ver}...")
-                if sent_id:
-                    await dispatch_command(
-                        "system.openwebui.upgrade",
-                        {"target_version": ver},
-                        chat_id,
-                        sent_id,
-                        title=f"Nâng cấp Open WebUI lên {ver}",
-                    )
-            else:
-                sent_id = await send_telegram_msg(chat_id, "⏳ Đang kiểm tra phiên bản Open WebUI trên server và GitHub...")
-                info = await check_openwebui_versions()
-                cur_ver = info["current_version"]
-                latest_ver = info["latest_version"]
-                has_update = info["has_update"]
-
-                if has_update and sent_id:
-                    prompt = (
-                        f"🚀 *PHÁT HIỆN BẢN CẬP NHẬT MỚI CHO OPEN WEBUI!*\n\n"
-                        f"• Phiên bản đang chạy: `v{cur_ver}`\n"
-                        f"• Phiên bản mới nhất: `v{latest_ver}` ({info['published_at']})\n\n"
-                        f"Bạn có muốn nâng cấp lên `v{latest_ver}` ngay bây giờ?"
-                    )
-                    nonce = hashlib.sha256(f"upg_owu_{time.time()}_{latest_ver}".encode()).hexdigest()[:8]
-                    action_cache[nonce] = {
-                        "command": "system.openwebui.upgrade",
-                        "params": {"target_version": f"v{latest_ver}"},
-                        "title": f"Nâng cấp Open WebUI lên v{latest_ver}",
-                        "timeout": 300,
-                        "expires": time.time() + 60,
-                    }
-                    markup = {
-                        "inline_keyboard": [
-                            [{"text": f"🚀 XÁC NHẬN NÂNG CẤP (v{latest_ver})", "callback_data": f"act:{nonce}"}],
-                            [{"text": "🔙 Quay Lại Menu Chính", "callback_data": "menu:main"}],
-                        ]
-                    }
-                    await edit_telegram_msg(chat_id, sent_id, prompt, reply_markup=markup)
-                elif cur_ver != "unknown" and sent_id:
-                    await edit_telegram_msg(
-                        chat_id,
-                        sent_id,
-                        f"✅ *Open WebUI đã ở phiên bản mới nhất (`v{cur_ver}`). Không cần nâng cấp!*\n\n"
-                        f"Nếu muốn cài đặt lại bản hiện tại, gõ: `/upgrade_owu v{cur_ver}`",
-                        reply_markup=get_main_dashboard_markup(),
-                    )
-                elif sent_id:
-                    await edit_telegram_msg(
-                        chat_id,
-                        sent_id,
-                        "⚠️ Không thể kiểm tra phiên bản tự động. Vui lòng chỉ định: `/upgrade_owu <version>`",
-                        reply_markup=get_main_dashboard_markup(),
-                    )
-            return
-
-        # 7. /exec <PIN> <command>
-        if text.startswith("/exec"):
-            # Immediately delete message to purge PIN from history
-            await delete_telegram_msg(chat_id, message_id)
-
-            remaining_lock = check_brute_force_lockout()
-            if remaining_lock:
-                await send_telegram_msg(chat_id, f"🚨 *LỆNH /EXEC ĐANG BỊ KHÓA!* Vui lòng thử lại sau `{remaining_lock // 60} phút {remaining_lock % 60} giây`.")
-                return
-
-            parts = text.split(maxsplit=2)
-            if len(parts) < 3:
-                await send_telegram_msg(chat_id, "⚠️ Cú pháp: `/exec <PIN> <command>`")
-                return
-
-            input_pin = parts[1].strip()
-            shell_cmd = parts[2].strip()
-
-            if not CHATOPS_EMERGENCY_PIN or len(CHATOPS_EMERGENCY_PIN) < 6:
-                await send_telegram_msg(chat_id, "❌ Lệnh `/exec` bị vô hiệu hóa vì CHATOPS_EMERGENCY_PIN chưa được thiết lập an toàn.")
-                return
-
-            if not hmac.compare_digest(input_pin, CHATOPS_EMERGENCY_PIN):
-                attempts = register_failed_pin_attempt()
-                if attempts >= 3:
-                    await send_telegram_msg(chat_id, "🚨 *CẢNH BÁO AN NINH:* Bạn đã nhập sai PIN 3 lần! Lệnh `/exec` bị khóa 1 giờ.")
-                    append_audit_log("exec", shell_cmd, {"attempts": attempts}, ADMIN_USER_ID, "LOCKED", 0, -1, "Brute force lockout triggered")
-                else:
-                    await send_telegram_msg(chat_id, f"❌ *SAI MÃ PIN BẢO MẬT!* (Lần thử {attempts}/3)")
-                    append_audit_log("exec", shell_cmd, {"attempts": attempts}, ADMIN_USER_ID, "AUTH_FAILED", 0, -1, f"Failed PIN attempt ({attempts}/3)")
-                return
-
-            reset_failed_pin_attempts()
-
-            # Check blacklist
-            for bl_pattern in SHELL_BLACKLIST:
-                if re.search(bl_pattern, shell_cmd, re.IGNORECASE):
-                    await send_telegram_msg(chat_id, f"❌ *LỆNH BỊ CHẶN BỞI BỘ LỌC AN TOÀN:* Mẫu `{bl_pattern}` không được phép thực thi!")
-                    append_audit_log("exec", shell_cmd, {}, ADMIN_USER_ID, "BLOCKED", 0, -1, f"Matched blacklist: {bl_pattern}")
-                    return
-
-            # Two-phase confirmation
-            nonce = hashlib.sha256(f"exec_{time.time()}_{shell_cmd}".encode()).hexdigest()[:8]
-            action_cache[nonce] = {
-                "command": "system.emergency.exec",
-                "params": {"cmd": shell_cmd},
-                "title": f"Lệnh khẩn cấp: {shell_cmd[:30]}",
-                "expires": time.time() + 60,
-                "timeout": 60,
-            }
-            confirm_msg = (
-                f"⚠️ *XÁC NHẬN THỰC THI LỆNH KHẨN CẤP*\n\n"
-                f"• Lệnh: `{shell_cmd}`\n"
-                f"• Người yêu cầu: Admin ({user_id})\n"
-                f"• Thời hạn xác nhận: 60 giây\n\n"
-                f"Bạn có chắc chắn muốn thực thi lệnh shell này?"
-            )
-            markup = {
-                "inline_keyboard": [
-                    [{"text": "✅ XÁC NHẬN THỰC THI", "callback_data": f"act:{nonce}"}],
-                    [{"text": "❌ HỦY BỎ", "callback_data": "menu:main"}],
-                ]
-            }
-            await send_telegram_msg(chat_id, confirm_msg, reply_markup=markup)
-            return
-
-        # 8. /boost <skill>
-        if text.startswith("/boost"):
-            parts = text.split(maxsplit=1)
-            if len(parts) < 2:
-                await send_telegram_msg(chat_id, "Cú pháp: `/boost <skill_name>` (Ví dụ: `/boost bigbim-risk`)")
-                return
-            skill_arg = parts[1].strip()
-            if is_kernel_runner_locked():
-                await send_telegram_msg(chat_id, "⚠️ *Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!*")
-                return
-            sent_id = await send_telegram_msg(chat_id, f"⏳ *[ĐANG CHẠY]* `🚀 /boost {skill_arg}`\nVui lòng đợi...")
-            if sent_id:
-                await dispatch_command(
-                    "ccba.skill.boost",
-                    {"skill": skill_arg},
+                await edit_telegram_msg(chat_id, sent_id, prompt, reply_markup=markup)
+            elif cur_ver != "unknown" and sent_id:
+                await edit_telegram_msg(
                     chat_id,
                     sent_id,
-                    title=f"🚀 /boost {skill_arg}",
+                    f"✅ *Open WebUI đã ở phiên bản mới nhất (`v{cur_ver}`). Không cần nâng cấp!*\n\n"
+                    f"Nếu muốn cài đặt lại bản hiện tại, gõ: `/upgrade_owu v{cur_ver}`",
+                    reply_markup=get_main_dashboard_markup(),
                 )
+            elif sent_id:
+                await edit_telegram_msg(
+                    chat_id,
+                    sent_id,
+                    "⚠️ Không thể kiểm tra phiên bản tự động. Vui lòng chỉ định: `/upgrade_owu <version>`",
+                    reply_markup=get_main_dashboard_markup(),
+                )
+        return
+
+    # 7. /exec <PIN> <command>
+    if text.startswith("/exec"):
+        # Immediately delete message to purge PIN from history
+        await delete_telegram_msg(chat_id, message_id)
+
+        remaining_lock = check_brute_force_lockout()
+        if remaining_lock:
+            await send_telegram_msg(chat_id, f"🚨 *LỆNH /EXEC ĐANG BỊ KHÓA!* Vui lòng thử lại sau `{remaining_lock // 60} phút {remaining_lock % 60} giây`.")
             return
+
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3:
+            await send_telegram_msg(chat_id, "⚠️ Cú pháp: `/exec <PIN> <command>`")
+            return
+
+        input_pin = parts[1].strip()
+        shell_cmd = parts[2].strip()
+
+        if not CHATOPS_EMERGENCY_PIN or len(CHATOPS_EMERGENCY_PIN) < 6:
+            await send_telegram_msg(chat_id, "❌ Lệnh `/exec` bị vô hiệu hóa vì CHATOPS_EMERGENCY_PIN chưa được thiết lập an toàn.")
+            return
+
+        if not hmac.compare_digest(input_pin, CHATOPS_EMERGENCY_PIN):
+            attempts = register_failed_pin_attempt()
+            if attempts >= 3:
+                await send_telegram_msg(chat_id, "🚨 *CẢNH BÁO AN NINH:* Bạn đã nhập sai PIN 3 lần! Lệnh `/exec` bị khóa 1 giờ.")
+                append_audit_log("exec", shell_cmd, {"attempts": attempts}, ADMIN_USER_ID, "LOCKED", 0, -1, "Brute force lockout triggered")
+            else:
+                await send_telegram_msg(chat_id, f"❌ *SAI MÃ PIN BẢO MẬT!* (Lần thử {attempts}/3)")
+                append_audit_log("exec", shell_cmd, {"attempts": attempts}, ADMIN_USER_ID, "AUTH_FAILED", 0, -1, f"Failed PIN attempt ({attempts}/3)")
+            return
+
+        reset_failed_pin_attempts()
+
+        # Check blacklist
+        for bl_pattern in SHELL_BLACKLIST:
+            if re.search(bl_pattern, shell_cmd, re.IGNORECASE):
+                await send_telegram_msg(chat_id, f"❌ *LỆNH BỊ CHẶN BỞI BỘ LỌC AN TOÀN:* Mẫu `{bl_pattern}` không được phép thực thi!")
+                append_audit_log("exec", shell_cmd, {}, ADMIN_USER_ID, "BLOCKED", 0, -1, f"Matched blacklist: {bl_pattern}")
+                return
+
+        # Two-phase confirmation
+        nonce = hashlib.sha256(f"exec_{time.time()}_{shell_cmd}".encode()).hexdigest()[:8]
+        action_cache[nonce] = {
+            "command": "system.emergency.exec",
+            "params": {"cmd": shell_cmd},
+            "title": f"Lệnh khẩn cấp: {shell_cmd[:30]}",
+            "expires": time.time() + 60,
+            "timeout": 60,
+        }
+        confirm_msg = (
+            f"⚠️ *XÁC NHẬN THỰC THI LỆNH KHẨN CẤP*\n\n"
+            f"• Lệnh: `{shell_cmd}`\n"
+            f"• Người yêu cầu: Admin ({user_id})\n"
+            f"• Thời hạn xác nhận: 60 giây\n\n"
+            f"Bạn có chắc chắn muốn thực thi lệnh shell này?"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "✅ XÁC NHẬN THỰC THI", "callback_data": f"act:{nonce}"}],
+                [{"text": "❌ HỦY BỎ", "callback_data": "menu:main"}],
+            ]
+        }
+        await send_telegram_msg(chat_id, confirm_msg, reply_markup=markup)
+        return
+
+    # 8. /boost <skill>
+    if text.startswith("/boost"):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            await send_telegram_msg(chat_id, "Cú pháp: `/boost <skill_name>` (Ví dụ: `/boost bigbim-risk`)")
+            return
+        skill_arg = parts[1].strip()
+        if is_kernel_runner_locked():
+            await send_telegram_msg(chat_id, "⚠️ *Hệ thống đang bận chạy ca Nightly Auto-Tuner. Vui lòng thử lại sau!*")
+            return
+        sent_id = await send_telegram_msg(chat_id, f"⏳ *[ĐANG CHẠY]* `🚀 /boost {skill_arg}`\nVui lòng đợi...")
+        if sent_id:
+            await dispatch_command(
+                "ccba.skill.boost",
+                {"skill": skill_arg},
+                chat_id,
+                sent_id,
+                title=f"🚀 /boost {skill_arg}",
+            )
+        return
+
+
+async def process_telegram_update(update: Dict[str, Any]) -> None:
+    """Processes an incoming Telegram update with strict ACL and atomic actions."""
+    if "callback_query" in update:
+        await _handle_callback_query(update["callback_query"], update)
+    elif "message" in update:
+        await _handle_text_message(update["message"])
 
 
 async def telegram_polling_loop() -> None:
@@ -2641,6 +2990,7 @@ ALLOWED_NOTIFY_COMMANDS = {
     "system.deps.upgrade",
     "ccba.skill.boost",
     "antigravity.account.reenable",
+    "grok.model.set",
 }
 
 

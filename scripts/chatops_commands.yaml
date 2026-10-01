@@ -66,7 +66,7 @@ commands:
     runner: "docker_cli"
     target: "docker restart {service}"
     param_rules:
-      service: "^(open-webui|qwen36b|ai-gateway|smart-watchdog|cloudflared-tunnel|rag-service|milvus-standalone|neo4j-graph)$"
+      service: "^(open-webui|qwen36b|ai-gateway|smart-watchdog|cloudflared-tunnel|rag-service|milvus-standalone|neo4j-graph|dgx-spark-ocr-worker|rag-frontend|whisper-local)$"
 
   - id: "rag.ingestion.state"
     slash: "/rag_state"
@@ -90,7 +90,7 @@ commands:
     is_heavy_op: true
     timeout_seconds: 600
     runner: "host_script"
-    target: "bash /home/vvc/ccba/ccba-agent-platform/scripts/eval/run_boost_worktree.sh {skill}"
+    target: "bash {hub_path}/scripts/eval/run_boost_worktree.sh {skill}"
     param_rules:
       skill: "^[a-zA-Z0-9_-]+$"
 
@@ -113,3 +113,19 @@ commands:
     target: "bash scripts/check_dependency_updates.sh --upgrade={tier}"
     param_rules:
       tier: "^(patch|minor)$"
+
+  - id: "grok.model.menu"
+    slash: "/grok"
+    description: "Bảng điều khiển và chuyển đổi Model cho Grok Build CLI"
+    risk_tier: "READ_ONLY"
+    service_lock: null
+    runner: "internal"
+
+  - id: "grok.model.set"
+    slash: "/set_grok_model"
+    description: "Chuyển đổi nhanh Model mặc định cho Grok Build CLI"
+    risk_tier: "SAFE_OPS"
+    service_lock: null
+    runner: "internal"
+    param_rules:
+      model: "^(qwen-local|gemini-38-flash|claude-sonnet-4-6|claude-opus-4-6|grok-4\\.7|grok-4\\.7-build-fast|grok-4\\.6|grok-4\\.5)$"

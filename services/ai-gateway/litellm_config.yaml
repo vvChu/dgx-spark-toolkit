@@ -1086,7 +1086,8 @@ model_list:
       api_key: "unused"
       rpm: 600
       tpm: 10000000
-      timeout: 900
+      max_tokens: 16384
+      timeout: 600
       extra_body:
         temperature: 0.6
         top_p: 0.95
