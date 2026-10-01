@@ -67,7 +67,50 @@ Grok 4.7 đã ban hành phán quyết **CHẤP THUẬN CÓ ĐIỀU KIỆN (Appro
    - `docker network connect hermes-sandbox-net ai-gateway`
 2. **Chuyển `terminal.backend: docker`**:
    - Mount `/workspace` từ `/home/vvc/hermes_workspace`.
-   - Giới hạn 4 vCPU, 8GB RAM.
-   - Chỉ forward `OPENAI_BASE_URL` vào container.
+   - Giới hạn 4 vCPU, 8GB RAM (`container_cpu: 4`, `container_memory: 8192`).
+   - Chỉ forward `OPENAI_BASE_URL` vào container sandbox.
 3. **Lộ trình dài hạn với Ticket #67**:
    - Tạo user `hermes-runner` tước quyền Docker socket, áp dụng POSIX ACLs.
+
+---
+
+## 4. Kết Quả Triển Khai Thực Tế & Nghiệm Thu (Verification Evidence)
+
+Triển khai hoàn tất 100% cả 2 giai đoạn vào ngày 2026-10-01 trên DGX Spark:
+
+### Ma Trận Kiểm Định Phòng Thủ Chiều Sâu (Defense Matrix)
+
+| Ranh Giới Phòng Thủ | Mối Đe Dọa | Giải Pháp Triển Khai | Kết Quả Kiểm Tra Thực Tế |
+|---------------------|------------|----------------------|---------------------------|
+| **Host Filesystem** | Đọc trộm `~/.ssh`, source code, keys | Docker Container Sandbox (`hermes-sandbox:latest`) | **PASS**: Thử đọc `/home/vvc/.ssh` trả về `No such file or directory`. CWD là `/workspace`. |
+| **Docker Socket** | Chiếm quyền điều khiển toàn bộ cụm container | Không mount `/var/run/docker.sock` vào container | **PASS**: Thử gọi `docker` trả về `command not found`. Không thể can thiệp container host. |
+| **Production Databases** | Injection hoặc dò quét DB nội bộ (PostgreSQL, Milvus, Neo4j) | Mạng riêng cô lập `hermes-sandbox-net` | **PASS**: `ai-gateway:4000` (REACHABLE). `ibim_postgres:5432`, `milvus:19530`, `neo4j:7687` bị chặn 100% (BLOCKED). |
+| **Runaway Reasoning / Token Exhaustion** | Vòng lặp suy nghĩ vô tận làm nghẽn vLLM GB10 | LiteLLM `local-coder`: `max_tokens: 16384`, `timeout: 600` | **PASS**: Inference trơn tru, chặn đứng tràn VRAM/KV Cache. |
+| **Tool Loops & Retries** | Agent lặp tool vô hạn khi gặp lỗi | Circuit Breaker: `4/6/4` (`exact_failure: 4`, `same_tool: 6`, `idempotent: 4`) | **PASS**: Cấu hình kiểm tra `hermes config check` đạt chuẩn. |
+| **Host Directory Mapping** | Tránh cảnh báo missing dir trên host & lỗi media delivery | Ghim `terminal.cwd: "/home/vvc/hermes_workspace"` | **PASS**: `hermes-gateway.service` khởi động sạch 100%, kết nối Telegram polling ổn định. |
+
+---
+
+## 5. Sổ Tay Vận Hành & Giám Sát (Ops Runbook)
+
+### Các Lệnh Quản Trị Trọng Yếu
+```bash
+# Kiểm tra trạng thái dịch vụ Telegram Gateway
+systemctl --user status hermes-gateway.service
+
+# Xem luồng log thời gian thực (giám sát 48h)
+journalctl --user-unit=hermes-gateway.service -f
+
+# Kiểm tra container sandbox đang chạy
+docker ps --filter label=hermes-agent=1
+
+# Kiểm tra kết nối mạng sandbox
+docker network inspect hermes-sandbox-net
+
+# Chạy thử nghiệm nhanh terminal qua Hermes CLI
+hermes -z "Run terminal: pwd && whoami"
+```
+
+### Các Cảnh Báo An Toàn
+- **Tuyệt đối không** cấu hình model alias `rag-core` cho Hermes vì sẽ gây xung đột kép parser tool-call (`qwen3_coder` vs OpenAI-style schema).
+- **Giữ nguyên** biến `TELEGRAM_ALLOWED_USERS=5645114631` và `TELEGRAM_ALLOW_BOTS=none` để bảo vệ kênh Telegram khỏi người lạ hoặc bot xâm nhập.
