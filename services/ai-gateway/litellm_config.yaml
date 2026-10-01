@@ -292,20 +292,6 @@ model_list:
   # proxy-bound Gemini models MUST use the 'openai/vertex_ai/' prefix.
   # =====================================================================
 
-  - model_name: gemini-3-pro-high
-    litellm_params:
-      model: gemini/gemini-3.1-pro-preview
-      api_key: os.environ/GEMINI_API_KEY_5
-      drop_params: true
-      timeout: 120
-
-  - model_name: gemini-3-pro-low
-    litellm_params:
-      model: gemini/gemini-3.1-pro-preview
-      api_key: os.environ/GEMINI_API_KEY_5
-      drop_params: true
-      timeout: 120
-
   - model_name: gemini-3.1-pro-high
     litellm_params:
       model: openai/gemini-3.1-pro-high
@@ -319,13 +305,6 @@ model_list:
       model: openai/gemini-3.1-pro-low
       api_base: os.environ/GATEWAY_PROXY_URL
       api_key: os.environ/GATEWAY_PROXY_KEY
-      drop_params: true
-      timeout: 120
-
-  - model_name: gemini-2.5-pro
-    litellm_params:
-      model: gemini/gemini-2.5-pro
-      api_key: os.environ/GEMINI_API_KEY_5
       drop_params: true
       timeout: 120
 
@@ -390,42 +369,7 @@ model_list:
     model_info:
       mode: image_generation
 
-  - model_name: gemini-3.5-flash-lite
-    litellm_params:
-      model: gemini/gemini-3.5-flash-lite
-      api_key: os.environ/GEMINI_API_KEY_2
-      drop_params: true
-      timeout: 120
-  - model_name: gemini-3.5-flash-lite
-    litellm_params:
-      model: gemini/gemini-3.5-flash-lite
-      api_key: os.environ/GEMINI_API_KEY_3
-      drop_params: true
-      timeout: 120
-
-  - model_name: gemini-3.1-flash-lite
-    litellm_params:
-      model: gemini/gemini-3.1-flash-lite
-      api_key: os.environ/GEMINI_API_KEY_3
-      drop_params: true
-      timeout: 120
   # ── gemini-2.5-flash-lite ──
-  - model_name: gemini-2.5-flash-lite
-    litellm_params:
-      <<: *gemini25-flash-lite-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-2.5-flash-lite
-    litellm_params:
-      <<: *gemini25-flash-lite-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-2.5-flash-lite
-    litellm_params:
-      <<: *gemini25-flash-lite-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-2.5-flash-lite
-    litellm_params:
-      <<: *gemini25-flash-lite-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: gemini-2.5-flash-lite
     litellm_params:
       <<: *gemini25-flash-lite-base
@@ -459,22 +403,6 @@ model_list:
       api_key: sk-spark-local-bge-m3
 
   # ── gemini-embedding-2 ──
-  - model_name: gemini-embedding-2
-    litellm_params:
-      <<: *gemini-embedding-2-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-embedding-2
-    litellm_params:
-      <<: *gemini-embedding-2-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-embedding-2
-    litellm_params:
-      <<: *gemini-embedding-2-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-embedding-2
-    litellm_params:
-      <<: *gemini-embedding-2-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: gemini-embedding-2
     litellm_params:
       <<: *gemini-embedding-2-base
@@ -513,22 +441,6 @@ model_list:
   - model_name: gemini-3.5-flash-medium
     litellm_params:
       <<: *gemini35-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.5-flash-medium
-    litellm_params:
-      <<: *gemini35-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.5-flash-medium
-    litellm_params:
-      <<: *gemini35-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.5-flash-medium
-    litellm_params:
-      <<: *gemini35-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: gemini-3.5-flash-medium
-    litellm_params:
-      <<: *gemini35-flash-medium-base
       api_key: os.environ/GEMINI_API_KEY_6
   - model_name: gemini-3.5-flash-medium
     litellm_params:
@@ -552,22 +464,6 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY_11
 
   # ── gemini-3.5-flash-high ──
-  - model_name: gemini-3.5-flash-high
-    litellm_params:
-      <<: *gemini35-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.5-flash-high
-    litellm_params:
-      <<: *gemini35-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.5-flash-high
-    litellm_params:
-      <<: *gemini35-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.5-flash-high
-    litellm_params:
-      <<: *gemini35-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: gemini-3.5-flash-high
     litellm_params:
       <<: *gemini35-flash-high-base
@@ -597,22 +493,6 @@ model_list:
   - model_name: gemini-3.6-flash-low
     litellm_params:
       <<: *gemini36-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.6-flash-low
-    litellm_params:
-      <<: *gemini36-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.6-flash-low
-    litellm_params:
-      <<: *gemini36-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.6-flash-low
-    litellm_params:
-      <<: *gemini36-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: gemini-3.6-flash-low
-    litellm_params:
-      <<: *gemini36-flash-low-base
       api_key: os.environ/GEMINI_API_KEY_6
   - model_name: gemini-3.6-flash-low
     litellm_params:
@@ -631,22 +511,6 @@ model_list:
       timeout: 120
 
   # ── gemini-3.6-flash-medium ──
-  - model_name: gemini-3.6-flash-medium
-    litellm_params:
-      <<: *gemini36-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.6-flash-medium
-    litellm_params:
-      <<: *gemini36-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.6-flash-medium
-    litellm_params:
-      <<: *gemini36-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.6-flash-medium
-    litellm_params:
-      <<: *gemini36-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: gemini-3.6-flash-medium
     litellm_params:
       <<: *gemini36-flash-medium-base
@@ -671,22 +535,6 @@ model_list:
   - model_name: gemini-3.6-flash-high
     litellm_params:
       <<: *gemini36-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.6-flash-high
-    litellm_params:
-      <<: *gemini36-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.6-flash-high
-    litellm_params:
-      <<: *gemini36-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.6-flash-high
-    litellm_params:
-      <<: *gemini36-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: gemini-3.6-flash-high
-    litellm_params:
-      <<: *gemini36-flash-high-base
       api_key: os.environ/GEMINI_API_KEY_6
   - model_name: gemini-3.6-flash-high
     litellm_params:
@@ -705,22 +553,6 @@ model_list:
       timeout: 120
 
   # ── gemini-3.7-flash (default alias) ──
-  - model_name: gemini-3.7-flash
-    litellm_params:
-      <<: *gemini37-flash-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.7-flash
-    litellm_params:
-      <<: *gemini37-flash-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.7-flash
-    litellm_params:
-      <<: *gemini37-flash-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.7-flash
-    litellm_params:
-      <<: *gemini37-flash-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: gemini-3.7-flash
     litellm_params:
       <<: *gemini37-flash-base
@@ -757,22 +589,6 @@ model_list:
   - model_name: gemini-3.7-flash-low
     litellm_params:
       <<: *gemini37-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.7-flash-low
-    litellm_params:
-      <<: *gemini37-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.7-flash-low
-    litellm_params:
-      <<: *gemini37-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.7-flash-low
-    litellm_params:
-      <<: *gemini37-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: gemini-3.7-flash-low
-    litellm_params:
-      <<: *gemini37-flash-low-base
       api_key: os.environ/GEMINI_API_KEY_6
   - model_name: gemini-3.7-flash-low
     litellm_params:
@@ -806,22 +622,6 @@ model_list:
   - model_name: gemini-3.7-flash-medium
     litellm_params:
       <<: *gemini37-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.7-flash-medium
-    litellm_params:
-      <<: *gemini37-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.7-flash-medium
-    litellm_params:
-      <<: *gemini37-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.7-flash-medium
-    litellm_params:
-      <<: *gemini37-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: gemini-3.7-flash-medium
-    litellm_params:
-      <<: *gemini37-flash-medium-base
       api_key: os.environ/GEMINI_API_KEY_6
   - model_name: gemini-3.7-flash-medium
     litellm_params:
@@ -852,22 +652,6 @@ model_list:
       timeout: 120
 
   # ── gemini-3.7-flash-high ──
-  - model_name: gemini-3.7-flash-high
-    litellm_params:
-      <<: *gemini37-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.7-flash-high
-    litellm_params:
-      <<: *gemini37-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.7-flash-high
-    litellm_params:
-      <<: *gemini37-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.7-flash-high
-    litellm_params:
-      <<: *gemini37-flash-high-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: gemini-3.7-flash-high
     litellm_params:
       <<: *gemini37-flash-high-base
@@ -913,22 +697,6 @@ model_list:
   - model_name: gemini-3.8-flash-low
     litellm_params:
       <<: *gemini38-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.8-flash-low
-    litellm_params:
-      <<: *gemini38-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.8-flash-low
-    litellm_params:
-      <<: *gemini38-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.8-flash-low
-    litellm_params:
-      <<: *gemini38-flash-low-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: gemini-3.8-flash-low
-    litellm_params:
-      <<: *gemini38-flash-low-base
       api_key: os.environ/GEMINI_API_KEY_6
   - model_name: gemini-3.8-flash-low
     litellm_params:
@@ -959,22 +727,6 @@ model_list:
       timeout: 120
 
   # ── gemini-3.8-flash-medium ──
-  - model_name: gemini-3.8-flash-medium
-    litellm_params:
-      <<: *gemini38-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-3.8-flash-medium
-    litellm_params:
-      <<: *gemini38-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-3.8-flash-medium
-    litellm_params:
-      <<: *gemini38-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-3.8-flash-medium
-    litellm_params:
-      <<: *gemini38-flash-medium-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: gemini-3.8-flash-medium
     litellm_params:
       <<: *gemini38-flash-medium-base
@@ -1190,22 +942,6 @@ model_list:
   - model_name: ocr-tier4
     litellm_params:
       <<: *ocr-tier4-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: ocr-tier4
-    litellm_params:
-      <<: *ocr-tier4-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: ocr-tier4
-    litellm_params:
-      <<: *ocr-tier4-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: ocr-tier4
-    litellm_params:
-      <<: *ocr-tier4-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: ocr-tier4
-    litellm_params:
-      <<: *ocr-tier4-base
       api_key: os.environ/GEMINI_API_KEY_6
   - model_name: ocr-tier4
     litellm_params:
@@ -1232,22 +968,6 @@ model_list:
   - model_name: ocr-fallback
     litellm_params:
       <<: *ocr-fallback-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: ocr-fallback
-    litellm_params:
-      <<: *ocr-fallback-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: ocr-fallback
-    litellm_params:
-      <<: *ocr-fallback-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: ocr-fallback
-    litellm_params:
-      <<: *ocr-fallback-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: ocr-fallback
-    litellm_params:
-      <<: *ocr-fallback-base
       api_key: os.environ/GEMINI_API_KEY_6
   - model_name: ocr-fallback
     litellm_params:
@@ -1271,22 +991,6 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY_11
 
   # ── ocr-primary: gemini-3.1-flash-lite ──
-  - model_name: ocr-primary
-    litellm_params:
-      <<: *ocr-primary-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: ocr-primary
-    litellm_params:
-      <<: *ocr-primary-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: ocr-primary
-    litellm_params:
-      <<: *ocr-primary-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: ocr-primary
-    litellm_params:
-      <<: *ocr-primary-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: ocr-primary
     litellm_params:
       <<: *ocr-primary-base
@@ -1338,22 +1042,6 @@ model_list:
   - model_name: text-gemma
     litellm_params:
       <<: *text-gemma-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: text-gemma
-    litellm_params:
-      <<: *text-gemma-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: text-gemma
-    litellm_params:
-      <<: *text-gemma-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: text-gemma
-    litellm_params:
-      <<: *text-gemma-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: text-gemma
-    litellm_params:
-      <<: *text-gemma-base
       api_key: os.environ/GEMINI_API_KEY_6
   - model_name: text-gemma
     litellm_params:
@@ -1377,22 +1065,6 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY_11
 
   # ── text-gemma-12b ──
-  - model_name: text-gemma-12b
-    litellm_params:
-      <<: *text-gemma-12b-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: text-gemma-12b
-    litellm_params:
-      <<: *text-gemma-12b-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: text-gemma-12b
-    litellm_params:
-      <<: *text-gemma-12b-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: text-gemma-12b
-    litellm_params:
-      <<: *text-gemma-12b-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: text-gemma-12b
     litellm_params:
       <<: *text-gemma-12b-base
@@ -1422,22 +1094,6 @@ model_list:
   - model_name: text-gemma-4b
     litellm_params:
       <<: *text-gemma-12b-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: text-gemma-4b
-    litellm_params:
-      <<: *text-gemma-12b-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: text-gemma-4b
-    litellm_params:
-      <<: *text-gemma-12b-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: text-gemma-4b
-    litellm_params:
-      <<: *text-gemma-12b-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: text-gemma-4b
-    litellm_params:
-      <<: *text-gemma-12b-base
       api_key: os.environ/GEMINI_API_KEY_6
   - model_name: text-gemma-4b
     litellm_params:
@@ -1461,38 +1117,6 @@ model_list:
       api_key: os.environ/GEMINI_API_KEY_11
 
   # ── reasoning-gemma & reasoning-fallback ──
-  - model_name: reasoning-gemma
-    litellm_params:
-      <<: *reasoning-gemma-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: reasoning-fallback
-    litellm_params:
-      <<: *reasoning-fallback-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: reasoning-gemma
-    litellm_params:
-      <<: *reasoning-gemma-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: reasoning-fallback
-    litellm_params:
-      <<: *reasoning-fallback-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: reasoning-gemma
-    litellm_params:
-      <<: *reasoning-gemma-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: reasoning-fallback
-    litellm_params:
-      <<: *reasoning-fallback-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: reasoning-gemma
-    litellm_params:
-      <<: *reasoning-gemma-base
-      api_key: os.environ/GEMINI_API_KEY_5
-  - model_name: reasoning-fallback
-    litellm_params:
-      <<: *reasoning-fallback-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: reasoning-gemma
     litellm_params:
       <<: *reasoning-gemma-base
@@ -1546,22 +1170,6 @@ model_list:
   # GEMINI EMBEDDING MODELS — Free Tier
   # =====================================================================
   # ── gemini-embed: gemini-embedding-2 ──
-  - model_name: gemini-embed
-    litellm_params:
-      <<: *gemini-embed-base
-      api_key: os.environ/GEMINI_API_KEY_2
-  - model_name: gemini-embed
-    litellm_params:
-      <<: *gemini-embed-base
-      api_key: os.environ/GEMINI_API_KEY_3
-  - model_name: gemini-embed
-    litellm_params:
-      <<: *gemini-embed-base
-      api_key: os.environ/GEMINI_API_KEY_4
-  - model_name: gemini-embed
-    litellm_params:
-      <<: *gemini-embed-base
-      api_key: os.environ/GEMINI_API_KEY_5
   - model_name: gemini-embed
     litellm_params:
       <<: *gemini-embed-base
