@@ -1181,8 +1181,9 @@ model_list:
 
   # =====================================================================
   # =====================================================================
-  # OCR CASCADING FALLBACK CHAIN (ALL 10 KEYS)
-  # ocr-primary -> ocr-fallback -> ocr-tier3 -> ocr-tier4 -> rag-core
+  # OCR CASCADING FALLBACK CHAIN
+  # ocr-primary -> ocr-fallback -> ocr-tier4 -> ocr-proxy (Antigravity) -> rag-core
+  # Direct keys (KEY_2..KEY_11) revoked 2026-10-01; ocr-proxy làm safety net
   # Phase-shifted: LiteLLM usage-based-routing naturally distributes keys
   # =====================================================================
   # ── ocr-tier4: gemini-3-flash ──
@@ -1310,6 +1311,22 @@ model_list:
     litellm_params:
       <<: *ocr-primary-base
       api_key: os.environ/GEMINI_API_KEY_11
+
+  # ── ocr-proxy: gemini-3.5-flash-lite via Antigravity Proxy ──
+  # Safety net khi toàn bộ direct Gemini API keys bị revoke.
+  # Không có RPD limit; bị giới hạn bởi Antigravity Proxy pool.
+  - model_name: ocr-proxy
+    litellm_params:
+      model: gemini-3.5-flash-lite
+      api_base: os.environ/GATEWAY_PROXY_URL
+      api_key: os.environ/GATEWAY_PROXY_KEY
+      custom_llm_provider: openai
+      drop_params: true
+      timeout: 120
+    model_info:
+      mode: chat
+      supports_vision: true
+      description: "OCR proxy fallback via Antigravity Proxy (gemini-3.5-flash-lite). Active khi direct keys revoked."
 
   # ── text-auto ──
   - model_name: text-auto
@@ -1739,10 +1756,11 @@ router_settings:
     - {"gemini-3.1-flash-lite": ["ocr-tier4", "rag-core"]}
     - {"gemini-3.5-flash-low": ["gemini-3.1-pro-high", "ocr-tier4", "rag-core"]}
     - {"gemini-3-flash-agent": ["gemini-3.5-flash-low", "gemini-3.1-pro-high", "ocr-tier4", "rag-core"]}
-    # NEW OCR FALLBACK CHAIN (rag-core restored as ultimate safety net)
-    - {"ocr-primary": ["ocr-fallback", "ocr-tier4", "rag-core"]}
-    - {"ocr-fallback": ["ocr-tier4", "rag-core"]}
-    - {"ocr-tier4": ["rag-core"]}
+    # OCR FALLBACK CHAIN — ocr-proxy (Antigravity) acts as safety net khi direct keys revoked
+    - {"ocr-primary": ["ocr-fallback", "ocr-tier4", "ocr-proxy", "rag-core"]}
+    - {"ocr-fallback": ["ocr-tier4", "ocr-proxy", "rag-core"]}
+    - {"ocr-tier4": ["ocr-proxy", "rag-core"]}
+    - {"ocr-proxy": ["rag-core"]}
 
     - {"audio-primary": ["whisper-primary", "whisper-local"]}
 
@@ -1765,7 +1783,7 @@ router_settings:
     - {"gemini-embedding-2": ["bge-m3"]}
     - {"gemini-embed": ["bge-m3"]}
 
-  default_fallbacks: ["ocr-fallback"]
+  default_fallbacks: ["ocr-proxy"]  # ocr-fallback keys revoked 2026-10-01; dùng Antigravity Proxy
 
 litellm_settings:
   # Issue #51: Globally drop unsupported parameters across all providers
