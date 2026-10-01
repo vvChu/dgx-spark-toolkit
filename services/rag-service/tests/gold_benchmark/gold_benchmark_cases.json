@@ -1,0 +1,466 @@
+[
+  {
+    "id": "GB-01",
+    "category": "scope_gate",
+    "question": "Nhà máy lọc hóa dầu Dung Quất có áp dụng QCVN 06:2022/BXD để thẩm duyệt PCCC không?",
+    "project_name": "Nhà máy lọc dầu Dung Quất",
+    "project_level": "Cấp_I",
+    "primary_function": "F5",
+    "fire_height_m": 25.0,
+    "expected_applicable": false,
+    "expected_reject_keyword": "lọc dầu",
+    "expected_clause": "QCVN 06:2022/BXD Mục 1.1.3"
+  },
+  {
+    "id": "GB-02",
+    "category": "scope_gate",
+    "question": "Kho đạn dược quân đội có thuộc phạm vi điều chỉnh thông thường của QCVN 06:2022/BXD không?",
+    "project_name": "Kho đạn dược trung tâm",
+    "project_level": "Đặc_biệt",
+    "primary_function": "F5",
+    "fire_height_m": 8.0,
+    "expected_applicable": false,
+    "expected_reject_keyword": "kho đạn",
+    "expected_clause": "QCVN 06:2022/BXD Mục 1.1.3"
+  },
+  {
+    "id": "GB-03",
+    "category": "scope_gate",
+    "question": "Nhà máy sản xuất thuốc nổ công nghiệp có áp dụng quy chuẩn QCVN 06:2022 không?",
+    "project_name": "Nhà máy sản xuất thuốc nổ vật liệu nổ công nghiệp",
+    "project_level": "Cấp_I",
+    "primary_function": "F5",
+    "fire_height_m": 10.0,
+    "expected_applicable": false,
+    "expected_reject_keyword": "thuốc nổ",
+    "expected_clause": "QCVN 06:2022/BXD Mục 1.1.3"
+  },
+  {
+    "id": "GB-04",
+    "category": "scope_gate",
+    "question": "Tòa tháp chung cư cao 175m có 4 tầng hầm có được thẩm duyệt theo quy chuẩn QCVN 06 thông thường không?",
+    "project_name": "Tòa tháp Landmark Sky 175m",
+    "project_level": "Đặc_biệt",
+    "primary_function": "F1.2",
+    "fire_height_m": 175.0,
+    "underground_floors": 4,
+    "expected_applicable": true,
+    "expected_special_clearance": true,
+    "expected_clause": "QCVN 06:2022/BXD Mục 1.1.2"
+  },
+  {
+    "id": "GB-05",
+    "category": "scope_gate",
+    "question": "Chung cư 24 tầng nổi, 3 tầng hầm, chiều cao 74.5m có thuộc phạm vi áp dụng đồng thời của QCVN 04 và QCVN 06 không?",
+    "project_name": "Chung cư Hoàng Cầu 24T",
+    "project_level": "Cấp_I",
+    "primary_function": "F1.2",
+    "fire_height_m": 74.5,
+    "underground_floors": 3,
+    "expected_applicable": true,
+    "expected_special_clearance": false,
+    "expected_codes": ["QCVN 06:2022/BXD", "QCVN 04:2021/BXD"]
+  },
+  {
+    "id": "GB-06",
+    "category": "normative_force",
+    "question": "Quy chuẩn kỹ thuật quốc gia QCVN 06:2022/BXD có lực ràng buộc pháp lý như thế nào?",
+    "document_identifier": "QCVN 06:2022/BXD",
+    "expected_force": "mandatory"
+  },
+  {
+    "id": "GB-07",
+    "category": "normative_force",
+    "question": "Quy chuẩn kỹ thuật quốc gia về nhà chung cư QCVN 04:2021/BXD có bắt buộc áp dụng không?",
+    "document_identifier": "QCVN 04:2021/BXD",
+    "expected_force": "mandatory"
+  },
+  {
+    "id": "GB-08",
+    "category": "normative_force",
+    "question": "Tiêu chuẩn TCVN 7336:2021 về hệ thống chữa cháy sprinkler có bắt buộc áp dụng khi thiết kế PCCC chung cư không?",
+    "document_identifier": "TCVN 7336:2021",
+    "is_cited": true,
+    "expected_force": "mandatory_by_reference"
+  },
+  {
+    "id": "GB-09",
+    "category": "normative_force",
+    "question": "Tiêu chuẩn TCVN 5738:2021 về hệ thống báo cháy tự động có bắt buộc áp dụng không?",
+    "document_identifier": "TCVN 5738:2021",
+    "is_cited": true,
+    "expected_force": "mandatory_by_reference"
+  },
+  {
+    "id": "GB-10",
+    "category": "normative_force",
+    "question": "Một tiêu chuẩn quốc gia TCVN 9999 bất kỳ không được viện dẫn trong QCVN có tính chất pháp lý gì?",
+    "document_identifier": "TCVN 9999:2020",
+    "is_cited": false,
+    "expected_force": "voluntary"
+  },
+  {
+    "id": "GB-11",
+    "category": "normative_force",
+    "question": "Tiêu chuẩn tự nguyện TCVN 8888 nếu được ghi rõ trong hợp đồng EPC thì có tính bắt buộc không?",
+    "document_identifier": "TCVN 8888:2022",
+    "contract_stipulated": true,
+    "expected_force": "contract_adopted"
+  },
+  {
+    "id": "GB-12",
+    "category": "temporal_edition",
+    "question": "Dự án duyệt PCCC ngày 15/10/2022 áp dụng phiên bản QCVN 06 nào?",
+    "pccc_approval_date": "2022-10-15",
+    "expected_qcvn06_edition": "QCVN 06:2022/BXD (Nguyên bản 2022)"
+  },
+  {
+    "id": "GB-13",
+    "category": "temporal_edition",
+    "question": "Dự án nộp thẩm duyệt PCCC ngày 10/01/2024 áp dụng phiên bản QCVN 06 nào?",
+    "pccc_approval_date": "2024-01-10",
+    "expected_qcvn06_edition": "QCVN 06:2022/BXD (Hợp nhất SĐ 1:2023)"
+  },
+  {
+    "id": "GB-14",
+    "category": "temporal_edition",
+    "question": "Hồ sơ thẩm duyệt PCCC ngày 20/05/2026 áp dụng phiên bản QCVN 04 nào?",
+    "pccc_approval_date": "2026-05-20",
+    "expected_qcvn04_edition": "QCVN 04:2021/BXD (Nguyên bản 2021)",
+    "expected_grace_warning": true
+  },
+  {
+    "id": "GB-15",
+    "category": "temporal_edition",
+    "question": "Dự án phê duyệt TKCS ngày 10/01/2027 áp dụng phiên bản QCVN 04 nào?",
+    "pccc_approval_date": "2027-01-10",
+    "expected_qcvn04_edition": "QCVN 04:2021/BXD (Living Standard TT 31/2026)"
+  },
+  {
+    "id": "GB-16",
+    "category": "temporal_edition",
+    "question": "Dự án nộp GPXD ngày 15/08/2026 thuộc kỷ nguyên luật nào?",
+    "building_permit_date": "2026-08-15",
+    "expected_legal_era": "LUAT_XAY_DUNG_2025"
+  },
+  {
+    "id": "GB-17",
+    "category": "temporal_edition",
+    "question": "Dự án có GPXD cấp ngày 20/12/2025 thuộc kỷ nguyên luật nào?",
+    "building_permit_date": "2025-12-20",
+    "expected_legal_era": "LUAT_XAY_DUNG_2014"
+  },
+  {
+    "id": "GB-18",
+    "category": "repeal_enforcement",
+    "question": "Hồ sơ dự án thẩm duyệt tháng 09/2026 có được viện dẫn Thông tư 06/2021/TT-BXD không?",
+    "pccc_approval_date": "2026-09-10",
+    "invalid_citation": "Thông tư 06/2021/TT-BXD",
+    "expected_prohibited": true
+  },
+  {
+    "id": "GB-19",
+    "category": "repeal_enforcement",
+    "question": "Hồ sơ dự án thẩm duyệt năm 2023 có được viện dẫn Thông tư 06/2021/TT-BXD không?",
+    "pccc_approval_date": "2023-05-10",
+    "citation": "Thông tư 06/2021/TT-BXD",
+    "expected_prohibited": false
+  },
+  {
+    "id": "GB-20",
+    "category": "numeric_table4",
+    "question": "Cột chịu lực của công trình Bậc I yêu cầu giới hạn chịu lửa tối thiểu bao nhiêu?",
+    "grade": "Bậc_I",
+    "structure_type": "column",
+    "expected_rei": "R 120",
+    "expected_base": "R 120"
+  },
+  {
+    "id": "GB-21",
+    "category": "numeric_table4",
+    "question": "Sàn tầng của công trình Bậc I yêu cầu REI tối thiểu bao nhiêu?",
+    "grade": "Bậc_I",
+    "structure_type": "floor",
+    "expected_rei": "REI 60",
+    "expected_base": "REI 60"
+  },
+  {
+    "id": "GB-22",
+    "category": "numeric_table4",
+    "question": "Bản thang của công trình Bậc I yêu cầu giới hạn chịu lửa R bao nhiêu?",
+    "grade": "Bậc_I",
+    "structure_type": "staircase",
+    "expected_rei": "R 60",
+    "expected_base": "R 60"
+  },
+  {
+    "id": "GB-23",
+    "category": "numeric_table4",
+    "question": "Tường chịu lực của công trình Bậc II yêu cầu giới hạn chịu lửa R bao nhiêu?",
+    "grade": "Bậc_II",
+    "structure_type": "load_bearing_wall",
+    "expected_rei": "R 90",
+    "expected_base": "R 90"
+  },
+  {
+    "id": "GB-24",
+    "category": "numeric_table4",
+    "question": "Sàn tầng của công trình Bậc II yêu cầu REI tối thiểu bao nhiêu?",
+    "grade": "Bậc_II",
+    "structure_type": "floor",
+    "expected_rei": "REI 45",
+    "expected_base": "REI 45"
+  },
+  {
+    "id": "GB-25",
+    "category": "numeric_table4",
+    "question": "Tấm lợp mái công trình Bậc I không áp mái có Sprinkler bảo vệ thì REI giảm xuống bao nhiêu theo Chú thích 1 Bảng 4?",
+    "grade": "Bậc_I",
+    "structure_type": "roof",
+    "has_sprinkler": true,
+    "no_attic": true,
+    "expected_rei": "RE 15",
+    "expected_base": "RE 30",
+    "expected_footnote": "Chú thích 1"
+  },
+  {
+    "id": "GB-26",
+    "category": "numeric_table4",
+    "question": "Giàn/dầm thép mái công trình Bậc I có Sprinkler và không áp mái giảm xuống bao nhiêu theo Chú thích 1 Bảng 4?",
+    "grade": "Bậc_I",
+    "structure_type": "truss_beam_purlin",
+    "has_sprinkler": true,
+    "no_attic": true,
+    "expected_rei": "R 15",
+    "expected_base": "R 30",
+    "expected_footnote": "Chú thích 1"
+  },
+  {
+    "id": "GB-27",
+    "category": "numeric_table4",
+    "question": "Tường trong buồng thang Bậc I có báo cháy tự động và tường bao che nhóm A giảm xuống bậc nào theo Chú thích 2 Bảng 4?",
+    "grade": "Bậc_I",
+    "structure_type": "wall_inner",
+    "has_auto_alarm": true,
+    "wall_material_group": "A",
+    "expected_rei": "REI 90",
+    "expected_base": "REI 120",
+    "expected_footnote": "Chú thích 2"
+  },
+  {
+    "id": "GB-28",
+    "category": "numeric_table4",
+    "question": "Sàn tầng Bậc I có Sprinkler toàn bộ và vật liệu hoàn thiện nhóm B1 giảm xuống bao nhiêu theo Chú thích 3 Bảng 4?",
+    "grade": "Bậc_I",
+    "structure_type": "floor",
+    "has_sprinkler": true,
+    "floor_finish_group": "B1",
+    "expected_rei": "REI 45",
+    "expected_base": "REI 60",
+    "expected_footnote": "Chú thích 3"
+  },
+  {
+    "id": "GB-29",
+    "category": "numeric_table4",
+    "question": "Công trình Bậc V có quy định giới hạn chịu lửa cho cột và dầm không?",
+    "grade": "Bậc_V",
+    "structure_type": "column",
+    "expected_rei": "Không quy định",
+    "expected_base": "Không quy định"
+  },
+  {
+    "id": "GB-30",
+    "category": "numeric_table10",
+    "question": "Nhà kho F5 hạng C khối tích 45.000 m³ cao 15m yêu cầu lưu lượng nước chữa cháy ngoài nhà bao nhiêu L/s?",
+    "building_volume_m3": 45000.0,
+    "hazard_class": "C",
+    "fire_height_m": 15.0,
+    "expected_flow_l_s": 20.0,
+    "expected_multiplier": 1.0
+  },
+  {
+    "id": "GB-31",
+    "category": "numeric_table10",
+    "question": "Nhà máy F5 hạng C khối tích 80.000 m³ cao 20m yêu cầu lưu lượng nước chữa cháy ngoài nhà bao nhiêu L/s?",
+    "building_volume_m3": 80000.0,
+    "hazard_class": "C",
+    "fire_height_m": 20.0,
+    "expected_flow_l_s": 30.0,
+    "expected_multiplier": 1.0
+  },
+  {
+    "id": "GB-32",
+    "category": "numeric_table10",
+    "question": "Nhà kho F5 hạng C khối tích 150.000 m³ cao 25m yêu cầu lưu lượng nước chữa cháy ngoài nhà bao nhiêu L/s?",
+    "building_volume_m3": 150000.0,
+    "hazard_class": "C",
+    "fire_height_m": 25.0,
+    "expected_flow_l_s": 40.0,
+    "expected_multiplier": 1.0
+  },
+  {
+    "id": "GB-33",
+    "category": "numeric_table10",
+    "question": "Nhà kho F5 hạng C khối tích 45.000 m³ nhưng cao 55m (>=50m) yêu cầu lưu lượng nước ngoài nhà bao nhiêu L/s theo Chú thích 1?",
+    "building_volume_m3": 45000.0,
+    "hazard_class": "C",
+    "fire_height_m": 55.0,
+    "expected_flow_l_s": 30.0,
+    "expected_multiplier": 1.5,
+    "expected_footnote": "Chú thích 1"
+  },
+  {
+    "id": "GB-34",
+    "category": "numeric_table10",
+    "question": "Nhà kho F5 hạng D khối tích 45.000 m³ cao 15m yêu cầu lưu lượng nước chữa cháy ngoài nhà bao nhiêu L/s?",
+    "building_volume_m3": 45000.0,
+    "hazard_class": "D",
+    "fire_height_m": 15.0,
+    "expected_flow_l_s": 10.0,
+    "expected_multiplier": 1.0
+  },
+  {
+    "id": "GB-35",
+    "category": "numeric_table10",
+    "question": "Nhà máy F5 hạng C chia 2 khoang cháy (khoang 1: 80.000m³, khoang 2: 40.000m³) cao 20m yêu cầu lưu lượng bao nhiêu L/s theo Chú thích 2?",
+    "building_volume_m3": 120000.0,
+    "hazard_class": "C",
+    "fire_height_m": 20.0,
+    "compartment_volumes_m3": [80000.0, 40000.0],
+    "expected_flow_l_s": 40.0,
+    "expected_footnote": "Chú thích 2"
+  },
+  {
+    "id": "GB-36",
+    "category": "numeric_table10",
+    "question": "Nhà máy F5 hạng C chia 2 khoang (80k và 40k m³) nhưng cao 60m (>=50m) yêu cầu lưu lượng bao nhiêu L/s kết hợp cả 2 Chú thích?",
+    "building_volume_m3": 120000.0,
+    "hazard_class": "C",
+    "fire_height_m": 60.0,
+    "compartment_volumes_m3": [80000.0, 40000.0],
+    "expected_flow_l_s": 60.0,
+    "expected_multiplier": 1.5
+  },
+  {
+    "id": "GB-37",
+    "category": "ev_charging_qcvn04",
+    "question": "Số lượng chỗ sạc ô tô điện tối đa cho phép trong mỗi phân vùng tại tầng hầm chung cư là bao nhiêu?",
+    "location": "basement",
+    "max_car_spots_limit": 25,
+    "expected_clause": "QCVN 04:2021/BXD (SĐ 01:2026) Mục 2.10.2.1b"
+  },
+  {
+    "id": "GB-38",
+    "category": "ev_charging_qcvn04",
+    "question": "Số lượng chỗ sạc mô tô/xe máy điện tối đa trong mỗi phân vùng tại tầng hầm chung cư là bao nhiêu?",
+    "location": "basement",
+    "max_moto_spots_limit": 50,
+    "expected_clause": "QCVN 04:2021/BXD (SĐ 01:2026) Mục 2.10.2.1b"
+  },
+  {
+    "id": "GB-39",
+    "category": "ev_charging_qcvn04",
+    "question": "Phương án bố trí 30 chỗ sạc ô tô điện trong một phân vùng tại tầng hầm B1 có hợp chuẩn không?",
+    "location": "basement",
+    "car_spots": 30,
+    "expected_pass": false,
+    "expected_clause": "Mục 2.10.2.1b"
+  },
+  {
+    "id": "GB-40",
+    "category": "ev_charging_qcvn04",
+    "question": "Phương án bố trí 45 chỗ sạc mô tô điện trong một phân vùng tại tầng hầm B2 có hợp chuẩn không?",
+    "location": "basement",
+    "motorcycle_spots": 45,
+    "expected_pass": true,
+    "expected_clause": "Mục 2.10.2.1b"
+  },
+  {
+    "id": "GB-41",
+    "category": "ev_charging_qcvn04",
+    "question": "Diện tích tối đa cho phép của một khoang cháy sạc mô tô điện tại tầng hầm là bao nhiêu?",
+    "location": "basement",
+    "max_compartment_area_moto": 300.0,
+    "expected_clause": "Mục 2.10.2.1g"
+  },
+  {
+    "id": "GB-42",
+    "category": "ev_charging_qcvn04",
+    "question": "Diện tích tối đa cho phép của một khoang cháy sạc ô tô điện tại tầng hầm là bao nhiêu?",
+    "location": "basement",
+    "max_compartment_area_car": 1200.0,
+    "expected_clause": "Mục 2.10.2.1g"
+  },
+  {
+    "id": "GB-43",
+    "category": "ev_charging_qcvn04",
+    "question": "Khu vực sạc mô tô điện tầng hầm có diện tích 450 m² có bị coi là vi phạm diện tích khoang cháy không?",
+    "location": "basement",
+    "motorcycle_spots": 30,
+    "compartment_area_m2": 450.0,
+    "expected_pass": false,
+    "expected_clause": "Mục 2.10.2.1g"
+  },
+  {
+    "id": "GB-44",
+    "category": "ev_charging_qcvn04",
+    "question": "Công suất danh định tối đa của một trụ sạc lắp đặt trong tầng hầm chung cư là bao nhiêu kW?",
+    "location": "basement",
+    "max_power_kw": 22.0,
+    "expected_clause": "Mục 2.10.2.1k"
+  },
+  {
+    "id": "GB-45",
+    "category": "ev_charging_qcvn04",
+    "question": "Lắp đặt trụ sạc nhanh DC 60 kW tại tầng hầm chung cư có vi phạm quy định công suất không?",
+    "location": "basement",
+    "charger_power_kw": 60.0,
+    "expected_pass": false,
+    "expected_clause": "Mục 2.10.2.1k"
+  },
+  {
+    "id": "GB-46",
+    "category": "ev_charging_qcvn04",
+    "question": "Khoảng trống an toàn tối thiểu giữa khu vực sạc và các khu vực khác nếu không có tường ngăn cháy loại 1 là bao nhiêu mét?",
+    "min_open_distance_m": 6.0,
+    "expected_clause": "Mục 2.10.2.1f"
+  },
+  {
+    "id": "GB-47",
+    "category": "ev_charging_qcvn04",
+    "question": "Màn nước ngăn cháy drencher thay thế tường ngăn khu vực sạc cần đạt lưu lượng tối thiểu bao nhiêu L/s trên mét dài?",
+    "min_drencher_flow_l_s_m": 1.0,
+    "expected_clause": "Mục 2.10.2.1f"
+  },
+  {
+    "id": "GB-48",
+    "category": "ev_charging_qcvn04",
+    "question": "Khu vực sạc xe điện tầng hầm bắt buộc phải có thiết bị cảnh báo rò rỉ khí nào?",
+    "required_gases": ["CO", "HF"],
+    "expected_clause": "Mục 2.10.2.1e"
+  },
+  {
+    "id": "GB-49",
+    "category": "ev_charging_qcvn04",
+    "question": "Hồ sơ PCCC đã được duyệt trước ngày 15/12/2026 có thời hạn ân hạn rà soát trạm sạc đến ngày nào?",
+    "pccc_approval_date": "2024-05-15",
+    "expected_grace_deadline": "2027-06-15",
+    "expected_clause": "Mục 3.3 (Thông tư 31/2026/TT-BXD)"
+  },
+  {
+    "id": "GB-50",
+    "category": "ev_charging_qcvn04",
+    "question": "Phương án bố trí 20 ô tô, 40 xe máy điện, khoang 250 m², tường loại 1, đủ 4 hệ thống PCCC, trụ 11kW có đạt chuẩn không?",
+    "location": "basement",
+    "car_spots": 20,
+    "motorcycle_spots": 40,
+    "compartment_area_m2": 250.0,
+    "has_fire_wall_type_1": true,
+    "has_auto_alarm_24h": true,
+    "has_auto_sprinkler": true,
+    "has_smoke_extraction": true,
+    "has_co_hf_warning": true,
+    "charger_power_kw": 11.0,
+    "expected_overall_status": "COMPLIANT"
+  }
+]
